@@ -197,7 +197,7 @@ async function showProperties() {
     <h2>Propriétés</h2>
     <button onclick="showPropertyForm()">Ajouter Propriété</button>
     <div class="list">
-      ${properties.length ? properties.map(p => `<div class="list-item"><div><strong>${p.title}</strong> - ${p.address} - ${p.price}€</div><div class="item-meta">${formatDate(p.created_at)}</div><button onclick="editProperty(${p.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div>`).join('') : '<p>Aucune propriété pour le moment.</p>'}
+      ${properties.length ? properties.map(p => `<div class="list-item"><div><strong>${p.title}</strong> - ${p.address} - ${p.price} FCFA</div><div class="item-meta">${formatDate(p.created_at)}</div><button onclick="editProperty(${p.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div>`).join('') : '<p>Aucune propriété pour le moment.</p>'}
     </div>
   `;
 }
@@ -222,7 +222,7 @@ function showPropertyForm(property = null) {
         </select>
       </div>
       <div class="form-group">
-        <label>Prix:</label>
+        <label>Prix (FCFA):</label>
         <input type="number" id="property-price" value="${property ? property.price : ''}">
       </div>
       <div class="form-group">
@@ -499,6 +499,16 @@ function getActivityLabel(type) {
   }
 }
 
+function getPaymentStatusLabel(status) {
+  switch (status) {
+    case 'pending': return 'En attente';
+    case 'accompte': return 'Accompte';
+    case 'reste': return 'Reste';
+    case 'paid': return 'Payé';
+    default: return status;
+  }
+}
+
 function formatDate(value) {
   if (!value) return '';
   const date = new Date(value);
@@ -589,7 +599,7 @@ async function showPayments() {
     <h2>Paiements</h2>
     <button onclick="showPaymentForm()">Ajouter Paiement</button>
     <div class="list">
-      ${payments.length ? payments.map(p => `<div class="list-item"><div><strong>${p.amount}€</strong> - ${p.status}</div><div>${findName(p.client_id, clients) || 'Client #' + p.client_id} / ${findName(p.property_id, properties) || 'Propriété #' + p.property_id}</div><div class="item-meta">Créé le ${formatDate(p.created_at)}</div><button onclick="editPayment(${p.id})">Modifier</button></div>`).join('') : '<p>Aucun paiement pour le moment.</p>'}
+      ${payments.length ? payments.map(p => `<div class="list-item"><div><strong>${p.amount} FCFA</strong> - ${getPaymentStatusLabel(p.status)}</div><div>${findName(p.client_id, clients) || 'Client #' + p.client_id} / ${findName(p.property_id, properties) || 'Propriété #' + p.property_id}</div><div class="item-meta">Créé le ${formatDate(p.created_at)}</div><button onclick="editPayment(${p.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div>`).join('') : '<p>Aucun paiement pour le moment.</p>'}
     </div>
   `;
 }
@@ -611,13 +621,15 @@ function showPaymentForm(payment = null) {
         </select>
       </div>
       <div class="form-group">
-        <label>Montant (€):</label>
+        <label>Montant (FCFA):</label>
         <input type="number" id="payment-amount" value="${payment ? payment.amount : ''}" required>
       </div>
       <div class="form-group">
         <label>Statut:</label>
         <select id="payment-status">
           <option value="pending" ${payment && payment.status === 'pending' ? 'selected' : ''}>En attente</option>
+          <option value="accompte" ${payment && payment.status === 'accompte' ? 'selected' : ''}>Accompte</option>
+          <option value="reste" ${payment && payment.status === 'reste' ? 'selected' : ''}>Reste</option>
           <option value="paid" ${payment && payment.status === 'paid' ? 'selected' : ''}>Payé</option>
         </select>
       </div>
