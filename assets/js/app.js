@@ -33,11 +33,41 @@ window.addEventListener('error', event => {
 
 // Functions
 async function showDashboard() {
+  // Récupération des données de base
   const newRequests = await getStatusCount('clients', 'nouvelle demande');
   const visits = await getStatusCount('clients', 'visite');
   const negotiations = await getStatusCount('clients', 'négociation');
   const signed = await getStatusCount('clients', 'signé');
   const paymentsCount = await getCount('payments');
+
+  // Données pour métriques avancées
+  const allClients = await getAll('clients');
+  const allPayments = await getAll('payments');
+  const allProperties = await getAll('properties');
+
+  // Calculs des métriques
+  const totalRevenue = allPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+  const conversionRate = allClients.length > 0 ? ((signed / allClients.length) * 100).toFixed(1) : 0;
+  const avgPropertyPrice = allProperties.length > 0 ?
+    (allProperties.reduce((sum, p) => sum + (parseFloat(p.price) || 0), 0) / allProperties.length).toFixed(0) : 0;
+
+  // Données pour graphiques
+  const statusData = [newRequests, visits, negotiations, signed];
+  const statusLabels = ['Nouvelles demandes', 'Visites', 'Négociations', 'Signés'];
+
+  // Source de leads
+  const sourceStats = {};
+  allClients.forEach(client => {
+    const source = client.source || 'Non spécifié';
+    sourceStats[source] = (sourceStats[source] || 0) + 1;
+  });
+
+  // Alertes
+  const overduePayments = allPayments.filter(p =>
+    p.status === 'pending' &&
+    new Date(p.payment_date) < new Date() &&
+    new Date(p.payment_date) < new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Plus de 7 jours de retard
+  );
 
   const recentActivities = await getRecent('activities', 5);
   const recentTasks = await getRecent('tasks', 5);
@@ -45,42 +75,150 @@ async function showDashboard() {
 
   mainContent.innerHTML = `
     <h2>Tableau de bord</h2>
+
+    <!-- Métriques principales -->
     <div class="dashboard">
-      <div class="card">
-        <h3>Nouvelles demandes</h3>
-        <p>${newRequests}</p>
+      <div class="card highlight">
+        <h3>💰 Chiffre d'Affaires</h3>
+        <p class="metric">${totalRevenue.toLocaleString()} FCFA</p>
+        <small>Total des paiements</small>
       </div>
       <div class="card">
-        <h3>Visites</h3>
-        <p>${visits}</p>
+        <h3>📈 Taux de Conversion</h3>
+        <p class="metric">${conversionRate}%</p>
+        <small>Clients signés / Total clients</small>
       </div>
       <div class="card">
-        <h3>Négociations</h3>
-        <p>${negotiations}</p>
+        <h3>🏠 Prix Moyen</h3>
+        <p class="metric">${parseInt(avgPropertyPrice).toLocaleString()} FCFA</p>
+        <small>Prix moyen des propriétés</small>
       </div>
       <div class="card">
-        <h3>Signés</h3>
-        <p>${signed}</p>
-      </div>
-      <div class="card">
-        <h3>Paiements</h3>
-        <p>${paymentsCount}</p>
+        <h3>👥 Total Clients</h3>
+        <p class="metric">${allClients.length}</p>
+        <small>Clients actifs</small>
       </div>
     </div>
-    <div class="list">
-      <h3>Clients récents</h3>
-      ${recentClients.length ? recentClients.map(c => `<div class="list-item"><span>${c.name}</span><span>${formatDate(c.created_at)}</span></div>`).join('') : '<p>Aucun client récent.</p>'}
+
+    <!-- Graphiques -->
+    <div class="dashboard-charts">
+      <div class="chart-container">
+        <h3>📊 Pipeline de Vente</h3>
+        <canvas id="statusChart" width="400" height="200"></canvas>
+      </div>
+      <div class="chart-container">
+        <h3>🎯 Sources de Leads</h3>
+        <canvas id="sourceChart" width="400" height="200"></canvas>
+      </div>
     </div>
-    <div class="list">
-      <h3>Activités récentes</h3>
-      ${recentActivities.map(a => `<div class="list-item"><span>${getActivityLabel(a.type)} - ${a.notes}</span><span>${new Date(a.date).toLocaleDateString()}</span></div>`).join('')}
+
+    <!-- Alertes -->
+    ${overduePayments.length > 0 ? `
+    <div class="alerts">
+      <h3>⚠️ Alertes</h3>
+      <div class="alert alert-warning">
+        <strong>${overduePayments.length} paiement(s) en retard</strong>
+        <p>Vérifiez les paiements en attente depuis plus de 7 jours.</p>
+      </div>
     </div>
-    <div class="list">
-      <h3>Tâches récentes</h3>
-      ${recentTasks.map(t => `<div class="list-item"><span>${t.title}</span><span>${t.status}</span></div>`).join('')}
+    ` : ''}
+
+    <!-- Sections existantes -->
+    <div class="dashboard-sections">
+      <div class="list">
+        <h3>👤 Clients récents</h3>
+        ${recentClients.length ? recentClients.map(c => `<div class="list-item"><span>${c.name}</span><span>${formatDate(c.created_at)}</span></div>`).join('') : '<p>Aucun client récent.</p>'}
+      </div>
+      <div class="list">
+        <h3>📅 Activités récentes</h3>
+        ${recentActivities.map(a => `<div class="list-item"><span>${getActivityLabel(a.type)} - ${a.notes}</span><span>${new Date(a.date).toLocaleDateString()}</span></div>`).join('')}
+      </div>
+      <div class="list">
+        <h3>✅ Tâches récentes</h3>
+        ${recentTasks.map(t => `<div class="list-item"><span>${t.title}</span><span>${t.status}</span></div>`).join('')}
+      </div>
     </div>
   `;
+
+  // Initialisation des graphiques
+  setTimeout(() => {
+    initCharts(statusData, statusLabels, sourceStats);
+  }, 100);
 }
+
+function initCharts(statusData, statusLabels, sourceStats) {
+  // Graphique du pipeline
+  const statusCtx = document.getElementById('statusChart');
+  if (statusCtx) {
+    new Chart(statusCtx, {
+      type: 'bar',
+      data: {
+        labels: statusLabels,
+        datasets: [{
+          label: 'Nombre de clients',
+          data: statusData,
+          backgroundColor: [
+            '#ffeaa7', // nouvelles demandes
+            '#74b9ff', // visites
+            '#fdcb6e', // négociations
+            '#55efc4'  // signés
+          ],
+          borderColor: [
+            '#d63031',
+            '#0984e3',
+            '#e17055',
+            '#00b894'
+          ],
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: { stepSize: 1 }
+          }
+        }
+      }
+    });
+  }
+
+  // Graphique des sources
+  const sourceCtx = document.getElementById('sourceChart');
+  if (sourceCtx) {
+    new Chart(sourceCtx, {
+      type: 'doughnut',
+      data: {
+        labels: Object.keys(sourceStats),
+        datasets: [{
+          data: Object.values(sourceStats),
+          backgroundColor: [
+            '#f59a23',
+            '#25d366',
+            '#e74c3c',
+            '#9b59b6',
+            '#3498db',
+            '#95a5a6'
+          ]
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: {
+            position: 'bottom'
+          }
+        }
+      }
+    });
+  }
+}
+
+async function showClients() {
 
 async function showClients() {
   const clients = await getAll('clients');
