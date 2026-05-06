@@ -13,6 +13,7 @@ const propertiesBtn = document.getElementById('properties-btn');
 const activitiesBtn = document.getElementById('activities-btn');
 const paymentsBtn = document.getElementById('payments-btn');
 const tasksBtn = document.getElementById('tasks-btn');
+const automationBtn = document.getElementById('automation-btn');
 
 // Event listeners
 dashboardBtn.addEventListener('click', showDashboard);
@@ -21,6 +22,7 @@ propertiesBtn.addEventListener('click', showProperties);
 activitiesBtn.addEventListener('click', showActivities);
 paymentsBtn.addEventListener('click', showPayments);
 tasksBtn.addEventListener('click', showTasks);
+automationBtn.addEventListener('click', showAutomation);
 
 // Initialize
 mainContent.innerHTML = '<div class="loading"><div class="spinner"></div>Chargement...</div>';
@@ -31,8 +33,253 @@ window.addEventListener('error', event => {
   displayError('Une erreur est survenue dans l’application. Ouvre la console pour voir les détails.');
 });
 
-// Functions
-async function showDashboard() {
+// Templates de messages prédéfinis
+const messageTemplates = {
+  whatsapp: {
+    general: "Bonjour {name}, merci de votre intérêt pour nos services immobiliers. Comment pouvons-nous vous aider ?",
+    followup: "Bonjour {name}, nous espérons que vous allez bien. Avez-vous des questions sur nos propriétés ?",
+    visit_reminder: "Bonjour {name}, rappel de votre visite prévue le {date}. Nous vous attendons !",
+    payment_reminder: "Bonjour {name}, nous vous rappelons que le paiement de {amount} FCFA est en attente.",
+    congrats_signed: "Félicitations {name} ! Votre transaction immobilière est finalisée. Merci de votre confiance."
+  },
+  email: {
+    general: "Bonjour {name},\n\nMerci de votre intérêt pour nos services immobiliers.\n\nCordialement,\nVotre équipe immobilière",
+    followup: "Bonjour {name},\n\nNous espérons que vous allez bien. N'hésitez pas à nous contacter pour toute question.\n\nCordialement,\nVotre équipe immobilière",
+    visit_reminder: "Bonjour {name},\n\nRappel de votre visite prévue le {date}.\n\nCordialement,\nVotre équipe immobilière"
+  }
+};
+
+// Fonction pour remplacer les variables dans les templates
+function replaceTemplateVars(template, data) {
+  return template
+    .replace(/{name}/g, data.name || '')
+    .replace(/{date}/g, data.date || '')
+    .replace(/{amount}/g, data.amount || '');
+}
+
+// Fonction pour obtenir les suggestions d'automatisation
+function getAutomationSuggestions() {
+  const suggestions = [];
+  const now = new Date();
+
+  return Promise.all([
+    getAll('clients'),
+    getAll('activities'),
+    getAll('payments')
+  ]).then(([clients, activities, payments]) => {
+
+    // Rappels de visite (activités de type 'visit' dans les 7 prochains jours)
+    activities.forEach(activity => {
+      if (activity.type === 'visit') {
+        const visitDate = new Date(activity.date);
+        const daysDiff = Math.ceil((visitDate - now) / (1000 * 60 * 60 * 24));
+
+        if (daysDiff >= 0 && daysDiff <= 7) {
+          const client = clients.find(c => c.id === activity.client_id);
+          if (client) {
+            suggestions.push({
+              type: 'visit_reminder',
+              priority: daysDiff <= 1 ? 'high' : 'medium',
+              message: `Rappel visite ${client.name} dans ${daysDiff} jour(s)`,
+              action: () => sendWhatsApp(client.phone, replaceTemplateVars(messageTemplates.whatsapp.visit_reminder, {
+                name: client.name,
+                date: visitDate.toLocaleDateString('fr-FR')
+              })),
+              client: client,
+              dueDate: visitDate
+            });
+          }
+        }
+      }
+    });
+
+    // Paiements en attente
+    payments.forEach(payment => {
+      if (payment.status === 'pending') {
+        const paymentDate = new Date(payment.payment_date);
+        const daysOverdue = Math.floor((now - paymentDate) / (1000 * 60 * 60 * 24));
+
+        if (daysOverdue > 0) {
+          const client = clients.find(c => c.id === payment.client_id);
+          if (client) {
+            suggestions.push({
+              type: 'payment_reminder',
+              priority: daysOverdue > 7 ? 'high' : 'medium',
+              message: `Paiement en retard de ${daysOverdue} jour(s) - ${client.name}`,
+              action: () => sendWhatsApp(client.phone, replaceTemplateVars(messageTemplates.whatsapp.payment_reminder, {
+                name: client.name,
+                amount: payment.amount
+              })),
+              client: client,
+              overdue: daysOverdue
+            });
+          }
+        }
+      }
+    });
+
+    // Clients sans activité récente (plus de 7 jours)
+    clients.forEach(client => {
+      const clientActivities = activities.filter(a => a.client_id === client.id);
+      if (clientActivities.length > 0) {
+        const lastActivity = new Date(Math.max(...clientActivities.map(a => new Date(a.date))));
+        const daysSinceLastActivity = Math.floor((now - lastActivity) / (1000 * 60 * 60 * 24));
+
+        if (daysSinceLastActivity > 7 && client.status !== 'signé') {
+          suggestions.push({
+            type: 'followup',
+            priority: daysSinceLastActivity > 14 ? 'high' : 'medium',
+            message: `Relance ${client.name} - dernière activité il y a ${daysSinceLastActivity} jours`,
+            action: () => sendWhatsApp(client.phone, replaceTemplateVars(messageTemplates.whatsapp.followup, {
+              name: client.name
+            })),
+            client: client,
+            daysInactive: daysSinceLastActivity
+          });
+        }
+      }
+    });
+
+    return suggestions.sort((a, b) => {
+      const priorityOrder = { high: 3, medium: 2, low: 1 };
+      return priorityOrder[b.priority] - priorityOrder[a.priority];
+    });
+  });
+}
+
+// Fonction pour envoyer WhatsApp (ouvre le lien)
+function sendWhatsApp(phone, message) {
+  const encodedMessage = encodeURIComponent(message);
+  const whatsappUrl = `https://wa.me/${phone.replace(/\D/g, '')}?text=${encodedMessage}`;
+  window.open(whatsappUrl, '_blank');
+}
+
+// Fonction pour afficher les suggestions d'automatisation
+async function showAutomation() {
+  mainContent.innerHTML = `
+    <h2>🤖 Automatisation & Suggestions</h2>
+
+    <div class="automation-section">
+      <h3>📝 Templates de Messages</h3>
+      <div class="templates-grid">
+        <div class="template-card">
+          <h4>WhatsApp - Message général</h4>
+          <p class="template-text">${messageTemplates.whatsapp.general}</p>
+          <button onclick="copyTemplate('whatsapp', 'general')">Copier</button>
+        </div>
+        <div class="template-card">
+          <h4>WhatsApp - Relance</h4>
+          <p class="template-text">${messageTemplates.whatsapp.followup}</p>
+          <button onclick="copyTemplate('whatsapp', 'followup')">Copier</button>
+        </div>
+        <div class="template-card">
+          <h4>WhatsApp - Rappel visite</h4>
+          <p class="template-text">${messageTemplates.whatsapp.visit_reminder}</p>
+          <button onclick="copyTemplate('whatsapp', 'visit_reminder')">Copier</button>
+        </div>
+        <div class="template-card">
+          <h4>WhatsApp - Rappel paiement</h4>
+          <p class="template-text">${messageTemplates.whatsapp.payment_reminder}</p>
+          <button onclick="copyTemplate('whatsapp', 'payment_reminder')">Copier</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="automation-section">
+      <h3>🚀 Actions Automatiques Suggérées</h3>
+      <div id="suggestions-container">
+        <div class="loading"><div class="spinner"></div>Analyse des données...</div>
+      </div>
+    </div>
+  `;
+
+  // Charger les suggestions
+  const suggestions = await getAutomationSuggestions();
+  displaySuggestions(suggestions);
+}
+
+function displaySuggestions(suggestions) {
+  const container = document.getElementById('suggestions-container');
+
+  if (suggestions.length === 0) {
+    container.innerHTML = '<p class="no-suggestions">🎉 Aucune action automatique nécessaire pour le moment !</p>';
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="suggestions-list">
+      ${suggestions.map((suggestion, index) => `
+        <div class="suggestion-item ${suggestion.priority}">
+          <div class="suggestion-header">
+            <span class="priority-badge ${suggestion.priority}">${suggestion.priority === 'high' ? '🔴' : suggestion.priority === 'medium' ? '🟡' : '🟢'}</span>
+            <span class="suggestion-type">${getSuggestionTypeLabel(suggestion.type)}</span>
+          </div>
+          <div class="suggestion-content">
+            <p>${suggestion.message}</p>
+            <div class="suggestion-actions">
+              <button onclick="executeSuggestion(${index})" class="action-btn">📱 WhatsApp</button>
+              <button onclick="createActivityFromSuggestion(${index})" class="action-btn secondary">📝 Activité</button>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+
+  // Stocker les suggestions globalement pour les actions
+  window.currentSuggestions = suggestions;
+}
+
+function getSuggestionTypeLabel(type) {
+  const labels = {
+    visit_reminder: 'Rappel de visite',
+    payment_reminder: 'Rappel de paiement',
+    followup: 'Relance client'
+  };
+  return labels[type] || type;
+}
+
+function copyTemplate(type, templateKey) {
+  const template = messageTemplates[type][templateKey];
+  navigator.clipboard.writeText(template).then(() => {
+    alert('Template copié dans le presse-papiers !');
+  });
+}
+
+function executeSuggestion(index) {
+  const suggestion = window.currentSuggestions[index];
+  if (suggestion && suggestion.action) {
+    suggestion.action();
+  }
+}
+
+async function createActivityFromSuggestion(index) {
+  const suggestion = window.currentSuggestions[index];
+  if (!suggestion) return;
+
+  // Créer une activité de relance
+  const activity = {
+    type: 'call',
+    client_id: suggestion.client.id,
+    notes: `Relance automatique: ${suggestion.message}`,
+    date: new Date().toISOString().split('T')[0]
+  };
+
+  try {
+    const { error } = await supabaseClient.from('activities').insert([activity]);
+    if (error) throw error;
+
+    alert('Activité de relance créée !');
+    showAutomation(); // Rafraîchir
+  } catch (error) {
+    console.error('Erreur lors de la création de l\'activité:', error);
+    alert('Erreur : ' + (error.message || error.toString()));
+  }
+}
+
+// Initialize
+mainContent.innerHTML = '<div class="loading"><div class="spinner"></div>Chargement...</div>';
+showDashboard();
   // Récupération des données de base
   const newRequests = await getStatusCount('clients', 'nouvelle demande');
   const visits = await getStatusCount('clients', 'visite');
