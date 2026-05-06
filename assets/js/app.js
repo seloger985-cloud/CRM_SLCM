@@ -14,6 +14,7 @@ const activitiesBtn = document.getElementById('activities-btn');
 const paymentsBtn = document.getElementById('payments-btn');
 const tasksBtn = document.getElementById('tasks-btn');
 const automationBtn = document.getElementById('automation-btn');
+const pipelineBtn = document.getElementById('pipeline-btn');
 
 // Event listeners
 dashboardBtn.addEventListener('click', showDashboard);
@@ -23,6 +24,7 @@ activitiesBtn.addEventListener('click', showActivities);
 paymentsBtn.addEventListener('click', showPayments);
 tasksBtn.addEventListener('click', showTasks);
 automationBtn.addEventListener('click', showAutomation);
+pipelineBtn.addEventListener('click', showPipeline);
 
 // Initialize
 mainContent.innerHTML = '<div class="loading"><div class="spinner"></div>Chargement...</div>';
@@ -836,6 +838,147 @@ function displayError(message) {
     </div>
   `;
 }
+
+// Pipeline de vente
+async function showPipeline() {
+  const clients = await getAll('clients');
+  
+  const stages = ['nouvelle demande', 'visite', 'négociation', 'signé'];
+  const stageTitles = {
+    'nouvelle demande': '🆕 Nouvelles Demandes',
+    'visite': '👁️ Visites',
+    'négociation': '💬 Négociation',
+    'signé': '✅ Signés'
+  };
+
+  // Grouper les clients par statut
+  const grouped = {};
+  stages.forEach(stage => {
+    grouped[stage] = clients.filter(c => (c.status || 'nouvelle demande') === stage);
+  });
+
+  // Calculs
+  const totalClients = clients.length;
+  const conversionRate = totalClients > 0 ? (((grouped['signé']?.length || 0) / totalClients) * 100).toFixed(1) : 0;
+
+  mainContent.innerHTML = `
+    <h2>📊 Pipeline de Vente</h2>
+    
+    <div class="pipeline-stats">
+      <div class="stat">
+        <span class="stat-label">Total Clients</span>
+        <span class="stat-value">${totalClients}</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Taux de Conversion</span>
+        <span class="stat-value">${conversionRate}%</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Prévisions</span>
+        <span class="stat-value">${(grouped['signé']?.length || 0).toLocaleString()} signés</span>
+      </div>
+    </div>
+
+    <div class="pipeline-container">
+      ${stages.map(stage => `
+        <div class="pipeline-column" data-status="${stage}">
+          <div class="column-header">
+            <h3>${stageTitles[stage]}</h3>
+            <span class="column-count">${(grouped[stage]?.length || 0)}</span>
+          </div>
+          <div class="column-body" id="column-${stage}">
+            ${(grouped[stage] || []).map(client => `
+              <div class="pipeline-card" draggable="true" data-client-id="${client.id}" data-status="${stage}" onclick="viewClientDetails(${client.id})">
+                <div class="card-header">
+                  <strong>${client.name}</strong>
+                  <span class="status-indicator"></span>
+                </div>
+                <div class="card-body">
+                  <p class="card-phone">${client.phone || 'N/A'}</p>
+                  <p class="card-source">${client.source || 'Non renseignée'}</p>
+                  <div class="card-date">${formatDate(client.created_at)}</div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="pipeline-help">
+      <p>💡 Glissez-déposez les cartes pour avancer les clients dans le pipeline</p>
+    </div>
+  `;
+
+  // Initialiser le drag & drop
+  initPipelineDragDrop();
+}
+
+function initPipelineDragDrop() {
+  const cards = document.querySelectorAll('.pipeline-card');
+  const columns = document.querySelectorAll('.column-body');
+
+  cards.forEach(card => {
+    card.addEventListener('dragstart', (e) => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('clientId', card.dataset.clientId);
+      e.dataTransfer.setData('currentStatus', card.dataset.status);
+      card.classList.add('dragging');
+    });
+
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+    });
+  });
+
+  columns.forEach(column => {
+    column.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      column.classList.add('drag-over');
+    });
+
+    column.addEventListener('dragleave', () => {
+      column.classList.remove('drag-over');
+    });
+
+    column.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const clientId = parseInt(e.dataTransfer.getData('clientId'));
+      const newStatus = column.parentElement.dataset.status;
+      
+      column.classList.remove('drag-over');
+      updateClientStatus(clientId, newStatus);
+    });
+  });
+}
+
+async function updateClientStatus(clientId, newStatus) {
+  try {
+    const { error } = await supabaseClient.from('clients').update({ status: newStatus }).eq('id', clientId);
+    if (error) throw error;
+    
+    // Créer une activité pour tracer le changement
+    const client = await getById('clients', clientId);
+    await supabaseClient.from('activities').insert([{
+      client_id: clientId,
+      type: 'meeting',
+      notes: `Progression pipeline: ${newStatus}`,
+      date: new Date().toISOString().split('T')[0]
+    }]);
+
+    showPipeline(); // Rafraîchir
+  } catch (error) {
+    console.error('Erreur lors de la mise à jour:', error);
+    alert('Erreur : ' + (error.message || error.toString()));
+  }
+}
+
+function viewClientDetails(clientId) {
+  // Éditer le client
+  editClient(clientId);
+}
+
 
 // Utility functions
 async function getCount(table) {
