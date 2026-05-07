@@ -282,6 +282,13 @@ async function createActivityFromSuggestion(index) {
 // Initialize
 mainContent.innerHTML = '<div class="loading"><div class="spinner"></div>Chargement...</div>';
 showDashboard();
+
+window.addEventListener('error', event => {
+  console.error('Erreur JavaScript détectée:', event.error || event.message);
+  displayError('Une erreur est survenue dans l’application. Ouvre la console pour voir les détails.');
+});
+
+async function showDashboard() {
   // Récupération des données de base
   const newRequests = await getStatusCount('clients', 'nouvelle demande');
   const visits = await getStatusCount('clients', 'visite');
@@ -466,8 +473,6 @@ function initCharts(statusData, statusLabels, sourceStats) {
     });
   }
 }
-
-async function showClients() {
 
 async function showClients() {
   const clients = await getAll('clients');
