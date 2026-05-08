@@ -149,10 +149,13 @@ function getAutomationSuggestions() {
   });
 }
 
-// Fonction pour envoyer WhatsApp (ouvre le lien)
+// Configuration WhatsApp Business
+const WHATSAPP_BUSINESS_NUMBER = '650840714';
+
+// Fonction pour envoyer WhatsApp via le compte business
 function sendWhatsApp(phone, message) {
   const encodedMessage = encodeURIComponent(message);
-  const whatsappUrl = `https://wa.me/${phone.replace(/\D/g, '')}?text=${encodedMessage}`;
+  const whatsappUrl = `https://wa.me/${WHATSAPP_BUSINESS_NUMBER}?text=${encodedMessage}`;
   window.open(whatsappUrl, '_blank');
 }
 
@@ -1053,9 +1056,8 @@ function formatDate(value) {
 }
 
 function getWhatsApp(phone, client, messageType = 'general') {
-  let clean = (phone || '').replace(/\D/g, '');
-  if (!clean) return '#';
-  if (!clean.startsWith('237')) clean = '237' + clean;
+  // Utiliser le numéro business WhatsApp (650 840 714)
+  const businessNumber = WHATSAPP_BUSINESS_NUMBER;
 
   let msg = '';
   switch (messageType) {
@@ -1069,7 +1071,7 @@ function getWhatsApp(phone, client, messageType = 'general') {
       msg = `Bonjour ${client.name}, nous avons des nouvelles concernant votre recherche immobilière.`;
   }
 
-  return `https://wa.me/${clean}?text=${encodeURIComponent(msg)}`;
+  return `https://wa.me/${businessNumber}?text=${encodeURIComponent(msg)}`;
 }
 
 async function populateSelect(selectId, table, field) {
