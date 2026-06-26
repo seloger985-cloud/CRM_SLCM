@@ -1,0 +1,1767 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Facture — SE LOGER CM</title>
+  <meta name="robots" content="noindex,nofollow">
+  <link rel="icon" href="/assets/img/favicon.ico">
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; color: #111; background: #f4f4f4; }
+    body {
+      min-height: 100vh; padding: 20px;
+      visibility: hidden;  /* Caché jusqu'à validation auth (anti-flash) */
+    }
+
+    /* ─── Barre d'actions (en haut, hors PDF) ─── */
+    .actions-bar {
+      max-width: 800px; margin: 0 auto 16px;
+      display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+    }
+    .actions-bar .btn {
+      padding: 8px 16px; border: 1px solid #d1d5db;
+      background: #fff; border-radius: 6px;
+      cursor: pointer; font-size: 13px; font-weight: 500;
+      font-family: inherit;
+    }
+    .actions-bar .btn:hover { background: #f9fafb; }
+    .actions-bar .btn-primary {
+      background: #ff7a00; color: #fff; border-color: #ff7a00;
+    }
+    .actions-bar .btn-primary:hover { background: #e66e00; }
+    .actions-bar .btn-secondary {
+      background: #111; color: #fff; border-color: #111;
+    }
+    .actions-bar .btn-secondary:hover { background: #333; }
+    .actions-bar .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .actions-bar .invoice-status {
+      margin-left: auto;
+      padding: 4px 12px; border-radius: 999px;
+      font-size: 11px; font-weight: 700;
+      background: #e5e7eb; color: #374151;
+    }
+    .actions-bar .invoice-status.is-emise   { background: #dbeafe; color: #1e40af; }
+    .actions-bar .invoice-status.is-payee   { background: #d1fae5; color: #065f46; }
+    .actions-bar .invoice-status.is-annulee { background: #fee2e2; color: #991b1b; }
+
+    .toast {
+      position: fixed; top: 20px; right: 20px;
+      padding: 10px 16px; border-radius: 6px;
+      font-size: 13px; font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0,0,0,.2);
+      z-index: 100; opacity: 0; transition: opacity .25s;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; }
+    .toast.is-info    { background: #dbeafe; color: #1e40af; }
+    .toast.is-error   { background: #fee2e2; color: #991b1b; }
+    .toast.is-success { background: #d1fae5; color: #065f46; }
+
+    /* ─── Sélecteur de prestations ─── */
+    .type-selector {
+      max-width: 800px; margin: 0 auto 12px;
+      background: #fff; padding: 12px 16px; border-radius: 8px;
+      display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+      border: 1px solid #e5e7eb;
+    }
+    .type-selector .label {
+      font-size: 12px; font-weight: 600; color: #333;
+      margin-right: 4px;
+    }
+    .type-btn {
+      padding: 5px 12px; border: 1px solid #d1d5db;
+      background: #fff; color: #333;
+      border-radius: 999px; cursor: pointer;
+      font-size: 12px; font-weight: 500;
+      font-family: inherit; transition: all .15s;
+    }
+    .type-btn:hover { border-color: #ff7a00; color: #ff7a00; }
+    .type-btn.active {
+      background: #111; color: #fff; border-color: #111;
+    }
+
+    /* ─── Document Facture (zone imprimable / exportée en PDF) ─── */
+    /* Dimensions A4 portrait : 210 × 297 mm (ratio ~ 1.414).
+       À 800px de largeur (notre invoice), la hauteur "1 page A4" = 800 × (297/210) ≈ 1131px.
+       On retire les marges du PDF (10mm × 2 = ~76px à scale 1) → utile ≈ 1055px.
+       On utilise flexbox pour pousser le footer en bas si le contenu est court. */
+    .invoice {
+      max-width: 800px; margin: 0 auto;
+      font-variant-numeric: tabular-nums;
+      background: #fff;
+      padding: 48px 52px;
+      border-radius: 4px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.05);
+      display: flex;
+      flex-direction: column;
+      min-height: 1055px;             /* ≈ hauteur utile A4 portrait à 800px de large */
+      box-sizing: border-box;
+    }
+
+    /* Header épuré */
+    .inv-header {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      padding-bottom: 18px;
+      border-bottom: 3px solid #ff7a00;
+      margin-bottom: 28px;
+    }
+    .inv-monogram {
+      flex: 0 0 auto;
+      width: 46px; height: 46px;
+      background: #ff7a00; color: #fff;
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 19px; font-weight: 800; letter-spacing: 0.5px;
+    }
+    .inv-brand-name {
+      font-size: 26px; font-weight: 700; letter-spacing: -0.5px;
+    }
+    .inv-brand-tagline {
+      font-size: 12px; color: #666; font-style: italic; margin-top: 3px;
+    }
+    .inv-brand-rccm {
+      font-size: 11px; color: #666; margin-top: 6px;
+    }
+    .inv-meta { text-align: right; }
+    .inv-meta-label {
+      font-size: 22px; font-weight: 600; letter-spacing: 2px;
+    }
+    .inv-meta-num {
+      font-size: 13px; color: #333; margin-top: 6px; font-weight: 500;
+      display: flex; align-items: center; gap: 6px; justify-content: flex-end;
+    }
+    /* Badge AUTO/MANUEL à côté du numéro de facture.
+       AUTO = numéro attribué automatiquement à la sauvegarde (par défaut).
+       MANUEL = saisie utilisateur, doit respecter le format FAC-AAAA-NNNN. */
+    .inv-num-badge {
+      font-size: 8px; font-weight: 700; padding: 2px 6px;
+      border-radius: 3px; letter-spacing: 0.5px;
+      background: #f1f1f1; color: #333;
+    }
+    .inv-num-badge.is-manual {
+      background: #fff4e6; color: #ff7a00;
+    }
+    /* Toggle "Saisir manuellement" — petit lien sous le numéro */
+    .inv-num-toggle {
+      font-size: 9px; color: #666; cursor: pointer;
+      text-decoration: underline; text-decoration-style: dotted;
+      margin-top: 3px; user-select: none;
+      background: none; border: none; padding: 0;
+    }
+    .inv-num-toggle:hover { color: #ff7a00; }
+    /* Input numéro manuel — caché par défaut, visible quand mode manuel actif */
+    .inv-num-manual-input {
+      display: none; width: 140px; font-size: 11px; font-weight: 500;
+      text-align: right; padding: 2px 4px;
+      border: 1px solid #ddd; border-radius: 3px;
+      font-family: inherit; outline: none;
+    }
+    .inv-num-manual-input:focus { border-color: #ff7a00; }
+    .inv-num-manual-input.is-invalid { border-color: #dc2626; background: #fef2f2; }
+    body.num-manual #invNum { display: none; }
+    body.num-manual .inv-num-manual-input { display: inline-block; }
+    /* En mode "printing" : on n'affiche jamais le badge ni le toggle, juste la valeur */
+    body.printing .inv-num-badge,
+    body.printing .inv-num-toggle,
+    body.printing .ac-link-badge,
+    body.printing .ac-actions,
+    body.printing .ac-dropdown { display: none !important; }
+    /* À l'impression, le numéro s'affiche en TEXTE (l'input est rogné par html2canvas) */
+    body.printing #invNum { display: inline !important; }
+    body.printing .inv-num-manual-input { display: none !important; }
+    .inv-meta-date {
+      font-size: 12px; color: #666; margin-top: 4px;
+    }
+
+    /* Parties (émetteur / client) */
+    .inv-parties {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 28px;
+      margin-bottom: 24px;
+    }
+    .inv-party-label {
+      font-size: 11px; color: #666;
+      text-transform: uppercase; letter-spacing: 0.6px;
+      margin-bottom: 6px;
+    }
+    .inv-party-name {
+      font-size: 14px; font-weight: 600; margin-bottom: 4px;
+    }
+    .inv-party-detail {
+      font-size: 13px; color: #333; line-height: 1.6;
+    }
+    /* Les champs éditables dans cette zone NE doivent PAS hériter du #333.
+       On ne définit ici que la taille — la couleur reste celle de .editable (#111 plus bas). */
+    .inv-party-detail .editable,
+    .inv-party-detail input {
+      font-size: 13px;
+    }
+    /* Bloc "Facturé à" mis en valeur visuellement (Proposition B).
+       Fond gris léger + filet orange à gauche pour signaler instantanément
+       qui est le destinataire de la facture. Le bloc émetteur reste neutre. */
+    .inv-party-billed {
+      background: #f9f9f9;
+      border-left: 3px solid #ff7a00;
+      padding: 14px 18px;
+      border-radius: 0 4px 4px 0;
+    }
+
+    /* Référence bien */
+    .inv-ref {
+      font-size: 13px; color: #333;
+      padding-bottom: 14px;
+      border-bottom: 1px solid #ff7a00;
+      margin-bottom: 18px;
+    }
+    .inv-ref .ref-item { display: inline-block; margin-right: 20px; }
+    .inv-ref .ref-item strong { color: #111; font-weight: 600; }
+
+    /* Tableau prestations — suit directement le bloc parties (pas de centrage forcé) */
+    table.inv-table {
+      width: 100%; border-collapse: collapse;
+      font-size: 13px; margin-bottom: 24px;
+    }
+    table.inv-table thead th {
+      padding: 10px 6px; text-align: left;
+      font-weight: 600; font-size: 11px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      border-bottom: 1.5px solid #ff7a00;
+      color: #111;
+    }
+    table.inv-table thead th.right { text-align: right; }
+    table.inv-table tbody td {
+      padding: 14px 6px; vertical-align: top;
+      border-bottom: 0.5px solid rgba(255,122,0,.25);
+    }
+    table.inv-table tbody td.right { text-align: right; }
+    table.inv-table tbody tr.empty-row td { padding: 16px 6px; }
+    table.inv-table .desc-main {
+      display: block; font-weight: 600; font-size: 13px;
+      margin-bottom: 4px;
+    }
+    table.inv-table .desc-detail1, table.inv-table .desc-detail2 {
+      display: block; font-size: 13px; color: #444;
+      line-height: 1.5;
+    }
+
+    /* Champs éditables (style discret en édition, lisibles en consultation).
+       On utilise input.editable (au lieu de .editable seul) pour augmenter la spécificité
+       et battre les règles parent comme .inv-party-detail .editable ou table.inv-table .desc-detail1.
+       Sans ça, la couleur #111 serait écrasée par les règles plus spécifiques héritées. */
+    input.editable, input.num-input, input.remise-input {
+      border: none; background: transparent;
+      font-family: inherit; font-size: inherit;
+      color: #111 !important;          /* !important pour battre toutes les règles spécifiques */
+      font-weight: 500;
+      padding: 1px 2px;
+      border-bottom: 1px dotted #d1d5db;
+      outline: none;
+    }
+    /* Lignes "détail" : un peu moins fort pour respecter la hiérarchie. Restent lisibles (#444). */
+    input.desc-detail1, input.desc-detail2 {
+      color: #444 !important;
+      font-weight: 400;
+    }
+    input.editable:focus, input.num-input:focus, input.remise-input:focus {
+      border-bottom-color: #ff7a00;
+      background: #fff8f0;
+    }
+    input.editable::placeholder, input.num-input::placeholder, input.remise-input::placeholder {
+      color: #bbb; font-weight: 400; font-style: italic;
+    }
+    /* Textarea pour les notes — même traitement */
+    #invNotes {
+      color: #111 !important; font-weight: 500;
+    }
+    #invNotes::placeholder {
+      color: #bbb; font-weight: 400; font-style: italic;
+    }
+    .num-input { text-align: right; max-width: 110px; }
+    .remise-input { text-align: right; max-width: 100px; }
+
+    .total-cell { font-weight: 600; }
+
+    /* Totaux */
+    .inv-totals {
+      display: flex; justify-content: flex-end; margin-bottom: 24px;
+    }
+    .inv-totals-table {
+      min-width: 280px; font-size: 13px;
+    }
+    .inv-totals-table .total-row {
+      display: flex; justify-content: space-between;
+      padding: 6px 0;
+    }
+    .inv-totals-table .tlabel { color: #333; }
+    .inv-totals-table .tval { font-weight: 600; }
+    .inv-totals-table .grand {
+      border-top: 1.5px solid #ff7a00;
+      margin-top: 6px; padding-top: 10px;
+    }
+    .inv-totals-table .grand .tlabel,
+    .inv-totals-table .grand .tval {
+      font-weight: 700; font-size: 15px;
+    }
+
+    .inv-amount-words {
+      font-size: 12.5px; color: #333; line-height: 1.5;
+      padding: 10px 14px; margin-bottom: 18px;
+      background: #fff8f0; border-left: 3px solid #ff7a00;
+      border-radius: 0 4px 4px 0;
+    }
+    .inv-amount-words strong { font-weight: 700; color: #111; }
+
+    /* Modalités + notes */
+    .inv-modalities {
+      font-size: 12px; color: #333; line-height: 1.7;
+      margin-bottom: 14px;
+    }
+    .inv-modalities strong {
+      color: #111; font-weight: 600;
+    }
+    .inv-notes {
+      font-size: 12px; color: #333;
+      margin-bottom: auto;   /* clé Option Y : pousse vers le haut, crée l'espace après notes */
+    }
+    .inv-notes-label {
+      font-size: 10px; color: #666;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: 5px;
+    }
+    .inv-notes textarea {
+      width: 100%; border: none; background: transparent;
+      font-family: inherit; font-size: 12px; color: #333;
+      resize: none; min-height: 36px;
+      border-bottom: 1px dotted #d1d5db;
+      padding: 3px 0; outline: none;
+    }
+    .inv-notes textarea:focus {
+      border-bottom-color: #ff7a00;
+      background: #fff8f0;
+    }
+
+    /* Footer — l'espace au-dessus est créé par .inv-notes margin-bottom: auto */
+    .inv-footer {
+      border-top: 1px solid #ff7a00;
+      padding-top: 12px;
+      font-size: 11px; color: #666;
+      text-align: center; line-height: 1.6;
+    }
+
+    /* ─── Mode "printing" : appliqué uniquement pendant la capture html2canvas
+       Masque les pointillés, supprime les placeholders, retire les bordures décoratives.
+       Le HTML reste identique, seul le rendu visuel change le temps de la capture. */
+    body.printing .editable,
+    body.printing .num-input,
+    body.printing .remise-input {
+      border-bottom: none !important;
+      background: transparent !important;
+    }
+    body.printing .editable::placeholder,
+    body.printing .num-input::placeholder,
+    body.printing .remise-input::placeholder {
+      color: transparent !important;     /* placeholders disparaissent dans le PDF */
+    }
+    body.printing #invNotes {
+      border-bottom: none !important;
+    }
+    body.printing #invNotes::placeholder {
+      color: transparent !important;
+    }
+    body.printing .invoice {
+      box-shadow: none !important;        /* pas d'ombre dans le PDF */
+    }
+
+    /* ─── Anti-troncature PDF ───────────────────────────────────────────────
+       html2canvas rastérise chaque <input> à sa boîte exacte (largeur + ligne unique).
+       Conséquences observées sur le PDF : descendants (g, p, y, accents bas) coupés,
+       textes coupés à droite quand la valeur dépasse la largeur du champ.
+
+       Pendant la capture :
+       - on neutralise toutes les contraintes de largeur (max-width, min-width, width inline)
+       - on garantit assez d'espace vertical (line-height + padding-bottom)
+       - les inputs alignés à droite (num-input, remise-input) gardent text-align:right
+         mais s'étendent vers la gauche pour afficher leur valeur en entier. */
+    body.printing input.editable,
+    body.printing input.num-input,
+    body.printing input.remise-input {
+      max-width: none !important;
+      min-width: 0 !important;
+      width: auto !important;
+      line-height: 1.5 !important;
+      padding-top: 2px !important;
+      padding-bottom: 2px !important;
+      height: auto !important;
+    }
+    /* Inputs en width:100% du bloc "Facturé à" : on les force à occuper toute leur
+       cellule en mode block pour que descendants et accents bas soient rendus. */
+    body.printing .inv-party-detail input.editable {
+      display: block !important;
+      width: 100% !important;
+    }
+    /* Inputs des sous-titres de prestation (detail1/detail2) : block + 100%
+       pour que le bas du texte ("STUDIO HAUT STANDING", "12 mois d'avance") soit rendu. */
+    body.printing input.desc-detail1,
+    body.printing input.desc-detail2,
+    body.printing input.desc-main {
+      display: block !important;
+      width: 100% !important;
+    }
+    /* Inputs inline de la ligne référence (Bien / Quartier bien / Réf) :
+       inline-block pour respecter le flux du span parent, mais width:auto pour
+       s'étendre à la valeur réelle plutôt que de rester collés à min-width. */
+    body.printing .inv-ref input.editable {
+      display: inline-block !important;
+      width: auto !important;
+    }
+
+    
+/* ===== Correctifs PDF et champs longs ===== */
+.inv-party-name,
+.inv-party-detail,
+.desc-main,
+.desc-detail1,
+.desc-detail2,
+#invNotes {
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+#clientName,
+#clientAddress,
+#clientDistrict,
+#clientPhone,
+#clientEmail {
+    width: 100%;
+    min-height: 24px;
+}
+
+table.inv-table td {
+    vertical-align: top;
+}
+
+table.inv-table {
+    table-layout: fixed;
+}
+
+
+/* Responsive (consultation seulement, le PDF reste fixe à 800px) */
+    @media (max-width: 720px) {
+      body { padding: 8px; }
+      .invoice { padding: 16px 14px; }
+      .inv-parties { grid-template-columns: 1fr; gap: 12px; }
+      .inv-header { flex-direction: column; gap: 10px; }
+      .inv-meta { text-align: left; }
+      table.inv-table { font-size: 10px; }
+      .num-input { max-width: 70px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Barre d'actions (cachée en impression et lors du rendu PDF) -->
+  <div class="actions-bar" id="actionsBar">
+    <button class="btn" type="button" onclick="window.location.href='index.html'">← Retour CRM</button>
+    <button class="btn btn-secondary" id="btnSave" type="button">💾 Sauvegarder</button>
+    <button class="btn btn-primary" id="btnPdf" type="button">📄 Générer PDF</button>
+    <button class="btn" id="btnReset" type="button" title="Vider le formulaire">🗑️ Reset</button>
+    <span class="invoice-status" id="invStatus">Brouillon</span>
+  </div>
+
+  <!-- Sélecteur de prestations -->
+  <div class="type-selector" id="typeSelector">
+    <span class="label">Prestations actives :</span>
+    <button class="type-btn active" type="button" data-type="location">Location</button>
+    <button class="type-btn" type="button" data-type="vente">Vente</button>
+    <button class="type-btn" type="button" data-type="visite">Visite</button>
+    <button class="type-btn" type="button" data-type="commercial">Commercial</button>
+  </div>
+
+  <!-- Document Facture (zone capturée pour PDF) -->
+  <div class="invoice" id="invoiceDoc">
+
+    <div class="inv-header">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div class="inv-monogram">SL</div>
+        <div>
+          <div class="inv-brand-name">SE LOGER CM</div>
+          <div class="inv-brand-tagline">Unique Solutions, Smart Living</div>
+          <div class="inv-brand-rccm">RCCM DLA-02-2024-A10-00712 — NIU PO68916714973N</div>
+        </div>
+      </div>
+      <div class="inv-meta">
+        <div class="inv-meta-label">FACTURE</div>
+        <div class="inv-meta-num">
+          <span class="inv-num-badge" id="invNumBadge">AUTO</span>
+          <span id="invNum">N° FAC-2026-XXXX</span>
+          <input type="text" class="inv-num-manual-input" id="invNumManual"
+                 placeholder="FAC-2026-0001" maxlength="20"
+                 pattern="^FAC-\d{4}-\d{4}$">
+        </div>
+        <button type="button" class="inv-num-toggle" id="invNumToggle">Saisir manuellement</button>
+        <div class="inv-meta-date" id="invDate">Émise le —</div>
+        
+      </div>
+    </div>
+
+    <div class="inv-parties">
+      <div>
+        <div class="inv-party-label">Émetteur</div>
+        <div class="inv-party-name">SE LOGER CM</div>
+        <div class="inv-party-detail">
+          Boulevard de la République<br>
+          Bonamoussadi, Douala<br>
+          (+237) 650 840 714<br>
+          contact@selogercm.com
+        </div>
+      </div>
+      <div class="inv-party-billed">
+        <div class="inv-party-label">Facturé à</div>
+        <input class="editable inv-party-name" id="clientName" placeholder="Nom du client" maxlength="100" style="width:100%;font-weight:600;">
+        <div class="inv-party-detail">
+          <input class="editable" id="clientAddress" placeholder="Adresse" style="width:100%;">
+          <input class="editable" id="clientDistrict" placeholder="Quartier" style="width:100%;">
+          <input class="editable" id="clientPhone" placeholder="Téléphone" style="width:100%;">
+          <input class="editable" id="clientEmail" placeholder="Email (optionnel)" style="width:100%;">
+        </div>
+        <div class="ac-link-badge" id="clientLinkBadge" style="display:none;">
+          Lié à <span class="ac-link-name" id="clientLinkName"></span>
+          <button type="button" class="ac-link-action" id="clientUnlinkBtn">Détacher</button>
+        </div>
+        <div class="ac-actions" id="clientActions" style="display:none;">
+          <button type="button" class="ac-action-btn" id="clientCreateBtn" style="display:none;">+ Créer ce client</button>
+          <button type="button" class="ac-action-btn" id="clientUpdateBtn" style="display:none;">↻ Mettre à jour la fiche</button>
+          <button type="button" class="ac-action-btn ghost" id="clientResetBtn" style="display:none;">Annuler les modifs</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="inv-ref">
+      <span class="ref-item"><strong>Bien :</strong> <input class="editable" id="propertyType" placeholder="Studio, villa..." style="min-width:120px;"></span>
+      <span class="ref-item"><strong>Quartier bien :</strong> <input class="editable" id="propertyDistrict" placeholder="Bali, Bonapriso..." style="min-width:100px;"></span>
+      <span class="ref-item"><strong>Réf :</strong> <input class="editable" id="propertyRef" placeholder="R-001" style="min-width:60px;"></span>
+      <span class="ac-link-badge" id="propertyLinkBadge" style="display:none; margin-left:12px;">
+        <span class="ac-link-name" id="propertyLinkName"></span>
+        <button type="button" class="ac-link-action" id="propertyUnlinkBtn">Détacher</button>
+      </span>
+    </div>
+
+    <table class="inv-table">
+      <thead>
+        <tr>
+          <th style="width:46%">Prestation &amp; description</th>
+          <th class="right" style="width:18%">Base de calcul</th>
+          <th class="right" style="width:12%">Taux</th>
+          <th class="right" style="width:24%">Montant (FCFA)</th>
+        </tr>
+      </thead>
+      <tbody>
+
+        <tr class="row-location">
+          <td>
+            <input class="editable desc-main" id="desc-location-main" placeholder="Commission de location" value="Commission de location">
+            <input class="editable desc-detail1" id="desc-location-d1" placeholder="Bien : type, superficie, quartier...">
+            <input class="editable desc-detail2" id="desc-location-d2" placeholder="Conditions, notes...">
+          </td>
+          <td class="right">
+            <input class="num-input" id="base-location" placeholder="Loyer mensuel">
+          </td>
+          <td class="right" style="font-size:12px;color:#666;">1 mois</td>
+          <td class="right"><span class="total-cell" id="total-location">—</span></td>
+        </tr>
+
+        <tr class="row-vente">
+          <td>
+            <input class="editable desc-main" id="desc-vente-main" placeholder="Commission de vente" value="Commission de vente">
+            <input class="editable desc-detail1" id="desc-vente-d1" placeholder="Bien : type, superficie, quartier...">
+            <input class="editable desc-detail2" id="desc-vente-d2" placeholder="Ex : 5% du prix de vente...">
+          </td>
+          <td class="right">
+            <input class="num-input" id="base-vente" placeholder="Prix de vente">
+          </td>
+          <td class="right">
+            <input class="num-input" id="taux-vente" placeholder="5" style="width:50px;"><span style="font-size:12px;color:#666;"> %</span>
+          </td>
+          <td class="right"><span class="total-cell" id="total-vente">—</span></td>
+        </tr>
+
+        <tr class="row-visite">
+          <td>
+            <input class="editable desc-main" id="desc-visite-main" placeholder="Frais de visite" value="Frais de visite">
+            <input class="editable desc-detail1" id="desc-visite-d1" placeholder="Bien : type, superficie, quartier...">
+            <input class="editable desc-detail2" id="desc-visite-d2" placeholder="Visite accompagnée...">
+          </td>
+          <td class="right">
+            <input class="num-input" id="base-visite" placeholder="Qté" style="width:55px;">
+          </td>
+          <td class="right">
+            <input class="num-input" id="taux-visite" placeholder="Prix unit.">
+          </td>
+          <td class="right"><span class="total-cell" id="total-visite">—</span></td>
+        </tr>
+
+        <tr class="row-commercial">
+          <td>
+            <input class="editable desc-main" id="desc-commercial-main" placeholder="Mise en location commerciale" value="Mise en location commerciale">
+            <input class="editable desc-detail1" id="desc-commercial-d1" placeholder="Bien : type, superficie, quartier...">
+            <input class="editable desc-detail2" id="desc-commercial-d2" placeholder="Conditions, notes...">
+          </td>
+          <td class="right">
+            <input class="num-input" id="base-commercial" placeholder="Loyer mensuel">
+          </td>
+          <td class="right" style="font-size:12px;color:#666;">1 mois</td>
+          <td class="right"><span class="total-cell" id="total-commercial">—</span></td>
+        </tr>
+
+        <tr class="empty-row">
+          <td>
+            <input class="editable desc-main" id="desc-libre-main" placeholder="Prestation complémentaire (optionnel)..." style="font-weight:600;">
+            <input class="editable desc-detail1" id="desc-libre-d1" placeholder="Détail...">
+          </td>
+          <td class="right"><input class="num-input" id="base-libre" placeholder="Qté / Base"></td>
+          <td class="right"><input class="num-input" id="taux-libre" placeholder="P.U / Taux"></td>
+          <td class="right"><span class="total-cell" id="total-libre">—</span></td>
+        </tr>
+
+      </tbody>
+    </table>
+
+    <div class="inv-totals">
+      <div class="inv-totals-table">
+        <div class="total-row">
+          <span class="tlabel">Sous-total</span>
+          <span class="tval" id="subtotal">0 FCFA</span>
+        </div>
+        <div class="total-row">
+          <span class="tlabel">Remise</span>
+          <span class="tval">
+            <input class="remise-input" id="remise" placeholder="0" value="0">
+            <span style="font-size:12px;color:#666;">FCFA</span>
+          </span>
+        </div>
+        <div class="total-row">
+          <span class="tlabel">TVA <input class="remise-input" id="tvaRate" placeholder="0" value="0" style="width:38px;"><span style="font-size:12px;color:#666;">%</span></span>
+          <span class="tval" id="tvaAmount">0 FCFA</span>
+        </div>
+        <div class="total-row grand">
+          <span class="tlabel">Total à payer</span>
+          <span class="tval" id="grandtotal">0 FCFA</span>
+        </div>
+      </div>
+      <div class="inv-tva-note" id="tvaNote" style="text-align:right;font-size:11px;color:#666;margin-top:6px;">TVA non applicable — exonéré</div>
+    </div>
+
+    <div class="inv-amount-words">
+      Arrêtée la présente facture à la somme de <strong id="invInWords">—</strong>.
+    </div>
+
+    <div class="inv-modalities">
+      <strong>Modalités de règlement :</strong> Paiement à réception · Mobile Money (Orange / MTN) · Virement bancaire · Espèces (reçu fourni)
+    </div>
+
+    <div class="inv-notes">
+      <div class="inv-notes-label">Notes / conditions particulières</div>
+      <textarea id="invNotes" placeholder="Conditions particulières, informations complémentaires..."></textarea>
+    </div>
+
+    <div class="inv-footer">
+      SE LOGER CM · Bonamoussadi, Douala · (+237) 650 840 714 · contact@selogercm.com · selogercm.com
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- Libs externes (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/ui.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+  <script>
+  /* ═══════════════════════════════════════════════════════════════
+     CRM CLIENT SUPABASE — Adaptation pour le mini CRM autonome.
+     Pas d'auth (CRM en local sur ordi+phone uniquement).
+     ═══════════════════════════════════════════════════════════════ */
+  const CRM_SUPABASE_URL = 'https://dukwtseqticijlvrmkgz.supabase.co';
+  const CRM_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR1a3d0c2VxdGljaWpsdnJta2d6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwMTYzMDIsImV4cCI6MjA5MzU5MjMwMn0.u-FH3WhZxIpE9uJtTDF1IWOOht-ooPgAqwsnyZmUNa4';
+
+  /* Shim minimal pour rester compatible avec le code existant (window.SLCM_DB.init()) */
+  window.SLCM_DB = {
+    _client: null,
+    async init() {
+      if (this._client) return this._client;
+      this._client = window.supabase.createClient(CRM_SUPABASE_URL, CRM_SUPABASE_KEY);
+      return this._client;
+    }
+  };
+
+  /* Page utilisable immédiatement (pas d'auth à attendre) */
+  document.body.style.visibility = 'visible';
+  </script>
+
+  <script>
+  /* ═══════════════════════════════════════════════════════════════
+     LOGIQUE FACTURE — calculs + sauvegarde + PDF
+     ═══════════════════════════════════════════════════════════════ */
+  (function() {
+    'use strict';
+
+    /* ─── État ─── */
+    let currentInvoiceId   = null;     // UUID de la facture si déjà sauvegardée
+    let currentInvoiceNum  = null;     // Numéro FAC-AAAA-NNNN
+    let currentStatus      = 'brouillon';  // brouillon | emise | payee | annulee
+    const activeTypes      = new Set(['location']);  // prestations actives
+    const lineTotals       = { location:0, vente:0, visite:0, commercial:0, libre:0 };
+
+    /* ─── Helpers ─── */
+    function readNum(id) {
+      const el = document.getElementById(id);
+      if (!el) return 0;
+      return parseFloat(String(el.value || '').replace(/\s/g,'').replace(',','.')) || 0;
+    }
+    function fmtFCFA(n) {
+      if (n === 0) return '—';
+      return n.toLocaleString('fr-FR') + ' FCFA';
+    }
+    function showToast(msg, type) {
+      const el = document.getElementById('toast');
+      el.className = 'toast is-' + (type || 'info') + ' show';
+      el.textContent = msg;
+      setTimeout(() => el.classList.remove('show'), 3000);
+    }
+
+    /* ─── Sélecteur prestations ─── */
+    function updateRows() {
+      ['location','vente','visite','commercial'].forEach(t => {
+        document.querySelectorAll('.row-' + t).forEach(r => {
+          r.style.display = activeTypes.has(t) ? '' : 'none';
+        });
+      });
+    }
+    document.querySelectorAll('.type-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const type = btn.dataset.type;
+        if (activeTypes.has(type)) {
+          if (activeTypes.size === 1) return; // au moins 1 actif
+          activeTypes.delete(type);
+          btn.classList.remove('active');
+          lineTotals[type] = 0;
+        } else {
+          activeTypes.add(type);
+          btn.classList.add('active');
+        }
+        updateRows();
+        calcTotals();
+      });
+    });
+    updateRows();
+
+    /* ─── Calculs ─── */
+    function calcLine(type) {
+      let val = 0;
+      if (type === 'location' || type === 'commercial') {
+        val = readNum('base-' + type);
+      } else if (type === 'vente') {
+        const base = readNum('base-vente');
+        const taux = readNum('taux-vente');
+        val = taux > 0 ? base * taux / 100 : 0;
+      } else if (type === 'visite') {
+        const qty = readNum('base-visite');
+        const pu  = readNum('taux-visite');
+        val = qty * pu;
+      } else if (type === 'libre') {
+        const base = readNum('base-libre');
+        const taux = readNum('taux-libre');
+        val = taux > 0 ? base * taux : base;
+      }
+      lineTotals[type] = val;
+      const cell = document.getElementById('total-' + type);
+      if (cell) cell.textContent = fmtFCFA(val);
+      calcTotals();
+    }
+
+    /* Montant en toutes lettres (français : règles 70/80/90, accord cent/quatre-vingt,
+       mille invariable) — pour la mention légale « Arrêtée la présente facture… ».
+       Gère les entiers jusqu'aux centaines de millions, largement suffisant en FCFA. */
+    function frenchAmountWords(n) {
+      n = Math.round(Math.abs(Number(n) || 0));
+      if (n === 0) return 'zéro';
+      const units = ['','un','deux','trois','quatre','cinq','six','sept','huit','neuf','dix',
+        'onze','douze','treize','quatorze','quinze','seize','dix-sept','dix-huit','dix-neuf'];
+      const tens  = ['','','vingt','trente','quarante','cinquante','soixante','','quatre-vingt',''];
+
+      function below100(x, fb) {
+        if (x < 20) return units[x];
+        const t = Math.floor(x / 10), u = x % 10;
+        if (t === 7) { if (u === 0) return 'soixante-dix'; if (u === 1) return 'soixante et onze'; return 'soixante-' + units[10 + u]; }
+        if (t === 9) { if (u === 0) return 'quatre-vingt-dix'; return 'quatre-vingt-' + units[10 + u]; }
+        if (t === 8) { if (u === 0) return fb ? 'quatre-vingt' : 'quatre-vingts'; return 'quatre-vingt-' + units[u]; }
+        const w = tens[t];
+        if (u === 0) return w;
+        if (u === 1) return w + ' et un';
+        return w + '-' + units[u];
+      }
+      function below1000(x, fb) {
+        if (x === 0) return '';
+        const h = Math.floor(x / 100), r = x % 100;
+        let s = '';
+        if (h > 0) {
+          s = (h === 1) ? 'cent' : units[h] + ' cent';
+          if (r === 0 && h > 1 && !fb) s += 's';   /* deux cents, mais « deux cent mille » */
+        }
+        if (r > 0) s += (s ? ' ' : '') + below100(r, fb);
+        return s;
+      }
+
+      const millions  = Math.floor(n / 1000000);
+      const thousands = Math.floor((n % 1000000) / 1000);
+      const rest      = n % 1000;
+      const parts = [];
+      if (millions  > 0) parts.push(millions === 1 ? 'un million' : below1000(millions, false) + ' millions');
+      if (thousands > 0) parts.push(thousands === 1 ? 'mille' : below1000(thousands, true) + ' mille');
+      if (rest      > 0) parts.push(below1000(rest, false));
+      return parts.join(' ').trim();
+    }
+
+    function calcTotals() {
+      let sub = 0;
+      ['location','vente','visite','commercial'].forEach(t => {
+        if (activeTypes.has(t)) sub += lineTotals[t] || 0;
+      });
+      sub += lineTotals.libre || 0;  // ligne libre toujours comptée
+      const remise = readNum('remise');
+      const base = Math.max(0, sub - remise);
+      const tvaRate = readNum('tvaRate');
+      const tva = Math.round(base * tvaRate / 100);
+      const grand = base + tva;
+      document.getElementById('subtotal').textContent   = fmtFCFA(sub);
+      document.getElementById('tvaAmount').textContent  = fmtFCFA(tva);
+      document.getElementById('grandtotal').textContent = fmtFCFA(grand);
+      const wordsEl = document.getElementById('invInWords');
+      if (wordsEl) wordsEl.textContent = grand > 0 ? (frenchAmountWords(grand) + ' francs CFA') : '—';
+      const tvaNote = document.getElementById('tvaNote');
+      if (tvaNote) tvaNote.style.display = (tvaRate > 0) ? 'none' : '';
+    }
+
+    /* Recalculer à chaque changement */
+    ['base-location','base-vente','taux-vente','base-visite','taux-visite',
+     'base-commercial','base-libre','taux-libre','remise','tvaRate'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('input', () => {
+          if (id === 'remise' || id === 'tvaRate') { calcTotals(); return; }
+          const type = id.split('-')[1];
+          calcLine(type);
+        });
+      }
+    });
+
+    /* ─── Date du jour ─── */
+    function fmtDateFR(d) {
+      const date = d instanceof Date ? d : new Date(d);
+      const pad = n => String(n).padStart(2,'0');
+      return pad(date.getDate()) + '/' + pad(date.getMonth()+1) + '/' + date.getFullYear();
+    }
+    function setInvoiceDate(d) {
+      const base = d instanceof Date ? d : new Date(d);
+      document.getElementById('invDate').textContent = 'Émise le ' + fmtDateFR(base);
+    }
+    setInvoiceDate(new Date());
+
+    /* ─── Statut affiché ─── */
+    function setStatusDisplay(status) {
+      currentStatus = status;
+      const el = document.getElementById('invStatus');
+      const map = {
+        brouillon: { label: 'Brouillon', cls: '' },
+        emise:     { label: 'Émise',     cls: 'is-emise' },
+        payee:     { label: 'Payée',     cls: 'is-payee' },
+        annulee:   { label: 'Annulée',   cls: 'is-annulee' }
+      };
+      const m = map[status] || map.brouillon;
+      el.textContent = m.label;
+      el.className = 'invoice-status ' + m.cls;
+    }
+
+    /* ─── Reset formulaire ─── */
+    function resetForm() {
+      if (!confirm('Vider le formulaire ? Les données non sauvegardées seront perdues.')) return;
+      /* Reset des sélections autocomplete + localStorage */
+      selectedClient = null;
+      selectedProperty = null;
+      clearPersistedSelections();
+      document.querySelectorAll('input.editable, input.num-input, .remise-input, #invNotes').forEach(el => {
+        if (el.id === 'remise' || el.id === 'tvaRate') el.value = '0';
+        else if (el.id.startsWith('desc-') && el.id.endsWith('-main')) {
+          // garde les valeurs par défaut (Commission de location, etc.)
+          const t = el.id.split('-')[1];
+          const defaults = {
+            location: 'Commission de location',
+            vente: 'Commission de vente',
+            visite: 'Frais de visite',
+            commercial: 'Mise en location commerciale'
+          };
+          el.value = defaults[t] || '';
+        } else {
+          el.value = '';
+        }
+      });
+      ['location','vente','visite','commercial','libre'].forEach(t => lineTotals[t] = 0);
+      ['location','vente','visite','commercial','libre'].forEach(t => {
+        const c = document.getElementById('total-' + t);
+        if (c) c.textContent = '—';
+      });
+      document.getElementById('subtotal').textContent = '0 FCFA';
+      document.getElementById('grandtotal').textContent = '0 FCFA';
+      currentInvoiceId = null;
+      currentInvoiceNum = null;
+      document.getElementById('invNum').textContent = 'N° FAC-' + new Date().getFullYear() + '-XXXX';
+      /* Reset du badge et du toggle : retour à l'état initial AUTO + toggle visible */
+      const badge = document.getElementById('invNumBadge');
+      badge.textContent = 'AUTO';
+      badge.classList.remove('is-manual');
+      document.getElementById('invNumToggle').style.display = '';
+      setNumberModeManual(false);
+      setInvoiceDate(new Date());
+      setStatusDisplay('brouillon');
+      /* Rafraîchir l'UI autocomplete (badges, boutons) */
+      if (typeof refreshClientUI === 'function') refreshClientUI();
+      if (typeof refreshPropertyUI === 'function') refreshPropertyUI();
+      showToast('Formulaire vidé', 'info');
+    }
+    document.getElementById('btnReset').addEventListener('click', resetForm);
+
+    /* ─── Numérotation auto FAC-AAAA-NNNN ─── */
+    async function getNextInvoiceNumber(supabase) {
+      const year = new Date().getFullYear();
+      const prefix = 'FAC-' + year + '-';
+      const { data, error } = await supabase
+        .from('invoices')
+        .select('invoice_number')
+        .like('invoice_number', prefix + '%')
+        .order('invoice_number', { ascending: false })
+        .limit(1);
+      if (error) throw error;
+      let next = 1;
+      if (data && data.length > 0) {
+        const last = data[0].invoice_number;
+        const lastNum = parseInt(last.split('-').pop(), 10) || 0;
+        next = lastNum + 1;
+      }
+      return prefix + String(next).padStart(4, '0');
+    }
+
+    /* ─── Numéro manuel : toggle UI + validation format + check unicité ───
+       Format attendu : FAC-AAAA-NNNN (ex: FAC-2026-0042).
+       Si l'utilisateur saisit un numéro existant, on bloque la sauvegarde
+       (l'unicité est en fait imposée par la contrainte UNIQUE en base, mais
+       on prévient en amont pour un meilleur UX). */
+    const INVOICE_NUMBER_RE = /^FAC-\d{4}-\d{4}$/;
+
+    function isInvoiceNumberFormatValid(num) {
+      return INVOICE_NUMBER_RE.test(num);
+    }
+
+    async function isInvoiceNumberTaken(supabase, num) {
+      const { data, error } = await supabase
+        .from('invoices')
+        .select('id')
+        .eq('invoice_number', num)
+        .limit(1);
+      if (error) throw error;
+      return data && data.length > 0;
+    }
+
+    function setNumberModeManual(isManual) {
+      const body = document.body;
+      const badge = document.getElementById('invNumBadge');
+      const toggle = document.getElementById('invNumToggle');
+      const manualInput = document.getElementById('invNumManual');
+      if (isManual) {
+        body.classList.add('num-manual');
+        badge.textContent = 'MANUEL';
+        badge.classList.add('is-manual');
+        toggle.textContent = 'Revenir au mode auto';
+        manualInput.focus();
+      } else {
+        body.classList.remove('num-manual');
+        badge.textContent = 'AUTO';
+        badge.classList.remove('is-manual');
+        toggle.textContent = 'Saisir manuellement';
+        manualInput.value = '';
+        manualInput.classList.remove('is-invalid');
+      }
+    }
+
+    document.getElementById('invNumToggle').addEventListener('click', () => {
+      const isManualNow = document.body.classList.contains('num-manual');
+      setNumberModeManual(!isManualNow);
+    });
+
+    /* Validation en temps réel du format pendant la saisie */
+    document.getElementById('invNumManual').addEventListener('input', (e) => {
+      const val = e.target.value.trim();
+      if (val === '' || isInvoiceNumberFormatValid(val)) {
+        e.target.classList.remove('is-invalid');
+      } else {
+        e.target.classList.add('is-invalid');
+      }
+    });
+
+    /* ─── Autocomplete client + bien (Phase 3.10) ─────────────────
+       4 états du champ Client :
+       - Vierge : champ vide, rien d'affiché
+       - Saisie libre : texte tapé, pas de sélection → bouton "Créer ce client"
+       - Lié intact : sélection faite, aucune modif → badge "Lié à X"
+       - Lié modifié : sélection + modif d'au moins un champ tracké → badge + bouton "Mettre à jour la fiche"
+
+       Mémorisation : on stocke selectedClientId / selectedPropertyId dans localStorage,
+       réhydratés au prochain chargement sans `?id=`. Effacés à la sauvegarde, au reset, ou au détachement.
+    */
+
+    const STORAGE_KEY_CLIENT = 'facture-draft-client-id';
+    const STORAGE_KEY_PROPERTY = 'facture-draft-property-id';
+    const TRACKED_CLIENT_FIELDS = ['name', 'phone', 'email', 'address', 'district'];
+
+    /* Modèle d'état mémorisé en mémoire (snapshot à la sélection + courant) */
+    let selectedClient = null;   // { id, name, phone, email, address, district } ou null
+    let selectedProperty = null; // { id, type, district, ref } ou null
+
+    function getCurrentClientValues() {
+      return {
+        name:     document.getElementById('clientName').value.trim(),
+        address:  document.getElementById('clientAddress').value.trim(),
+        district: document.getElementById('clientDistrict').value.trim(),
+        phone:    document.getElementById('clientPhone').value.trim(),
+        email:    document.getElementById('clientEmail').value.trim()
+      };
+    }
+
+    function fillClientFields(client) {
+      document.getElementById('clientName').value     = client.name     || '';
+      document.getElementById('clientAddress').value  = client.address  || '';
+      document.getElementById('clientDistrict').value = client.district || '';
+      document.getElementById('clientPhone').value    = client.phone    || '';
+      document.getElementById('clientEmail').value    = client.email    || '';
+    }
+
+    function getCurrentPropertyValues() {
+      return {
+        type:     document.getElementById('propertyType').value.trim(),
+        district: document.getElementById('propertyDistrict').value.trim(),
+        ref:      document.getElementById('propertyRef').value.trim()
+      };
+    }
+
+    function fillPropertyFields(property) {
+      document.getElementById('propertyType').value     = property.type     || '';
+      document.getElementById('propertyDistrict').value = property.district || '';
+      document.getElementById('propertyRef').value      = property.ref      || '';
+    }
+
+    /* Détection : le client lié a-t-il été modifié ? */
+    function isClientDirty() {
+      if (!selectedClient) return false;
+      const current = getCurrentClientValues();
+      return TRACKED_CLIENT_FIELDS.some(f => (current[f] || '') !== (selectedClient[f] || ''));
+    }
+
+    /* Mise à jour de l'UI selon l'état courant */
+    function refreshClientUI() {
+      const linkBadge   = document.getElementById('clientLinkBadge');
+      const linkName    = document.getElementById('clientLinkName');
+      const actions     = document.getElementById('clientActions');
+      const createBtn   = document.getElementById('clientCreateBtn');
+      const updateBtn   = document.getElementById('clientUpdateBtn');
+      const resetBtn    = document.getElementById('clientResetBtn');
+      const nameInput   = document.getElementById('clientName');
+      const nameValue   = nameInput.value.trim();
+
+      if (selectedClient) {
+        /* Mode lié */
+        linkBadge.style.display = '';
+        linkName.textContent = selectedClient.name || '(sans nom)';
+        const dirty = isClientDirty();
+        actions.style.display = dirty ? 'flex' : 'none';
+        createBtn.style.display = 'none';
+        updateBtn.style.display = dirty ? '' : 'none';
+        resetBtn.style.display = dirty ? '' : 'none';
+      } else {
+        /* Mode libre ou vierge */
+        linkBadge.style.display = 'none';
+        if (nameValue.length >= 2) {
+          /* Mode libre : un texte saisi mais aucune sélection */
+          actions.style.display = 'flex';
+          createBtn.style.display = '';
+          updateBtn.style.display = 'none';
+          resetBtn.style.display = 'none';
+        } else {
+          /* Vierge */
+          actions.style.display = 'none';
+          createBtn.style.display = 'none';
+          updateBtn.style.display = 'none';
+          resetBtn.style.display = 'none';
+        }
+      }
+    }
+
+    function refreshPropertyUI() {
+      const badge = document.getElementById('propertyLinkBadge');
+      const name = document.getElementById('propertyLinkName');
+      if (selectedProperty) {
+        badge.style.display = '';
+        name.textContent = 'Lié à ' + (selectedProperty.type || 'bien') +
+                           (selectedProperty.ref ? ' · ' + selectedProperty.ref : '');
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    /* Détacher : repasse en mode libre, garde les valeurs telles quelles */
+    function detachClient() {
+      selectedClient = null;
+      try { localStorage.removeItem(STORAGE_KEY_CLIENT); } catch (e) {}
+      refreshClientUI();
+    }
+
+    function detachProperty() {
+      selectedProperty = null;
+      try { localStorage.removeItem(STORAGE_KEY_PROPERTY); } catch (e) {}
+      refreshPropertyUI();
+    }
+
+    /* Annuler les modifs : restaure les valeurs snapshot du client lié */
+    function resetClientToSnapshot() {
+      if (!selectedClient) return;
+      fillClientFields(selectedClient);
+      refreshClientUI();
+    }
+
+    /* Persistance localStorage */
+    function persistSelections() {
+      try {
+        if (selectedClient && selectedClient.id) {
+          localStorage.setItem(STORAGE_KEY_CLIENT, String(selectedClient.id));
+        }
+        if (selectedProperty && selectedProperty.id) {
+          localStorage.setItem(STORAGE_KEY_PROPERTY, String(selectedProperty.id));
+        }
+      } catch (e) {}
+    }
+
+    function clearPersistedSelections() {
+      try {
+        localStorage.removeItem(STORAGE_KEY_CLIENT);
+        localStorage.removeItem(STORAGE_KEY_PROPERTY);
+      } catch (e) {}
+    }
+
+    /* Recherche Supabase : clients */
+    async function searchClients(query) {
+      const q = '%' + query + '%';
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, name, phone, email, address, district')
+        .or('name.ilike.' + q + ',phone.ilike.' + q + ',email.ilike.' + q)
+        .limit(8);
+      if (error) throw error;
+      return (data || []).map(c => ({
+        id: c.id,
+        label: c.name || '(sans nom)',
+        sublabel: [c.phone, c.district].filter(Boolean).join(' · '),
+        raw: c
+      }));
+    }
+
+    /* Recherche Supabase : propriétés. Champs `type`, `district`, `ref` — à ajuster
+       si ta table properties utilise d'autres noms. */
+    async function searchProperties(query) {
+      const q = '%' + query + '%';
+      const { data, error } = await supabase
+        .from('properties')
+        .select('id, type, district, ref')
+        .or('type.ilike.' + q + ',district.ilike.' + q + ',ref.ilike.' + q)
+        .limit(8);
+      if (error) throw error;
+      return (data || []).map(p => ({
+        id: p.id,
+        label: [p.type, p.ref].filter(Boolean).join(' · ') || '(bien sans nom)',
+        sublabel: p.district || '',
+        raw: p
+      }));
+    }
+
+    /* Création d'un client à la volée depuis le mode libre */
+    async function createClientFromForm() {
+      const current = getCurrentClientValues();
+      if (!current.name) {
+        if (window.UI) UI.toast('Le nom est obligatoire', 'error');
+        return;
+      }
+      try {
+        const { data, error } = await supabase
+          .from('clients')
+          .insert([{
+            name: current.name,
+            phone: current.phone || null,
+            email: current.email || null,
+            address: current.address || null,
+            district: current.district || null
+          }])
+          .select()
+          .single();
+        if (error) throw error;
+        selectedClient = {
+          id: data.id, name: data.name, phone: data.phone,
+          email: data.email, address: data.address, district: data.district
+        };
+        persistSelections();
+        refreshClientUI();
+        if (window.UI) UI.toast('Client créé et lié à la facture', 'success');
+      } catch (e) {
+        if (window.UI) UI.handleError(e, 'createClientFromForm');
+      }
+    }
+
+    /* Mise à jour de la fiche client depuis les valeurs modifiées de la facture */
+    async function updateLinkedClient() {
+      if (!selectedClient || !selectedClient.id) return;
+      const current = getCurrentClientValues();
+      try {
+        const { data, error } = await supabase
+          .from('clients')
+          .update({
+            name: current.name,
+            phone: current.phone || null,
+            email: current.email || null,
+            address: current.address || null,
+            district: current.district || null
+          })
+          .eq('id', selectedClient.id)
+          .select()
+          .single();
+        if (error) throw error;
+        /* Mettre à jour le snapshot pour que les champs ne soient plus considérés "modifiés" */
+        selectedClient = {
+          id: data.id, name: data.name, phone: data.phone,
+          email: data.email, address: data.address, district: data.district
+        };
+        refreshClientUI();
+        if (window.UI) UI.toast('Fiche client mise à jour', 'success');
+      } catch (e) {
+        if (window.UI) UI.handleError(e, 'updateLinkedClient');
+      }
+    }
+
+    /* Initialisation des autocompletes (appelée au DOMContentLoaded) */
+    function initAutocompletes() {
+      if (!window.UI || typeof UI.autocomplete !== 'function') {
+        console.warn('[facture] UI.autocomplete indisponible — ui.js non chargé ?');
+        return;
+      }
+
+      UI.autocomplete(document.getElementById('clientName'), {
+        fetchSuggestions: searchClients,
+        minChars: 2,
+        debounce: 250,
+        onSelect: (item) => {
+          selectedClient = {
+            id: item.raw.id, name: item.raw.name, phone: item.raw.phone,
+            email: item.raw.email, address: item.raw.address, district: item.raw.district
+          };
+          fillClientFields(selectedClient);
+          persistSelections();
+          refreshClientUI();
+        }
+      });
+
+      UI.autocomplete(document.getElementById('propertyType'), {
+        fetchSuggestions: searchProperties,
+        minChars: 2,
+        debounce: 250,
+        onSelect: (item) => {
+          selectedProperty = {
+            id: item.raw.id, type: item.raw.type,
+            district: item.raw.district, ref: item.raw.ref
+          };
+          fillPropertyFields(selectedProperty);
+          persistSelections();
+          refreshPropertyUI();
+        }
+      });
+
+      /* Surveillance des champs trackés pour activer "Mettre à jour la fiche" */
+      ['clientName', 'clientAddress', 'clientDistrict', 'clientPhone', 'clientEmail']
+        .forEach(id => {
+          document.getElementById(id).addEventListener('input', refreshClientUI);
+        });
+
+      /* Boutons actions client */
+      document.getElementById('clientUnlinkBtn').addEventListener('click', detachClient);
+      document.getElementById('clientCreateBtn').addEventListener('click', createClientFromForm);
+      document.getElementById('clientUpdateBtn').addEventListener('click', updateLinkedClient);
+      document.getElementById('clientResetBtn').addEventListener('click', resetClientToSnapshot);
+      document.getElementById('propertyUnlinkBtn').addEventListener('click', detachProperty);
+    }
+
+    /* Réhydratation depuis localStorage si on est sur une nouvelle facture (pas ?id=) */
+    async function restoreDraftSelections() {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('id')) return; // facture existante : pas de restore
+
+      let clientId, propertyId;
+      try {
+        clientId = localStorage.getItem(STORAGE_KEY_CLIENT);
+        propertyId = localStorage.getItem(STORAGE_KEY_PROPERTY);
+      } catch (e) { return; }
+
+      if (clientId) {
+        try {
+          const { data } = await supabase
+            .from('clients')
+            .select('id, name, phone, email, address, district')
+            .eq('id', clientId)
+            .single();
+          if (data) {
+            selectedClient = data;
+            fillClientFields(data);
+            refreshClientUI();
+          }
+        } catch (e) { /* silencieux */ }
+      }
+      if (propertyId) {
+        try {
+          const { data } = await supabase
+            .from('properties')
+            .select('id, type, district, ref')
+            .eq('id', propertyId)
+            .single();
+          if (data) {
+            selectedProperty = data;
+            fillPropertyFields(data);
+            refreshPropertyUI();
+          }
+        } catch (e) {}
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      initAutocompletes();
+      restoreDraftSelections();
+    });
+
+    /* ─── Sauvegarde Supabase ─── */
+    async function saveInvoice() {
+      const clientName = document.getElementById('clientName').value.trim();
+      if (!clientName) {
+        showToast('Le nom du client est obligatoire', 'error');
+        return;
+      }
+
+      const btnSave = document.getElementById('btnSave');
+      btnSave.disabled = true;
+      btnSave.textContent = '⏳ Sauvegarde...';
+
+      try {
+        const supabase = await window.SLCM_DB.init();
+        if (!supabase) throw new Error('Connexion Supabase indisponible');
+
+        /* Construire les line_items à partir des prestations actives */
+        const lineItems = [];
+        const typeMap = {
+          location: 'Location',
+          vente: 'Vente',
+          visite: 'Visite',
+          commercial: 'Commercial'
+        };
+        ['location','vente','visite','commercial'].forEach(t => {
+          if (!activeTypes.has(t) || lineTotals[t] === 0) return;
+          lineItems.push({
+            type: t,
+            type_label: typeMap[t],
+            label: document.getElementById('desc-' + t + '-main').value.trim() || typeMap[t],
+            detail1: document.getElementById('desc-' + t + '-d1').value.trim() || null,
+            detail2: document.getElementById('desc-' + t + '-d2').value.trim() || null,
+            base: readNum('base-' + t),
+            rate: t === 'vente' ? readNum('taux-vente') : (t === 'visite' ? readNum('taux-visite') : null),
+            amount: lineTotals[t]
+          });
+        });
+        /* Ligne libre si remplie */
+        if (lineTotals.libre > 0 || document.getElementById('desc-libre-main').value.trim()) {
+          lineItems.push({
+            type: 'libre',
+            type_label: 'Autre',
+            label: document.getElementById('desc-libre-main').value.trim() || 'Autre prestation',
+            detail1: document.getElementById('desc-libre-d1').value.trim() || null,
+            detail2: null,
+            base: readNum('base-libre'),
+            rate: readNum('taux-libre'),
+            amount: lineTotals.libre
+          });
+        }
+
+        /* Calculs totaux */
+        let subtotal = 0;
+        ['location','vente','visite','commercial'].forEach(t => {
+          if (activeTypes.has(t)) subtotal += lineTotals[t] || 0;
+        });
+        subtotal += lineTotals.libre || 0;
+        const discount = readNum('remise');
+        const total = Math.max(0, subtotal - discount);
+
+        /* Récupérer email utilisateur connecté */
+        const { data: userData } = await supabase.auth.getUser();
+        const issuedBy = userData?.user?.email || 'contact@selogercm.com';
+
+        const payload = {
+          client_name:     clientName,
+          client_phone:    document.getElementById('clientPhone').value.trim() || null,
+          client_email:    document.getElementById('clientEmail').value.trim() || null,
+          client_address:  document.getElementById('clientAddress').value.trim() || null,
+          client_district: document.getElementById('clientDistrict').value.trim() || null,
+          property_type:   document.getElementById('propertyType').value.trim() || null,
+          property_ref:    document.getElementById('propertyRef').value.trim() || null,
+          line_items:      lineItems,
+          subtotal:        subtotal,
+          discount:        discount,
+          total:           total,
+          notes:           document.getElementById('invNotes').value.trim() || null,
+          issued_by:       issuedBy
+        };
+
+        /* Si pas encore d'ID, on insère ; sinon on update */
+        if (!currentInvoiceId) {
+          /* Détermine le numéro selon le mode (auto/manuel) */
+          const isManualMode = document.body.classList.contains('num-manual');
+          let invNum;
+          let numberSource;
+
+          if (isManualMode) {
+            const manualInput = document.getElementById('invNumManual');
+            const manualVal = manualInput.value.trim();
+            if (!isInvoiceNumberFormatValid(manualVal)) {
+              manualInput.classList.add('is-invalid');
+              throw new Error('Format invalide : utilise FAC-AAAA-NNNN (ex: FAC-2026-0042)');
+            }
+            const taken = await isInvoiceNumberTaken(supabase, manualVal);
+            if (taken) {
+              manualInput.classList.add('is-invalid');
+              throw new Error('Le numéro ' + manualVal + ' existe déjà');
+            }
+            invNum = manualVal;
+            numberSource = 'manual';
+          } else {
+            invNum = await getNextInvoiceNumber(supabase);
+            numberSource = 'auto';
+          }
+
+          payload.invoice_number = invNum;
+          payload.invoice_number_source = numberSource;
+          payload.status = 'emise';
+          payload.invoice_date = new Date().toISOString().substring(0, 10);
+          /* Liens FK : nullable, présent si autocomplete utilisé */
+          payload.client_id = selectedClient ? selectedClient.id : null;
+          payload.property_id = selectedProperty ? selectedProperty.id : null;
+
+          const { data, error } = await supabase.from('invoices').insert([payload]).select().single();
+          if (error) throw error;
+          currentInvoiceId = data.id;
+          currentInvoiceNum = data.invoice_number;
+          document.getElementById('invNum').textContent = 'N° ' + data.invoice_number;
+          /* Sortir du mode manuel après insert réussi, le numéro est désormais figé */
+          setNumberModeManual(false);
+          /* Garder le badge MANUEL si c'était une saisie manuelle (info utile à l'œil) */
+          if (numberSource === 'manual') {
+            const badge = document.getElementById('invNumBadge');
+            badge.textContent = 'MANUEL';
+            badge.classList.add('is-manual');
+          }
+          setStatusDisplay('emise');
+          showToast('Facture ' + data.invoice_number + ' enregistrée', 'success');
+          /* Facture finalisée : on efface le brouillon localStorage */
+          clearPersistedSelections();
+
+          /* Met l'URL à jour pour permettre le rechargement */
+          window.history.replaceState(null, '', '/facture.html?id=' + data.id);
+        } else {
+          /* Update : on remet aussi les FK (au cas où elles ont changé via détacher/re-sélectionner) */
+          payload.client_id = selectedClient ? selectedClient.id : null;
+          payload.property_id = selectedProperty ? selectedProperty.id : null;
+          const { error } = await supabase.from('invoices').update(payload).eq('id', currentInvoiceId);
+          if (error) throw error;
+          showToast('Facture mise à jour', 'success');
+        }
+      } catch (e) {
+        console.error('[facture] saveInvoice:', e);
+        showToast('Erreur : ' + (e.message || e), 'error');
+      } finally {
+        btnSave.disabled = false;
+        btnSave.textContent = '💾 Sauvegarder';
+      }
+    }
+    document.getElementById('btnSave').addEventListener('click', saveInvoice);
+
+    /* ─── Génération PDF ─── */
+    async function generatePDF() {
+      if (typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined') {
+        showToast('Libs PDF en cours de chargement, réessaie dans 2s', 'error');
+        return;
+      }
+      const btnPdf = document.getElementById('btnPdf');
+      btnPdf.disabled = true;
+      btnPdf.textContent = '⏳ Génération...';
+
+      /* Cache la barre d'actions et le sélecteur pendant la capture */
+      const actionsBar = document.getElementById('actionsBar');
+      const typeSelector = document.getElementById('typeSelector');
+      actionsBar.style.display = 'none';
+      typeSelector.style.display = 'none';
+
+      /* Numéro : fige la valeur manuelle en texte pour la capture (input rogné par html2canvas) */
+      const _mi = document.getElementById('invNumManual');
+      if (document.body.classList.contains('num-manual') && _mi && _mi.value.trim()) {
+        document.getElementById('invNum').textContent = 'N° ' + _mi.value.trim();
+      }
+
+      /* Active le mode "printing" : masque pointillés et placeholders dans le rendu */
+      document.body.classList.add('printing');
+
+      const doc = document.getElementById('invoiceDoc');
+
+      /* ── Anti-troncature ──────────────────────────────────────────
+         html2canvas rastérise chaque <input> sur UNE seule ligne et rogne
+         ce qui dépasse (texte à droite + bas des lettres g/y/p + accents).
+         On remplace temporairement chaque champ par un <div> qui passe à la
+         ligne et rend le texte en entier. Restauré dans le finally. */
+      function freezeFieldsForCapture(root) {
+        const fields = root.querySelectorAll('input.editable, input.num-input, input.remise-input, textarea#invNotes');
+        const restores = [];
+        fields.forEach(el => {
+          const cs = getComputedStyle(el);
+          const div = document.createElement('div');
+          const val = (el.value != null ? el.value : '');
+          if (val.trim() === '') div.innerHTML = '&nbsp;';
+          else div.textContent = val;
+          div.style.font          = cs.font;
+          div.style.color         = cs.color;
+          div.style.letterSpacing = cs.letterSpacing;
+          div.style.textAlign     = cs.textAlign;
+          div.style.lineHeight    = '1.45';
+          div.style.paddingBottom = '2px';
+          div.style.whiteSpace    = 'pre-wrap';
+          div.style.wordBreak     = 'break-word';
+          div.style.overflowWrap  = 'break-word';
+          const isNum  = el.classList.contains('num-input') || el.classList.contains('remise-input');
+          const isProp = el.id && el.id.indexOf('property') === 0;
+          if (isNum || isProp) {
+            div.style.display = 'inline-block';
+            div.style.verticalAlign = 'top';
+            if (isNum) div.style.minWidth = '40px';
+          } else {
+            div.style.display = 'block';
+            div.style.width = '100%';
+          }
+          el.style.display = 'none';
+          el.parentNode.insertBefore(div, el.nextSibling);
+          restores.push(() => { div.remove(); el.style.display = ''; });
+        });
+        return () => restores.forEach(fn => fn());
+      }
+      const restoreFrozenFields = freezeFieldsForCapture(doc);
+
+      try {
+        const canvas = await html2canvas(doc, {
+          scale: 2,
+          useCORS: true,
+          backgroundColor: '#fff',
+          logging: false
+        });
+
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+        const pageW = pdf.internal.pageSize.getWidth();   // 210 mm
+        const pageH = pdf.internal.pageSize.getHeight();  // 297 mm
+        const margin = 10;                                 // marge 10mm
+        const usableW = pageW - margin * 2;                // 190 mm
+        const usableH = pageH - margin * 2;                // 277 mm
+
+        /* Calcul de la hauteur réelle de l'image dans le PDF */
+        const imgRatio = canvas.height / canvas.width;
+        const imgW = usableW;
+        const imgH = imgW * imgRatio;                      // hauteur si on déploie sur largeur utile
+
+        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+
+        if (imgH <= usableH) {
+          /* L'image tient sur 1 page : on la place en haut (pas centrée).
+             Le footer sera en bas grâce au flexbox de .invoice */
+          pdf.addImage(imgData, 'JPEG', margin, margin, imgW, imgH);
+        } else {
+          /* L'image dépasse 1 page : on la découpe en plusieurs pages.
+             Technique : ajouter l'image complète à chaque page avec un yOffset négatif
+             qui décale d'1 page vers le haut à chaque itération. */
+          let remainingH = imgH;
+          let yPos = margin;
+          let pageNum = 0;
+          while (remainingH > 0) {
+            if (pageNum > 0) {
+              pdf.addPage();
+              yPos = margin;
+            }
+            /* yOffset négatif décale l'image vers le haut pour montrer la "tranche" suivante */
+            const pageOffset = -(pageNum * usableH);
+            pdf.addImage(imgData, 'JPEG', margin, yPos + pageOffset, imgW, imgH);
+            remainingH -= usableH;
+            pageNum++;
+            /* Sécurité : pas plus de 5 pages (sinon il y a un problème) */
+            if (pageNum > 5) break;
+          }
+        }
+
+        const num = currentInvoiceNum || ('FAC-' + new Date().getFullYear() + '-XXXX');
+        const clientName = (document.getElementById('clientName').value || 'client').replace(/[^a-z0-9]+/gi, '_');
+        pdf.save('Facture_' + num + '_' + clientName + '.pdf');
+        showToast('PDF généré', 'success');
+      } catch (e) {
+        console.error('[facture] generatePDF:', e);
+        showToast('Erreur PDF : ' + (e.message || e), 'error');
+      } finally {
+        /* Toujours restaurer les champs, retirer le mode printing et la barre d'actions */
+        restoreFrozenFields();
+        document.body.classList.remove('printing');
+        actionsBar.style.display = '';
+        typeSelector.style.display = '';
+        btnPdf.disabled = false;
+        btnPdf.textContent = '📄 Générer PDF';
+      }
+    }
+    document.getElementById('btnPdf').addEventListener('click', generatePDF);
+
+    /* ─── Chargement d'une facture existante via ?id=UUID ─── */
+    async function loadInvoiceFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const id = params.get('id');
+      if (!id) return;
+
+      try {
+        const supabase = await window.SLCM_DB.init();
+        if (!supabase) return;
+
+        const { data, error } = await supabase.from('invoices').select('*').eq('id', id).single();
+        if (error || !data) {
+          showToast('Facture introuvable', 'error');
+          return;
+        }
+
+        currentInvoiceId  = data.id;
+        currentInvoiceNum = data.invoice_number;
+        document.getElementById('invNum').textContent = 'N° ' + data.invoice_number;
+        setInvoiceDate(data.invoice_date);
+        setStatusDisplay(data.status || 'emise');
+
+        /* Affiche le bon badge selon la source du numéro (lecture seule, on ne peut
+           plus changer le numéro d'une facture existante) */
+        const badge = document.getElementById('invNumBadge');
+        const toggle = document.getElementById('invNumToggle');
+        if (data.invoice_number_source === 'manual') {
+          badge.textContent = 'MANUEL';
+          badge.classList.add('is-manual');
+        } else {
+          badge.textContent = 'AUTO';
+          badge.classList.remove('is-manual');
+        }
+        /* Facture déjà existante : on cache le toggle, le numéro est figé */
+        toggle.style.display = 'none';
+
+        document.getElementById('clientName').value     = data.client_name     || '';
+        document.getElementById('clientPhone').value    = data.client_phone    || '';
+        document.getElementById('clientEmail').value    = data.client_email    || '';
+        document.getElementById('clientAddress').value  = data.client_address  || '';
+        document.getElementById('clientDistrict').value = data.client_district || '';
+        document.getElementById('propertyType').value   = data.property_type   || '';
+        document.getElementById('propertyRef').value    = data.property_ref    || '';
+        document.getElementById('invNotes').value       = data.notes           || '';
+        document.getElementById('remise').value         = data.discount        || 0;
+
+        /* Reconstruire les line_items + activer les bons types */
+        activeTypes.clear();
+        (data.line_items || []).forEach(item => {
+          if (item.type === 'libre') {
+            document.getElementById('desc-libre-main').value = item.label || '';
+            document.getElementById('desc-libre-d1').value   = item.detail1 || '';
+            document.getElementById('base-libre').value      = item.base || '';
+            document.getElementById('taux-libre').value      = item.rate || '';
+            lineTotals.libre = item.amount || 0;
+            const c = document.getElementById('total-libre');
+            if (c) c.textContent = fmtFCFA(item.amount);
+          } else {
+            activeTypes.add(item.type);
+            document.getElementById('desc-' + item.type + '-main').value = item.label   || '';
+            document.getElementById('desc-' + item.type + '-d1').value   = item.detail1 || '';
+            document.getElementById('desc-' + item.type + '-d2').value   = item.detail2 || '';
+            document.getElementById('base-' + item.type).value           = item.base    || '';
+            if (item.type === 'vente') document.getElementById('taux-vente').value = item.rate || '';
+            if (item.type === 'visite') document.getElementById('taux-visite').value = item.rate || '';
+            lineTotals[item.type] = item.amount || 0;
+            const c = document.getElementById('total-' + item.type);
+            if (c) c.textContent = fmtFCFA(item.amount);
+          }
+        });
+
+        /* Si aucun type actif (cas extreme), réactiver location par défaut */
+        if (activeTypes.size === 0) activeTypes.add('location');
+
+        /* Mettre à jour visuellement les boutons type */
+        document.querySelectorAll('.type-btn').forEach(btn => {
+          btn.classList.toggle('active', activeTypes.has(btn.dataset.type));
+        });
+        updateRows();
+        calcTotals();
+
+        /* Si la facture est liée à un client/bien existant, restaurer le badge */
+        if (data.client_id) {
+          try {
+            const { data: cli } = await supabase
+              .from('clients')
+              .select('id, name, phone, email, address, district')
+              .eq('id', data.client_id)
+              .single();
+            if (cli) {
+              selectedClient = cli;
+              if (typeof refreshClientUI === 'function') refreshClientUI();
+            }
+          } catch (e) { /* lien cassé : on continue en mode libre */ }
+        }
+        if (data.property_id) {
+          try {
+            const { data: prop } = await supabase
+              .from('properties')
+              .select('id, type, district, ref')
+              .eq('id', data.property_id)
+              .single();
+            if (prop) {
+              selectedProperty = prop;
+              if (typeof refreshPropertyUI === 'function') refreshPropertyUI();
+            }
+          } catch (e) {}
+        }
+
+        showToast('Facture ' + data.invoice_number + ' chargée', 'info');
+      } catch (e) {
+        console.error('[facture] loadInvoiceFromUrl:', e);
+      }
+    }
+
+    /* Init au chargement */
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', loadInvoiceFromUrl);
+    } else {
+      loadInvoiceFromUrl();
+    }
+  })();
+  </script>
+</body>
+</html>

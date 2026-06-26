@@ -12,22 +12,37 @@ const clientsBtn = document.getElementById('clients-btn');
 const propertiesBtn = document.getElementById('properties-btn');
 const activitiesBtn = document.getElementById('activities-btn');
 const paymentsBtn = document.getElementById('payments-btn');
+const invoicesBtn = document.getElementById('invoices-btn');
 const tasksBtn = document.getElementById('tasks-btn');
 const automationBtn = document.getElementById('automation-btn');
 const pipelineBtn = document.getElementById('pipeline-btn');
 
-// Event listeners
-dashboardBtn.addEventListener('click', showDashboard);
-clientsBtn.addEventListener('click', showClients);
-propertiesBtn.addEventListener('click', showProperties);
-activitiesBtn.addEventListener('click', showActivities);
-paymentsBtn.addEventListener('click', showPayments);
-tasksBtn.addEventListener('click', showTasks);
-automationBtn.addEventListener('click', showAutomation);
-pipelineBtn.addEventListener('click', showPipeline);
+// Event listeners — wrappés pour marquer l'état actif dans la sidebar
+function setActiveNav(btn) {
+  document.querySelectorAll('header nav button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+}
+
+function navTo(btn, fn) {
+  return () => {
+    setActiveNav(btn);
+    if (typeof fn === 'function') fn();
+  };
+}
+
+dashboardBtn.addEventListener('click', navTo(dashboardBtn, showDashboard));
+clientsBtn.addEventListener('click', navTo(clientsBtn, showClients));
+propertiesBtn.addEventListener('click', navTo(propertiesBtn, showProperties));
+activitiesBtn.addEventListener('click', navTo(activitiesBtn, showActivities));
+paymentsBtn.addEventListener('click', navTo(paymentsBtn, showPayments));
+invoicesBtn.addEventListener('click', () => { window.location.href = 'facture.html'; });
+tasksBtn.addEventListener('click', navTo(tasksBtn, showTasks));
+automationBtn.addEventListener('click', navTo(automationBtn, showAutomation));
+pipelineBtn.addEventListener('click', navTo(pipelineBtn, showPipeline));
 
 // Initialize
-mainContent.innerHTML = '<div class="loading"><div class="spinner"></div>Chargement...</div>';
+mainContent.innerHTML = '<div class="loading"><div class="spinner"></div><div>Chargement…</div></div>';
+setActiveNav(dashboardBtn);
 showDashboard();
 
 window.addEventListener('error', event => {
@@ -247,7 +262,7 @@ function getSuggestionTypeLabel(type) {
 function copyTemplate(type, templateKey) {
   const template = messageTemplates[type][templateKey];
   navigator.clipboard.writeText(template).then(() => {
-    alert('Template copié dans le presse-papiers !');
+    UI.toast('Template copié dans le presse-papiers', 'success');
   });
 }
 
@@ -274,11 +289,11 @@ async function createActivityFromSuggestion(index) {
     const { error } = await supabaseClient.from('activities').insert([activity]);
     if (error) throw error;
 
-    alert('Activité de relance créée !');
+    UI.toast('Activité de relance créée', 'success');
     showAutomation(); // Rafraîchir
   } catch (error) {
     console.error('Erreur lors de la création de l\'activité:', error);
-    alert('Erreur : ' + (error.message || error.toString()));
+    UI.handleError(error);
   }
 }
 
@@ -478,6 +493,7 @@ function initCharts(statusData, statusLabels, sourceStats) {
 }
 
 async function showClients() {
+  UI.showLoading();
   const clients = await getAll('clients');
   mainContent.innerHTML = `
     <h2>Clients</h2>
@@ -574,7 +590,7 @@ async function saveClient(id) {
     showClients();
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement du client:', error);
-    alert('Erreur : ' + (error.message || error.toString()));
+    UI.handleError(error);
   }
 }
 
@@ -587,6 +603,7 @@ function toggleClientSourceDetail() {
 }
 
 async function showProperties() {
+  UI.showLoading();
   const properties = await getAll('properties');
   mainContent.innerHTML = `
     <h2>Propriétés</h2>
@@ -664,11 +681,12 @@ async function saveProperty(id) {
     showProperties();
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement de la propriété:', error);
-    alert('Erreur : ' + (error.message || error.toString()));
+    UI.handleError(error);
   }
 }
 
 async function showActivities() {
+  UI.showLoading();
   const activities = await getAll('activities');
   mainContent.innerHTML = `
     <h2>Journal d'activités</h2>
@@ -756,20 +774,21 @@ async function saveActivity(id) {
     showActivities();
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement de l\'activité:', error);
-    alert('Erreur : ' + (error.message || error.toString()));
+    UI.handleError(error);
   }
 }
 
 async function editActivity(id) {
   const activity = await getById('activities', id);
   if (!activity) {
-    alert('Activité non trouvée');
+    UI.toast('Activité non trouvée', 'error');
     return;
   }
   showActivityForm(activity);
 }
 
 async function showTasks() {
+  UI.showLoading();
   const tasks = await getAll('tasks');
   mainContent.innerHTML = `
     <h2>Tâches</h2>
@@ -833,7 +852,7 @@ async function saveTask(id) {
     showTasks();
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement de la tâche:', error);
-    alert('Erreur : ' + (error.message || error.toString()));
+    UI.handleError(error);
   }
 }
 
@@ -849,6 +868,7 @@ function displayError(message) {
 
 // Pipeline de vente
 async function showPipeline() {
+  UI.showLoading();
   const clients = await getAll('clients');
   
   const stages = ['nouvelle demande', 'visite', 'négociation', 'signé'];
@@ -978,7 +998,7 @@ async function updateClientStatus(clientId, newStatus) {
     showPipeline(); // Rafraîchir
   } catch (error) {
     console.error('Erreur lors de la mise à jour:', error);
-    alert('Erreur : ' + (error.message || error.toString()));
+    UI.handleError(error);
   }
 }
 
@@ -1097,7 +1117,7 @@ async function getById(table, id) {
 async function editClient(id) {
   const client = await getById('clients', id);
   if (!client) {
-    alert('Client non trouvé');
+    UI.toast('Client non trouvé', 'error');
     return;
   }
   showClientForm(client);
@@ -1106,7 +1126,7 @@ async function editClient(id) {
 async function editProperty(id) {
   const property = await getById('properties', id);
   if (!property) {
-    alert('Propriété non trouvée');
+    UI.toast('Propriété non trouvée', 'error');
     return;
   }
   showPropertyForm(property);
@@ -1115,13 +1135,14 @@ async function editProperty(id) {
 async function editTask(id) {
   const task = await getById('tasks', id);
   if (!task) {
-    alert('Tâche non trouvée');
+    UI.toast('Tâche non trouvée', 'error');
     return;
   }
   showTaskForm(task);
 }
 
 async function showPayments() {
+  UI.showLoading();
   const payments = await getAll('payments');
   const clients = await getAll('clients');
   const properties = await getAll('properties');
@@ -1211,14 +1232,14 @@ async function savePayment(id) {
     showPayments();
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement du paiement:', error);
-    alert('Erreur : ' + (error.message || error.toString()));
+    UI.handleError(error);
   }
 }
 
 async function editPayment(id) {
   const payment = await getById('payments', id);
   if (!payment) {
-    alert('Paiement non trouvé');
+    UI.toast('Paiement non trouvé', 'error');
     return;
   }
   showPaymentForm(payment);
