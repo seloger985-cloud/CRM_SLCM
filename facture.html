@@ -675,7 +675,7 @@ table.inv-table {
   <!-- Libs externes (CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script src="assets/js/ui.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <!-- html2canvas retiré : PDF rendu nativement par jsPDF (zéro rasterisation, zéro troncature) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
   <script>
@@ -1503,137 +1503,370 @@ table.inv-table {
     }
     document.getElementById('btnSave').addEventListener('click', saveInvoice);
 
-    /* ─── Génération PDF ─── */
+    /* ════════════════════════════════════════════════════════════════
+       generatePDF — RENDU NATIF jsPDF (plus de html2canvas)
+       Chaque champ est dessiné via pdf.text() ; les textes longs passent
+       par splitTextToSize() (wrap natif). Aucune rasterisation d'<input>,
+       donc AUCUNE troncature possible. Réutilise la logique métier déjà
+       en place : activeTypes, lineTotals, readNum, frenchAmountWords.
+       ════════════════════════════════════════════════════════════════ */
     async function generatePDF() {
-      if (typeof html2canvas === 'undefined' || typeof window.jspdf === 'undefined') {
-        showToast('Libs PDF en cours de chargement, réessaie dans 2s', 'error');
+      if (typeof window.jspdf === 'undefined') {
+        showToast('Lib PDF en cours de chargement, réessaie dans 2s', 'error');
         return;
       }
       const btnPdf = document.getElementById('btnPdf');
       btnPdf.disabled = true;
       btnPdf.textContent = '⏳ Génération...';
 
-      /* Cache la barre d'actions et le sélecteur pendant la capture */
-      const actionsBar = document.getElementById('actionsBar');
-      const typeSelector = document.getElementById('typeSelector');
-      actionsBar.style.display = 'none';
-      typeSelector.style.display = 'none';
-
-      /* Numéro : fige la valeur manuelle en texte pour la capture (input rogné par html2canvas) */
-      const _mi = document.getElementById('invNumManual');
-      if (document.body.classList.contains('num-manual') && _mi && _mi.value.trim()) {
-        document.getElementById('invNum').textContent = 'N° ' + _mi.value.trim();
-      }
-
-      /* Active le mode "printing" : masque pointillés et placeholders dans le rendu */
-      document.body.classList.add('printing');
-
-      const doc = document.getElementById('invoiceDoc');
-
-      /* ── Anti-troncature ──────────────────────────────────────────
-         html2canvas rastérise chaque <input> sur UNE seule ligne et rogne
-         ce qui dépasse (texte à droite + bas des lettres g/y/p + accents).
-         On remplace temporairement chaque champ par un <div> qui passe à la
-         ligne et rend le texte en entier. Restauré dans le finally. */
-      function freezeFieldsForCapture(root) {
-        const fields = root.querySelectorAll('input.editable, input.num-input, input.remise-input, textarea#invNotes');
-        const restores = [];
-        fields.forEach(el => {
-          const cs = getComputedStyle(el);
-          const div = document.createElement('div');
-          const val = (el.value != null ? el.value : '');
-          if (val.trim() === '') div.innerHTML = '&nbsp;';
-          else div.textContent = val;
-          div.style.font          = cs.font;
-          div.style.color         = cs.color;
-          div.style.letterSpacing = cs.letterSpacing;
-          div.style.textAlign     = cs.textAlign;
-          div.style.lineHeight    = '1.45';
-          div.style.paddingBottom = '2px';
-          div.style.whiteSpace    = 'pre-wrap';
-          div.style.wordBreak     = 'break-word';
-          div.style.overflowWrap  = 'break-word';
-          const isNum  = el.classList.contains('num-input') || el.classList.contains('remise-input');
-          const isProp = el.id && el.id.indexOf('property') === 0;
-          if (isNum || isProp) {
-            div.style.display = 'inline-block';
-            div.style.verticalAlign = 'top';
-            if (isNum) div.style.minWidth = '40px';
-          } else {
-            div.style.display = 'block';
-            div.style.width = '100%';
-          }
-          el.style.display = 'none';
-          el.parentNode.insertBefore(div, el.nextSibling);
-          restores.push(() => { div.remove(); el.style.display = ''; });
-        });
-        return () => restores.forEach(fn => fn());
-      }
-      const restoreFrozenFields = freezeFieldsForCapture(doc);
-
       try {
-        const canvas = await html2canvas(doc, {
-          scale: 2,
-          useCORS: true,
-          backgroundColor: '#fff',
-          logging: false
-        });
-
         const { jsPDF } = window.jspdf;
-        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
 
-        const pageW = pdf.internal.pageSize.getWidth();   // 210 mm
-        const pageH = pdf.internal.pageSize.getHeight();  // 297 mm
-        const margin = 10;                                 // marge 10mm
-        const usableW = pageW - margin * 2;                // 190 mm
-        const usableH = pageH - margin * 2;                // 277 mm
+        /* ── Géométrie page ── */
+        const PW = 210, PH = 297;
+        const M  = 14;                 // marge gauche/droite
+        const CW = PW - M * 2;         // largeur contenu = 182mm
+        const RX = M + CW;             // bord droit du contenu
 
-        /* Calcul de la hauteur réelle de l'image dans le PDF */
-        const imgRatio = canvas.height / canvas.width;
-        const imgW = usableW;
-        const imgH = imgW * imgRatio;                      // hauteur si on déploie sur largeur utile
+        /* ── Palette marque ── */
+        const ORANGE = [255, 122, 0];
+        const ORANGE_SOFT = [247, 205, 168]; // filets de ligne (≈ orange 25%)
+        const ORANGE_BG = [255, 248, 240];   // fond #fff8f0
+        const INK   = [21, 22, 27];          // #15161b
+        const GREY  = [102, 102, 102];       // #666
+        const GREY2 = [51, 51, 51];          // #333
+        const GREY3 = [68, 68, 68];          // #444 (détails)
+        const BOX_BG = [249, 249, 249];      // #f9f9f9
 
-        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+        let y = 16;
 
-        if (imgH <= usableH) {
-          /* L'image tient sur 1 page : on la place en haut (pas centrée).
-             Le footer sera en bas grâce au flexbox de .invoice */
-          pdf.addImage(imgData, 'JPEG', margin, margin, imgW, imgH);
-        } else {
-          /* L'image dépasse 1 page : on la découpe en plusieurs pages.
-             Technique : ajouter l'image complète à chaque page avec un yOffset négatif
-             qui décale d'1 page vers le haut à chaque itération. */
-          let remainingH = imgH;
-          let yPos = margin;
-          let pageNum = 0;
-          while (remainingH > 0) {
-            if (pageNum > 0) {
-              pdf.addPage();
-              yPos = margin;
+        /* ── Helpers texte ── */
+        const PT = 0.352778;                         // 1pt en mm
+        const lh = (size, mult) => size * PT * (mult || 1.3);
+
+        function font(style, size, color) {
+          pdf.setFont('helvetica', style);
+          pdf.setFontSize(size);
+          if (color) pdf.setTextColor(color[0], color[1], color[2]);
+        }
+        function wrap(str, size, style, maxW) {
+          font(style, size);
+          return pdf.splitTextToSize(String(str == null ? '' : str), maxW);
+        }
+        /* Texte multi-runs (gras/normal mélangés) avec wrap mot à mot.
+           dry=true : ne dessine rien, sert juste à mesurer la hauteur. */
+        function drawRich(runs, x, yy, maxW, lineH, dry) {
+          let cx = x, cy = yy, lines = 1;
+          for (const run of runs) {
+            font(run.b ? 'bold' : (run.i ? 'italic' : 'normal'), run.size, run.color || GREY2);
+            const parts = run.t.split(/(\s+)/);
+            for (const w of parts) {
+              if (w === '') continue;
+              const ww = pdf.getTextWidth(w);
+              if (cx + ww > x + maxW && cx > x) { cx = x; cy += lineH; lines++; }
+              if (cx === x && /^\s+$/.test(w)) continue; // pas d'espace en début de ligne
+              if (!dry) pdf.text(w, cx, cy);
+              cx += ww;
             }
-            /* yOffset négatif décale l'image vers le haut pour montrer la "tranche" suivante */
-            const pageOffset = -(pageNum * usableH);
-            pdf.addImage(imgData, 'JPEG', margin, yPos + pageOffset, imgW, imgH);
-            remainingH -= usableH;
-            pageNum++;
-            /* Sécurité : pas plus de 5 pages (sinon il y a un problème) */
-            if (pageNum > 5) break;
           }
+          return { y: cy, lines };
         }
 
-        const num = currentInvoiceNum || ('FAC-' + new Date().getFullYear() + '-XXXX');
-        const clientName = (document.getElementById('clientName').value || 'client').replace(/[^a-z0-9]+/gi, '_');
-        pdf.save('Facture_' + num + '_' + clientName + '.pdf');
+        /* ── Formatage nombres (espaces insécables U+00A0 → glyphe sûr Helvetica) ── */
+        const grp = s => String(s).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00A0');
+        const fmtFCFApdf = n => { n = Math.round(Number(n) || 0); return n === 0 ? '\u2014' : grp(String(n)) + ' FCFA'; };
+        const fmtNum = n => grp(String(Math.round(Math.abs(Number(n) || 0))));
+        function fmtNumOrText(s) {
+          s = (s || '').trim();
+          if (!s) return '';
+          const c = s.replace(/[\s\u00A0]/g, '').replace(',', '.');
+          if (/^\d+(\.\d+)?$/.test(c)) return grp(String(Math.round(parseFloat(c))));
+          return s;
+        }
+        /* Assainit le texte : les polices standard jsPDF ne mappent pas les
+           exposants (² ³ …). On les ramène en chiffres normaux (m² → m2). */
+        const SUP = { '\u00B2': '2', '\u00B3': '3', '\u00B9': '1', '\u2070': '0',
+                      '\u2074': '4', '\u2075': '5', '\u2076': '6', '\u2077': '7',
+                      '\u2078': '8', '\u2079': '9' };
+        const safe = s => String(s == null ? '' : s)
+          .replace(/[\u00B2\u00B3\u00B9\u2070\u2074-\u2079]/g, c => SUP[c] || c);
+        const val = id => { const el = document.getElementById(id); return el ? safe(String(el.value || '').trim()) : ''; };
+
+        /* ── Numéro & date ── */
+        const _mi = document.getElementById('invNumManual');
+        let numText;
+        if (document.body.classList.contains('num-manual') && _mi && _mi.value.trim()) {
+          numText = 'N° ' + _mi.value.trim();
+        } else if (typeof currentInvoiceNum !== 'undefined' && currentInvoiceNum) {
+          numText = 'N° ' + currentInvoiceNum;
+        } else {
+          numText = (document.getElementById('invNum').textContent || '').trim()
+                    || ('N° FAC-' + new Date().getFullYear() + '-XXXX');
+        }
+        const dateText = safe((document.getElementById('invDate').textContent || '').trim()) || 'Émise le —';
+
+        /* ════════ HEADER ════════ */
+        // Monogramme orange
+        pdf.setFillColor(ORANGE[0], ORANGE[1], ORANGE[2]);
+        pdf.roundedRect(M, y, 12, 12, 2.5, 2.5, 'F');
+        font('bold', 13, [255, 255, 255]);
+        pdf.text('SL', M + 6, y + 7.7, { align: 'center' });
+        // Bloc marque
+        const bx = M + 16;
+        font('bold', 18, INK);   pdf.text('SE LOGER CM', bx, y + 4.6);
+        font('italic', 9, GREY); pdf.text('Unique Solutions, Smart Living', bx, y + 9);
+        font('normal', 8, GREY); pdf.text('RCCM DLA-02-2024-A10-00712 — NIU PO68916714973N', bx, y + 12.8);
+        // Méta droite
+        font('bold', 17, INK);   pdf.text('FACTURE', RX, y + 4, { align: 'right', charSpace: 0.6 });
+        font('bold', 10, INK);   pdf.text(numText, RX, y + 10, { align: 'right' });
+        font('normal', 9, GREY); pdf.text(dateText, RX, y + 14.5, { align: 'right' });
+        // Filet orange épais
+        y += 19;
+        pdf.setDrawColor(ORANGE[0], ORANGE[1], ORANGE[2]); pdf.setLineWidth(0.8);
+        pdf.line(M, y, RX, y);
+        y += 9;
+
+        /* ════════ PARTIES (émetteur | facturé à) ════════ */
+        const gap = 10;
+        const colW = (CW - gap) / 2;          // 86mm
+        const leftX = M;
+        const rightX = M + colW + gap;        // 110
+        const partsTop = y;
+
+        // -- Colonne gauche : Émetteur (statique) --
+        let ly = partsTop;
+        font('normal', 8.5, GREY); pdf.text('ÉMETTEUR', leftX, ly, { charSpace: 0.4 }); ly += 6;
+        font('bold', 11, INK);     pdf.text('SE LOGER CM', leftX, ly); ly += 6;
+        font('normal', 9.5, GREY2);
+        ['Boulevard de la République', 'Bonamoussadi, Douala', '(+237) 650 840 714', 'contact@selogercm.com']
+          .forEach(line => { pdf.text(line, leftX, ly); ly += 5; });
+        const leftBottom = ly;
+
+        // -- Colonne droite : Facturé à (encadré gris + filet orange) --
+        const padX = 6, innerX = rightX + padX, innerW = colW - padX * 2;
+        const clientName = val('clientName') || '\u2014';
+        const clientLines = ['clientAddress', 'clientDistrict', 'clientPhone', 'clientEmail']
+          .map(id => val(id)).filter(Boolean);
+        // Pré-mesure : on calcule les lignes wrappées pour connaître la hauteur de la boîte
+        const nameWrap = wrap(clientName, 11, 'bold', innerW);
+        const detailWrap = clientLines.map(t => wrap(t, 9.5, 'normal', innerW));
+        let boxInner = 5;                       // padding haut
+        boxInner += 4.5;                         // label "FACTURÉ À"
+        boxInner += nameWrap.length * lh(11);    // nom
+        boxInner += 1.5;
+        detailWrap.forEach(arr => { boxInner += arr.length * lh(9.5); });
+        boxInner += 4;                           // padding bas
+        const boxH = boxInner;
+
+        // Fond + filet orange gauche
+        pdf.setFillColor(BOX_BG[0], BOX_BG[1], BOX_BG[2]);
+        pdf.rect(rightX, partsTop - 4, colW, boxH, 'F');
+        pdf.setFillColor(ORANGE[0], ORANGE[1], ORANGE[2]);
+        pdf.rect(rightX, partsTop - 4, 1, boxH, 'F');
+        // Contenu
+        let ry = partsTop + 1;
+        font('normal', 8.5, GREY); pdf.text('FACTURÉ À', innerX, ry, { charSpace: 0.4 }); ry += 5;
+        font('bold', 11, INK);
+        nameWrap.forEach(l => { pdf.text(l, innerX, ry); ry += lh(11); });
+        ry += 1.5;
+        font('normal', 9.5, GREY2);
+        detailWrap.forEach(arr => { arr.forEach(l => { pdf.text(l, innerX, ry); ry += lh(9.5); }); });
+
+        y = Math.max(leftBottom, partsTop - 4 + boxH) + 10;
+
+        /* ════════ RÉFÉRENCE BIEN (inline, wrap, filet orange dessous) ════════ */
+        const refRuns = [];
+        const propType = val('propertyType'), propDist = val('propertyDistrict'), propRef = val('propertyRef');
+        refRuns.push({ t: 'Bien : ', b: true, size: 9.5, color: INK });
+        refRuns.push({ t: (propType || '\u2014') + '    ', size: 9.5, color: GREY2 });
+        refRuns.push({ t: 'Quartier bien : ', b: true, size: 9.5, color: INK });
+        refRuns.push({ t: (propDist || '\u2014') + '    ', size: 9.5, color: GREY2 });
+        refRuns.push({ t: 'Réf : ', b: true, size: 9.5, color: INK });
+        refRuns.push({ t: (propRef || '\u2014'), size: 9.5, color: GREY2 });
+        const refEnd = drawRich(refRuns, M, y, CW, lh(9.5));
+        y = refEnd.y + 4;
+        pdf.setDrawColor(ORANGE[0], ORANGE[1], ORANGE[2]); pdf.setLineWidth(0.4);
+        pdf.line(M, y, RX, y);
+        y += 7;
+
+        /* ════════ TABLEAU PRESTATIONS ════════ */
+        const descX = M;
+        const descColW = CW * 0.46 - 3;
+        const baseRight = M + CW * 0.64;
+        const tauxRight = M + CW * 0.76;
+        const montRight = RX;
+
+        // En-tête colonnes
+        font('bold', 8.5, INK);
+        pdf.text('PRESTATION & DESCRIPTION', descX, y, { charSpace: 0.3 });
+        pdf.text('BASE DE CALCUL', baseRight, y, { align: 'right', charSpace: 0.3 });
+        pdf.text('TAUX', tauxRight, y, { align: 'right', charSpace: 0.3 });
+        pdf.text('MONTANT (FCFA)', montRight, y, { align: 'right', charSpace: 0.3 });
+        y += 3;
+        pdf.setDrawColor(ORANGE[0], ORANGE[1], ORANGE[2]); pdf.setLineWidth(0.5);
+        pdf.line(M, y, RX, y);
+        y += 5;
+
+        // Construction des lignes selon activeTypes (+ libre si renseignée)
+        const defaults = {
+          location: 'Commission de location', vente: 'Commission de vente',
+          visite: 'Frais de visite', commercial: 'Mise en location commerciale'
+        };
+        function baseTaux(t) {
+          if (t === 'location' || t === 'commercial') return [fmtNumOrText(val('base-' + t)), '1 mois'];
+          if (t === 'vente')   return [fmtNumOrText(val('base-vente')), (val('taux-vente') ? val('taux-vente') + ' %' : '')];
+          if (t === 'visite')  return [fmtNumOrText(val('base-visite')), fmtNumOrText(val('taux-visite'))];
+          return ['', ''];
+        }
+        const rows = [];
+        ['location', 'vente', 'visite', 'commercial'].forEach(t => {
+          if (typeof activeTypes !== 'undefined' && !activeTypes.has(t)) return;
+          const [b, tx] = baseTaux(t);
+          rows.push({
+            main: val('desc-' + t + '-main') || defaults[t],
+            d1: val('desc-' + t + '-d1'), d2: val('desc-' + t + '-d2'),
+            base: b, taux: tx, montant: fmtFCFApdf(lineTotals[t] || 0)
+          });
+        });
+        const libreMain = val('desc-libre-main');
+        if (libreMain || (lineTotals.libre || 0) > 0) {
+          rows.push({
+            main: libreMain || 'Prestation complémentaire', d1: val('desc-libre-d1'), d2: '',
+            base: fmtNumOrText(val('base-libre')), taux: fmtNumOrText(val('taux-libre')),
+            montant: fmtFCFApdf(lineTotals.libre || 0)
+          });
+        }
+
+        function need(h) { if (y + h > PH - 18) { pdf.addPage(); y = 16; } }
+
+        rows.forEach(r => {
+          const mainLines = wrap(r.main, 10, 'bold', descColW);
+          const d1Lines = r.d1 ? wrap(r.d1, 9.5, 'normal', descColW) : [];
+          const d2Lines = r.d2 ? wrap(r.d2, 9.5, 'normal', descColW) : [];
+          const textH = mainLines.length * lh(10) + (d1Lines.length + d2Lines.length) * lh(9.5);
+          const rowH = Math.max(textH, 6) + 8;
+          need(rowH);
+
+          let ty = y + 4 + lh(10) - 1.5; // baseline 1ʳᵉ ligne (top-aligné)
+          // Cellules base/taux/montant alignées sur la 1ʳᵉ ligne
+          font('normal', 9.5, GREY2);
+          if (r.base) pdf.text(r.base, baseRight, ty, { align: 'right' });
+          if (r.taux) pdf.text(r.taux, tauxRight, ty, { align: 'right' });
+          font('bold', 9.5, INK);
+          if (r.montant && r.montant !== '\u2014') pdf.text(r.montant, montRight, ty, { align: 'right' });
+          else { font('normal', 9.5, GREY); pdf.text('\u2014', montRight, ty, { align: 'right' }); }
+          // Description (gras + détails)
+          font('bold', 10, INK);
+          mainLines.forEach(l => { pdf.text(l, descX, ty); ty += lh(10); });
+          font('normal', 9.5, GREY3);
+          d1Lines.forEach(l => { pdf.text(l, descX, ty); ty += lh(9.5); });
+          d2Lines.forEach(l => { pdf.text(l, descX, ty); ty += lh(9.5); });
+
+          y += rowH;
+          pdf.setDrawColor(ORANGE_SOFT[0], ORANGE_SOFT[1], ORANGE_SOFT[2]); pdf.setLineWidth(0.2);
+          pdf.line(M, y, RX, y);
+        });
+        y += 8;
+
+        /* ════════ TOTAUX (recalculés — source unique de vérité) ════════ */
+        let sub = 0;
+        ['location', 'vente', 'visite', 'commercial'].forEach(t => {
+          if (typeof activeTypes === 'undefined' || activeTypes.has(t)) sub += lineTotals[t] || 0;
+        });
+        sub += lineTotals.libre || 0;
+        const remise = readNum('remise');
+        const baseAmt = Math.max(0, sub - remise);
+        const tvaRate = readNum('tvaRate');
+        const tva = Math.round(baseAmt * tvaRate / 100);
+        const grand = baseAmt + tva;
+
+        need(48);
+        const tLabelX = RX - 92, tValX = RX;
+        function totalRow(label, value, opts) {
+          opts = opts || {};
+          font(opts.bold ? 'bold' : 'normal', opts.size || 10, opts.bold ? INK : GREY2);
+          pdf.text(label, tLabelX, y);
+          font('bold', opts.size || 10, INK);
+          pdf.text(value, tValX, y, { align: 'right' });
+          y += opts.gap || 6.5;
+        }
+        totalRow('Sous-total', fmtFCFApdf(sub));
+        totalRow('Remise', fmtNum(remise) + ' FCFA');
+        totalRow('TVA  ' + (tvaRate || 0) + '%', tva === 0 ? '\u2014' : fmtFCFApdf(tva));
+        // Filet orange + Total à payer
+        y += 1.5;
+        pdf.setDrawColor(ORANGE[0], ORANGE[1], ORANGE[2]); pdf.setLineWidth(0.5);
+        pdf.line(tLabelX, y, RX, y);
+        y += 6.5;
+        totalRow('Total à payer', fmtFCFApdf(grand), { bold: true, size: 13, gap: 7 });
+        if (tvaRate === 0) {
+          font('normal', 8.5, GREY);
+          pdf.text('TVA non applicable — exonéré', RX, y - 1, { align: 'right' });
+        }
+        y += 6;
+
+        /* ════════ MONTANT EN LETTRES (encadré orange clair) ════════ */
+        const words = grand > 0
+          ? (typeof frenchAmountWords === 'function' ? frenchAmountWords(grand) : grand) + ' francs CFA'
+          : '\u2014';
+        const awRuns = [
+          { t: 'Arrêtée la présente facture à la somme de ', size: 9, color: GREY2 },
+          { t: words, b: true, size: 9, color: INK },
+          { t: '.', size: 9, color: GREY2 }
+        ];
+        const awInnerX = M + 6, awInnerW = CW - 12;
+        const awMeasure = drawRich(awRuns, awInnerX, 0, awInnerW, lh(9), true);
+        const awH = (awMeasure.lines) * lh(9) + 7;
+        need(awH + 4);
+        pdf.setFillColor(ORANGE_BG[0], ORANGE_BG[1], ORANGE_BG[2]);
+        pdf.rect(M, y, CW, awH, 'F');
+        pdf.setFillColor(ORANGE[0], ORANGE[1], ORANGE[2]);
+        pdf.rect(M, y, 1, awH, 'F');
+        drawRich(awRuns, awInnerX, y + 5, awInnerW, lh(9));
+        y += awH + 7;
+
+        /* ════════ MODALITÉS ════════ */
+        const modRuns = [
+          { t: 'Modalités de règlement : ', b: true, size: 8.5, color: INK },
+          { t: 'Paiement à réception · Mobile Money (Orange / MTN) · Virement bancaire · Espèces (reçu fourni)', size: 8.5, color: GREY2 }
+        ];
+        const modMeasure = drawRich(modRuns, M, 0, CW, lh(8.5), true);
+        need(modMeasure.lines * lh(8.5) + 6);
+        const modEnd = drawRich(modRuns, M, y, CW, lh(8.5));
+        y = modEnd.y + 8;
+
+        /* ════════ NOTES ════════ */
+        const notes = val('invNotes');
+        need(10 + (notes ? 12 : 0));
+        font('normal', 7.5, GREY);
+        pdf.text('NOTES / CONDITIONS PARTICULIÈRES', M, y, { charSpace: 0.3 }); y += 5;
+        if (notes) {
+          const noteLines = wrap(notes, 8.5, 'normal', CW);
+          font('normal', 8.5, GREY2);
+          noteLines.forEach(l => { pdf.text(l, M, y); y += lh(8.5); });
+        }
+
+        /* ════════ FOOTER (bas de la dernière page) ════════ */
+        if (y > PH - 22) pdf.addPage();
+        const fy = PH - 16;
+        pdf.setDrawColor(ORANGE[0], ORANGE[1], ORANGE[2]); pdf.setLineWidth(0.3);
+        pdf.line(M, fy, RX, fy);
+        font('normal', 8, GREY);
+        pdf.text('SE LOGER CM · Bonamoussadi, Douala · (+237) 650 840 714 · contact@selogercm.com · selogercm.com',
+                 PW / 2, fy + 5, { align: 'center' });
+
+        /* ── Sauvegarde ── */
+        const numForFile = (typeof currentInvoiceNum !== 'undefined' && currentInvoiceNum)
+          ? currentInvoiceNum
+          : ('FAC-' + new Date().getFullYear() + '-XXXX');
+        const cn = (document.getElementById('clientName').value || 'client').replace(/[^a-z0-9]+/gi, '_');
+        pdf.save('Facture_' + numForFile + '_' + cn + '.pdf');
         showToast('PDF généré', 'success');
       } catch (e) {
         console.error('[facture] generatePDF:', e);
         showToast('Erreur PDF : ' + (e.message || e), 'error');
       } finally {
-        /* Toujours restaurer les champs, retirer le mode printing et la barre d'actions */
-        restoreFrozenFields();
-        document.body.classList.remove('printing');
-        actionsBar.style.display = '';
-        typeSelector.style.display = '';
         btnPdf.disabled = false;
         btnPdf.textContent = '📄 Générer PDF';
       }
