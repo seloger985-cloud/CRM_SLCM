@@ -3,16 +3,36 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mini CRM Immobilier</title>
+  <title>CRM — SE LOGER CM</title>
   <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
-  <link rel="canonical" href="https://example.com/">
-  <meta property="og:url" content="https://example.com/">
+
+  <!-- Back-office privé : ne doit jamais être indexé ni suivi par un crawler.
+       Les balises canonical / og:* ont été retirées : elles n'ont de sens que
+       sur une page publique, et pointaient sur example.com (placeholder). -->
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta name="googlebot" content="noindex, nofollow">
+  <meta name="referrer" content="same-origin">
+
   <link rel="stylesheet" href="assets/css/style.css">
+  <style>
+    /* Masqué jusqu'à validation de la session par auth.js : sans cela, le
+       contenu du CRM s'affiche une fraction de seconde avant la redirection. */
+    body { visibility: hidden; }
+    /* Focus clavier : style.css ne traite que les champs de formulaire.
+       Boutons et liens n'avaient aucun indicateur visible à la tabulation. */
+    button:focus-visible,
+    a:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+  </style>
 </head>
 <body>
   <header>
     <h1>SE LOGER</h1>
-    <nav>
+    <nav aria-label="Navigation principale">
       <button id="dashboard-btn">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
         Tableau de bord
@@ -51,15 +71,29 @@
       </button>
     </nav>
     <button id="theme-toggle" class="theme-toggle" aria-label="Changer le thème">🌙  Mode sombre</button>
+    <button id="logout-btn" class="theme-toggle" aria-label="Se déconnecter">⏻  Déconnexion</button>
   </header>
 
   <main id="main-content">
     <!-- Content rendered by app.js -->
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Versions épinglées : sans numéro, jsDelivr sert la dernière publication,
+       ce qui peut casser le CRM en production sans aucune modification de code.
+       @2 suit les correctifs mineurs sans changement de majeure (aligné sur facture.html). -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <!-- Ordre impératif : config (client Supabase) → auth (garde de session)
+       → ui (composants) → app (vues). app.js attend l'événement
+       'slcm:auth-ready' avant d'interroger la base. -->
+  <script src="assets/js/config.js"></script>
+  <script src="assets/js/auth.js"></script>
   <script src="assets/js/ui.js"></script>
   <script src="assets/js/app.js"></script>
+  <script>
+    document.getElementById('logout-btn').addEventListener('click', () => {
+      if (window.SLCM_AUTH) window.SLCM_AUTH.signOut();
+    });
+  </script>
 </body>
 </html>

@@ -1,9 +1,6 @@
-// Supabase configuration - Replace with your actual URL and key
-const SUPABASE_URL = 'https://dukwtseqticijlvrmkgz.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR1a3d0c2VxdGljaWpsdnJta2d6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwMTYzMDIsImV4cCI6MjA5MzU5MjMwMn0.u-FH3WhZxIpE9uJtTDF1IWOOht-ooPgAqwsnyZmUNa4';
-
-const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-console.log('Mini CRM Immobilier : app.js chargé');
+/* Client Supabase partagé — défini une seule fois dans assets/js/config.js.
+   Les credentials ne sont plus dupliqués entre app.js et facture.html. */
+const supabaseClient = window.SLCM_DB.getClient();
 
 // DOM elements
 const mainContent = document.getElementById('main-content');
@@ -40,10 +37,15 @@ tasksBtn.addEventListener('click', navTo(tasksBtn, showTasks));
 automationBtn.addEventListener('click', navTo(automationBtn, showAutomation));
 pipelineBtn.addEventListener('click', navTo(pipelineBtn, showPipeline));
 
-// Initialize
+// Initialize — on n'interroge la base qu'une fois la session confirmée
+// par auth.js. Sans session, RLS bloque tout et l'écran resterait vide.
 mainContent.innerHTML = '<div class="loading"><div class="spinner"></div><div>Chargement…</div></div>';
 setActiveNav(dashboardBtn);
-showDashboard();
+if (window.SLCM_SESSION) {
+  showDashboard();
+} else {
+  document.addEventListener('slcm:auth-ready', () => showDashboard(), { once: true });
+}
 
 window.addEventListener('error', event => {
   console.error('Erreur JavaScript détectée:', event.error || event.message);
@@ -301,10 +303,8 @@ async function createActivityFromSuggestion(index) {
 mainContent.innerHTML = '<div class="loading"><div class="spinner"></div>Chargement...</div>';
 showDashboard();
 
-window.addEventListener('error', event => {
-  console.error('Erreur JavaScript détectée:', event.error || event.message);
-  displayError('Une erreur est survenue dans l’application. Ouvre la console pour voir les détails.');
-});
+/* (doublon du handler d'erreur global retiré — il était enregistré deux fois,
+   ce qui affichait chaque erreur en double à l'utilisateur) */
 
 async function showDashboard() {
   // Récupération des données de base

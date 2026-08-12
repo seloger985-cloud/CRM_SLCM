@@ -674,31 +674,15 @@ table.inv-table {
 
   <!-- Libs externes (CDN) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="assets/js/config.js"></script>
+  <script src="assets/js/auth.js"></script>
   <script src="assets/js/ui.js"></script>
   <!-- html2canvas retiré : PDF rendu nativement par jsPDF (zéro rasterisation, zéro troncature) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
-  <script>
-  /* ═══════════════════════════════════════════════════════════════
-     CRM CLIENT SUPABASE — Adaptation pour le mini CRM autonome.
-     Pas d'auth (CRM en local sur ordi+phone uniquement).
-     ═══════════════════════════════════════════════════════════════ */
-  const CRM_SUPABASE_URL = 'https://dukwtseqticijlvrmkgz.supabase.co';
-  const CRM_SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR1a3d0c2VxdGljaWpsdnJta2d6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgwMTYzMDIsImV4cCI6MjA5MzU5MjMwMn0.u-FH3WhZxIpE9uJtTDF1IWOOht-ooPgAqwsnyZmUNa4';
-
-  /* Shim minimal pour rester compatible avec le code existant (window.SLCM_DB.init()) */
-  window.SLCM_DB = {
-    _client: null,
-    async init() {
-      if (this._client) return this._client;
-      this._client = window.supabase.createClient(CRM_SUPABASE_URL, CRM_SUPABASE_KEY);
-      return this._client;
-    }
-  };
-
-  /* Page utilisable immédiatement (pas d'auth à attendre) */
-  document.body.style.visibility = 'visible';
-  </script>
+  <!-- window.SLCM_DB est fourni par assets/js/config.js (source unique des
+       credentials). La révélation du <body> est prise en charge par
+       assets/js/auth.js, après validation de la session. -->
 
   <script>
   /* ═══════════════════════════════════════════════════════════════
