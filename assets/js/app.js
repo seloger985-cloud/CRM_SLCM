@@ -587,6 +587,44 @@ function showClientForm(client = null) {
           <option value="signé" ${client && client.status === 'signé' ? 'selected' : ''}>Signé</option>
         </select>
       </div>
+      <fieldset class="demand-block">
+        <legend>Sa recherche <span class="item-meta">— alimente les rapprochements</span></legend>
+        <div class="form-group">
+          <label>Transaction:</label>
+          <select id="client-rentsale">
+            <option value="">Déduire du type de client</option>
+            <option value="rent" ${client && client.rent_sale === 'rent' ? 'selected' : ''}>Location</option>
+            <option value="sale" ${client && client.rent_sale === 'sale' ? 'selected' : ''}>Achat</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Types recherchés <span class="item-meta">(Ctrl / Cmd pour plusieurs)</span></label>
+          <select id="client-types" multiple size="5">
+            ${Object.keys(DEMAND_TYPE_FR).map(t => `<option value="${t}" ${client && (client.wanted_types || []).indexOf(t) !== -1 ? 'selected' : ''}>${DEMAND_TYPE_FR[t]}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Quartiers visés:</label>
+          <select id="client-districts" multiple size="5">
+            ${DEMAND_DISTRICTS.map(d => `<option value="${d}" ${client && (client.wanted_districts || []).indexOf(d) !== -1 ? 'selected' : ''}>${d}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Budget maximum (FCFA):</label>
+          <input type="number" id="client-budget" value="${client && client.budget ? client.budget : ''}" placeholder="Loyer mensuel ou prix de vente">
+        </div>
+        <div class="form-group">
+          <label>Chambres minimum:</label>
+          <input type="number" id="client-bedrooms" min="0" value="${client && client.min_bedrooms ? client.min_bedrooms : ''}">
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" id="client-furnished" ${client && client.wants_furnished ? 'checked' : ''}> Meublé exigé</label>
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" id="client-matching" ${!client || client.matching_active !== false ? 'checked' : ''}> Actif dans les rapprochements</label>
+        </div>
+      </fieldset>
+
       <div class="form-group">
         <label>Notes:</label>
         <textarea id="client-notes">${client ? client.notes : ''}</textarea>
@@ -611,7 +649,17 @@ async function saveClient(id) {
     source_detail: document.getElementById('client-source-detail') ? document.getElementById('client-source-detail').value : null,
     type: document.getElementById('client-type').value,
     status: document.getElementById('client-status').value,
-    notes: document.getElementById('client-notes').value
+    notes: document.getElementById('client-notes').value,
+
+    /* Critères de recherche — null quand non renseigné, jamais 0 ni ''.
+       Un 0 serait interprété comme « budget nul » et bloquerait tout. */
+    rent_sale: document.getElementById('client-rentsale').value || null,
+    wanted_types: multiVals('client-types'),
+    wanted_districts: multiVals('client-districts'),
+    budget: numOrNull('client-budget'),
+    min_bedrooms: numOrNull('client-bedrooms'),
+    wants_furnished: document.getElementById('client-furnished').checked ? true : null,
+    matching_active: document.getElementById('client-matching').checked
   };
 
   try {
@@ -640,6 +688,29 @@ function toggleClientSourceDetail() {
 /* État de la vue Propriétés : conservé entre les rendus pour que la
    recherche n'oblige pas à re-télécharger les données à chaque frappe. */
 const propsView = { crm: [], site: [], q: '', src: 'all', loaded: false };
+
+/* Valeurs strictement alignées sur la base du site : une divergence
+   d'orthographe ne produit aucune erreur, elle rend simplement le
+   rapprochement muet. */
+const DEMAND_TYPE_FR = {
+  apartment: 'Appartement', studio: 'Studio', villa: 'Villa', house: 'Maison',
+  duplex: 'Duplex', building: 'Immeuble', 'plots-of-land': 'Terrain',
+  warehouse: 'Entrepôt', office: 'Bureau', shop: 'Boutique', commercial: 'Local commercial'
+};
+const DEMAND_DISTRICTS = ['Bonapriso','Bali','Bonanjo','Bonamoussadi','Makepe','Logpom',
+  'Logbessou','Akwa','Deido','Kotto','Bonabéri','Yassa','Bonadiwoto','Youpwe','Ndogbong'];
+
+function multiVals(id) {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  const v = Array.from(el.selectedOptions).map(o => o.value);
+  return v.length ? v : null;
+}
+function numOrNull(id) {
+  const el = document.getElementById(id);
+  const n = el && el.value !== '' ? Number(el.value) : null;
+  return Number.isFinite(n) ? n : null;
+}
 
 async function showProperties(force) {
   UI.showLoading();
@@ -732,8 +803,15 @@ function renderPropsList() {
       ? '<span class="src-badge src-site" title="Publié sur selogercm.com">SITE</span>'
       : '<span class="src-badge src-crm" title="Saisie interne">CRM</span>';
     const price = Number(p.price) > 0 ? Number(p.price).toLocaleString('fr-FR') + ' FCFA' : 'Prix non renseigné';
-    const link = p._slug
-      ? `<a href="https://selogercm.com/annonce/${p._slug}" target="_blank" rel="noopener" class="ghost-btn" title="Voir l'annonce en ligne">Voir</a>`
+    const slug = p._slug || p.listing_slug;
+    const link = slug
+      ? `<a href="https://selogercm.com/annonce/${slug}" target="_blank" rel="noopener" class="ghost-btn" title="Voir l'annonce en ligne">Voir</a>`
+      : '';
+    /* Partage : uniquement pour un bien ayant une page publique.
+       Une fiche purement interne n'a pas d'URL à envoyer. */
+    const sid = p._siteId || p.listing_id;
+    const share = (slug && sid)
+      ? `<button onclick="shareListing('${sid}')" class="ghost-btn share-btn" title="Partager à un client">Partager</button>`
       : '';
     const action = p.id
       ? `<button onclick="editProperty(${p.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>`
@@ -742,7 +820,7 @@ function renderPropsList() {
       <div><strong>${escHtml(p.title || 'Sans titre')}</strong> ${badge}</div>
       <div class="item-meta">${escHtml(p.address || '')} — ${price}</div>
       <div class="item-meta">${formatDate(p.created_at)}</div>
-      <div>${link}${action}</div>
+      <div>${link}${share}${action}</div>
     </div>`;
   }).join('');
 }
@@ -769,6 +847,165 @@ async function importListing(siteId) {
   UI.toast('Fiche CRM créée pour « ' + (l.title || 'ce bien') + ' »', 'success');
   renderPropsList();
 }
+
+/* ═══════════════ PARTAGE À UN CLIENT ═══════════════ */
+
+/* Sélecteur de client : on montre en tête ceux dont la demande
+   correspond au bien, pour éviter de faire défiler toute la base. */
+async function shareListing(siteId) {
+  const listing = (propsView.site || []).find(x => String(x.id) === String(siteId))
+    || await window.SLCM_SITE.fetchListing(siteId);
+  if (!listing) { UI.toast('Annonce introuvable.', 'error'); return; }
+
+  const clients = await getAll('clients');
+  if (!clients.length) { UI.toast('Aucun client enregistré.', 'error'); return; }
+
+  /* Les clients dont la demande colle au bien remontent en tête :
+     inutile de faire défiler toute la base à chaque partage. */
+  const scored = clients.map(c => {
+    const r = window.SLCM_MATCH.hasDemand(c) ? window.SLCM_MATCH.evaluate(listing, c) : null;
+    return { c, score: r ? r.score : 0, fit: !!r };
+  }).sort((a, b) => b.score - a.score || String(a.c.name || '').localeCompare(String(b.c.name || '')));
+
+  const body = document.createElement('div');
+  body.innerHTML = `
+    <p class="item-meta">${escHtml(listing.title || '')} — ${Number(listing.price) > 0 ? Number(listing.price).toLocaleString('fr-FR') + ' FCFA' : 'prix sur demande'}</p>
+    <input type="search" id="pick-search" class="search-input" placeholder="Filtrer les clients…" style="margin:.6rem 0;width:100%">
+    <div class="pick-list" id="pick-list">
+      ${scored.map(({ c, score, fit }) => `
+        <label class="pick-row"${c.phone ? '' : ' title="Pas de numéro : envoi impossible"'}>
+          <input type="checkbox" value="${c.id}"${c.phone ? '' : ' disabled'}>
+          <span class="pick-name">${escHtml(c.name || 'Sans nom')}</span>
+          <span class="item-meta">${escHtml(c.phone || 'pas de numéro')}</span>
+          ${fit ? `<span class="src-badge src-site">MATCH ${score}%</span>` : ''}
+        </label>`).join('')}
+    </div>
+    <p class="item-meta" style="margin-top:.6rem">WhatsApp ouvre un onglet par client. Au-delà de trois ou quatre, le navigateur en bloque une partie.</p>`;
+
+  const inp = body.querySelector('#pick-search');
+  inp.addEventListener('input', () => {
+    const q = inp.value.trim().toLowerCase();
+    body.querySelectorAll('.pick-row').forEach(el => {
+      el.style.display = el.textContent.toLowerCase().indexOf(q) !== -1 ? '' : 'none';
+    });
+  });
+
+  UI.modal({
+    title: 'Partager ce bien',
+    body: body,
+    actions: [
+      { label: 'Annuler', variant: 'ghost' },
+      {
+        label: 'Envoyer sur WhatsApp',
+        variant: 'primary',
+        onClick: async () => {
+          const ids = Array.from(body.querySelectorAll('#pick-list input:checked')).map(i => Number(i.value));
+          if (!ids.length) { UI.toast('Aucun client sélectionné.', 'error'); return false; }
+          let sent = 0;
+          for (const id of ids) {
+            const c = clients.find(x => x.id === id);
+            if (!c || !c.phone) continue;
+            sendWhatsApp(c.phone, window.SLCM_MATCH.shareMessage(listing, c));
+            await window.SLCM_MATCH.markShared(id, listing);
+            sent++;
+          }
+          UI.toast(sent + ' envoi(s) préparé(s).', 'success');
+        }
+      }
+    ]
+  });
+}
+
+
+/* ═══════════════ MATCHING ═══════════════ */
+
+async function showMatching() {
+  UI.showLoading();
+
+  const [clients, listings, sent] = await Promise.all([
+    getAll('clients'),
+    window.SLCM_SITE.fetchListings(),
+    window.SLCM_MATCH.loadShared()
+  ]);
+
+  const withDemand = clients.filter(window.SLCM_MATCH.hasDemand);
+  const matches = window.SLCM_MATCH.computeMatches(clients, listings, sent);
+
+  /* Cas fréquent au démarrage : des clients existent mais aucun ne porte
+     de critère. Le dire explicitement évite de croire à un bug. */
+  if (!withDemand.length) {
+    mainContent.innerHTML = `
+      <h2>Rapprochements</h2>
+      <div class="empty-state">
+        <p><strong>Aucune demande enregistrée.</strong></p>
+        <p>Le rapprochement compare ce que cherchent vos clients aux
+        ${listings.length} annonces publiées sur selogercm.com. Pour qu'il
+        fonctionne, ouvrez une fiche client et renseignez au moins un critère :
+        budget, quartier, type de bien ou nombre de chambres.</p>
+        <button onclick="showClients()">Ouvrir les clients</button>
+      </div>`;
+    return;
+  }
+
+  window._matchCache = { listings, matches };
+
+  mainContent.innerHTML = `
+    <h2>Rapprochements</h2>
+    <p class="item-meta">${withDemand.length} client(s) avec une demande · ${listings.length} annonce(s) en ligne · ${matches.length} client(s) avec au moins une correspondance</p>
+    ${matches.length ? matches.map((m, mi) => `
+      <div class="match-card">
+        <div class="match-head">
+          <strong>${escHtml(m.client.name || 'Sans nom')}</strong>
+          <span class="item-meta">${escHtml(demandLabel(m.client))}</span>
+          <span class="src-badge src-site">${m.total} bien(s)</span>
+        </div>
+        <div class="list">
+          ${m.hits.map((h, hi) => `
+            <div class="list-item">
+              <div><strong>${escHtml(h.listing.title || 'Sans titre')}</strong>
+                <span class="src-badge src-site">${h.score}%</span></div>
+              <div class="item-meta">${escHtml([h.listing.district, h.listing.city].filter(Boolean).join(', '))} — ${Number(h.listing.price) > 0 ? Number(h.listing.price).toLocaleString('fr-FR') + ' FCFA' : 'prix sur demande'}</div>
+              <div class="item-meta">${escHtml(h.reasons.join(' · '))}</div>
+              <div>
+                ${h.listing.slug ? `<a href="https://selogercm.com/annonce/${h.listing.slug}" target="_blank" rel="noopener" class="ghost-btn">Voir</a>` : ''}
+                <button onclick="sendMatch(${mi},${hi})" class="ghost-btn share-btn">Envoyer</button>
+              </div>
+            </div>`).join('')}
+        </div>
+      </div>`).join('')
+      : `<div class="empty-state"><p><strong>Aucune correspondance actuellement.</strong></p>
+         <p>Les critères de vos clients ne trouvent pas d'écho dans le stock en ligne,
+         ou les biens correspondants leur ont déjà été envoyés.</p></div>`}
+  `;
+}
+
+/* Libellé lisible de la demande, affiché sous le nom du client */
+function demandLabel(c) {
+  const bits = [];
+  const tx = window.SLCM_MATCH.wantedTransaction(c);
+  if (tx) bits.push(tx === 'rent' ? 'location' : 'achat');
+  if (c.wanted_types && c.wanted_types.length) bits.push(c.wanted_types.join('/'));
+  if (c.wanted_districts && c.wanted_districts.length) bits.push(c.wanted_districts.join(', '));
+  if (c.min_bedrooms) bits.push(c.min_bedrooms + '+ ch.');
+  if (c.budget) bits.push('≤ ' + Number(c.budget).toLocaleString('fr-FR') + ' FCFA');
+  if (c.wants_furnished) bits.push('meublé');
+  return bits.join(' · ') || 'critères partiels';
+}
+
+/* Envoi d'un match : WhatsApp s'ouvre, la trace est enregistrée,
+   et le bien disparaît des propositions suivantes pour ce client. */
+async function sendMatch(mi, hi) {
+  const m = window._matchCache && window._matchCache.matches[mi];
+  if (!m) return;
+  const h = m.hits[hi];
+  if (!h) return;
+  if (!m.client.phone) { UI.toast('Ce client n\'a pas de numéro.', 'error'); return; }
+  sendWhatsApp(m.client.phone, window.SLCM_MATCH.shareMessage(h.listing, m.client));
+  await window.SLCM_MATCH.markShared(m.client.id, h.listing);
+  UI.toast('Envoyé à ' + (m.client.name || 'ce client') + '.', 'success');
+  showMatching();
+}
+
 
 /* Export CSV — la seule protection contre la perte de données du CRM. */
 async function exportCSV(table) {
@@ -1205,7 +1442,7 @@ async function getCount(table) {
    table à chaque affichage, y compris les champs texte longs jamais utilisés
    dans les listes. Sur une connexion mobile, c'est du volume inutile. */
 const TABLE_COLS = {
-  clients:    'id,name,phone,email,type,status,source,source_detail,notes,budget,created_at',
+  clients:    'id,name,phone,email,type,status,source,source_detail,notes,created_at,budget,budget_min,rent_sale,wanted_types,wanted_districts,min_bedrooms,wants_furnished,matching_active',
   properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at',
   activities: 'id,type,client_id,property_id,notes,date,created_at',
   tasks:      'id,title,description,due_date,status,created_at',

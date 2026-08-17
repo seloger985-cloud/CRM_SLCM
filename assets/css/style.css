@@ -1313,3 +1313,40 @@ input::placeholder, textarea::placeholder {
   .toolbar { gap: .4rem; }
   .search-input { flex: 1 1 100%; }
 }
+
+/* ── Rapprochements et partage (16/08/2026) ── */
+.demand-block {
+  border: 1px solid var(--border, #ddd); border-radius: 10px;
+  padding: .9rem 1rem; margin: 1rem 0;
+}
+.demand-block legend { font-size: .85rem; font-weight: 700; padding: 0 .4rem; }
+.demand-block select[multiple] { min-height: 6.5rem; }
+
+.match-card {
+  border: 1px solid var(--border, #e3e3e8); border-radius: 12px;
+  padding: .9rem 1rem; margin-bottom: 1rem;
+}
+.match-head {
+  display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
+  padding-bottom: .6rem; margin-bottom: .4rem;
+  border-bottom: 1px solid var(--border, #eee);
+}
+
+.pick-list { max-height: 46vh; overflow-y: auto; border: 1px solid var(--border, #ddd); border-radius: 8px; }
+.pick-row {
+  display: flex; align-items: center; gap: .55rem;
+  padding: .5rem .7rem; cursor: pointer;
+  border-bottom: 1px solid var(--border, #f0f0f0);
+}
+.pick-row:last-child { border-bottom: none; }
+.pick-row:hover { background: rgba(255,122,0,.06); }
+.pick-name { font-weight: 600; font-size: .9rem; }
+.pick-row input[disabled] + .pick-name { opacity: .45; }
+
+.share-btn:hover { border-color: #25D366; color: #25D366; }
+
+.empty-state {
+  border: 1px dashed var(--border, #ccc); border-radius: 12px;
+  padding: 1.6rem 1.2rem; text-align: center; max-width: 46rem;
+}
+.empty-state p { margin: 0 0 .7rem; }
