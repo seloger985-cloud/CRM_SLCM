@@ -312,6 +312,36 @@
     }
     .inv-amount-words strong { font-weight: 700; color: #111; }
 
+    /* Raison sociale légale (en-tête + émetteur) */
+    .inv-brand-legal {
+      font-size: 10.5px; font-weight: 700; color: #666;
+      letter-spacing: 0.2px; margin-top: 1px;
+    }
+    .inv-party-legal {
+      font-size: 11.5px; font-weight: 600; color: #111;
+      margin-bottom: 4px;
+    }
+
+    /* Coordonnées bancaires */
+    .inv-bank {
+      border: 1px solid #e5e7eb; border-left: 3px solid #ff7a00;
+      border-radius: 0 4px 4px 0;
+      padding: 10px 14px; margin-bottom: 16px;
+      background: #fcfcfc;
+    }
+    .inv-bank-label {
+      font-size: 10px; color: #666;
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: 7px;
+    }
+    .inv-bank-grid {
+      display: grid; grid-template-columns: auto 1fr;
+      gap: 4px 12px; font-size: 12px; color: #333;
+    }
+    .inv-bank-grid dt { font-weight: 600; color: #111; }
+    .inv-bank-grid dd { margin: 0; font-weight: 600; }
+    .inv-bank-todo { color: #c2410c; }
+
     /* Modalités + notes */
     .inv-modalities {
       font-size: 12px; color: #333; line-height: 1.7;
@@ -486,6 +516,7 @@ table.inv-table {
         <div class="inv-monogram">SL</div>
         <div>
           <div class="inv-brand-name">SE LOGER CM</div>
+          <div class="inv-brand-legal">[ KAMTCHUENG RAOUL ARMAND (Ets SE LOGER) ]</div>
           <div class="inv-brand-tagline">Unique Solutions, Smart Living</div>
           <div class="inv-brand-rccm">RCCM DLA-02-2024-A10-00712 — NIU PO68916714973N</div>
         </div>
@@ -508,7 +539,8 @@ table.inv-table {
     <div class="inv-parties">
       <div>
         <div class="inv-party-label">Émetteur</div>
-        <div class="inv-party-name">SE LOGER CM</div>
+        <div class="inv-party-name">KAMTCHUENG RAOUL ARMAND</div>
+        <div class="inv-party-legal">Ets SE LOGER — SE LOGER CM</div>
         <div class="inv-party-detail">
           Boulevard de la République<br>
           Bonamoussadi, Douala<br>
@@ -660,13 +692,18 @@ table.inv-table {
       <strong>Modalités de règlement :</strong> Paiement à réception · Mobile Money (Orange / MTN) · Virement bancaire · Espèces (reçu fourni)
     </div>
 
+    <div class="inv-bank" id="invBank">
+      <div class="inv-bank-label">Coordonnées bancaires</div>
+      <dl class="inv-bank-grid" id="invBankGrid"></dl>
+    </div>
+
     <div class="inv-notes">
       <div class="inv-notes-label">Notes / conditions particulières</div>
       <textarea id="invNotes" placeholder="Conditions particulières, informations complémentaires..."></textarea>
     </div>
 
     <div class="inv-footer">
-      SE LOGER CM · Bonamoussadi, Douala · (+237) 650 840 714 · contact@selogercm.com · selogercm.com
+      SE LOGER CM · KAMTCHUENG RAOUL ARMAND (Ets SE LOGER) · Bonamoussadi, Douala · (+237) 650 840 714 · contact@selogercm.com · selogercm.com
     </div>
   </div>
 
@@ -690,6 +727,32 @@ table.inv-table {
      ═══════════════════════════════════════════════════════════════ */
   (function() {
     'use strict';
+
+    /* ─── Coordonnées bancaires (source unique : DOM + PDF) ─────────
+       ⚠️ À COMPLÉTER UNE SEULE FOIS AVEC LE RIB RÉEL.
+       L'intitulé du titulaire doit être copié EXACTEMENT tel qu'il figure
+       à la banque, sinon les virements SWIFT sont rejetés.               */
+    const SLCM_BANK = [
+      ['Titulaire du compte', '[ INTITULÉ EXACT DU COMPTE ]'],
+      ['Banque / Agence',     '[ BANQUE — AGENCE ]'],
+      ['N° de compte (RIB)',  '[ RIB 23 CARACTÈRES ]'],
+      ['Code SWIFT / BIC',    '[ SWIFT ]']
+    ];
+
+    function renderBankBlock() {
+      const grid = document.getElementById('invBankGrid');
+      if (!grid) return;
+      grid.innerHTML = '';
+      SLCM_BANK.forEach(function(row) {
+        const dt = document.createElement('dt');
+        dt.textContent = row[0] + ' :';
+        const dd = document.createElement('dd');
+        dd.textContent = row[1];
+        if (/^\s*\[/.test(row[1])) dd.className = 'inv-bank-todo';
+        grid.appendChild(dt); grid.appendChild(dd);
+      });
+    }
+    renderBankBlock();
 
     /* ─── État ─── */
     let currentInvoiceId   = null;     // UUID de la facture si déjà sauvegardée
@@ -1598,9 +1661,10 @@ table.inv-table {
         pdf.text('SL', M + 6, y + 7.7, { align: 'center' });
         // Bloc marque
         const bx = M + 16;
-        font('bold', 18, INK);   pdf.text('SE LOGER CM', bx, y + 4.6);
-        font('italic', 9, GREY); pdf.text('Unique Solutions, Smart Living', bx, y + 9);
-        font('normal', 8, GREY); pdf.text('RCCM DLA-02-2024-A10-00712 — NIU PO68916714973N', bx, y + 12.8);
+        font('bold', 18, INK);   pdf.text('SE LOGER CM', bx, y + 4.2);
+        font('bold', 8, GREY);   pdf.text('[ KAMTCHUENG RAOUL ARMAND (Ets SE LOGER) ]', bx, y + 8.2);
+        font('italic', 9, GREY); pdf.text('Unique Solutions, Smart Living', bx, y + 12);
+        font('normal', 8, GREY); pdf.text('RCCM DLA-02-2024-A10-00712 — NIU PO68916714973N', bx, y + 15.6);
         // Méta droite
         font('bold', 17, INK);   pdf.text('FACTURE', RX, y + 4, { align: 'right', charSpace: 0.6 });
         font('bold', 10, INK);   pdf.text(numText, RX, y + 10, { align: 'right' });
@@ -1621,7 +1685,8 @@ table.inv-table {
         // -- Colonne gauche : Émetteur (statique) --
         let ly = partsTop;
         font('normal', 8.5, GREY); pdf.text('ÉMETTEUR', leftX, ly, { charSpace: 0.4 }); ly += 6;
-        font('bold', 11, INK);     pdf.text('SE LOGER CM', leftX, ly); ly += 6;
+        font('bold', 11, INK);     pdf.text('KAMTCHUENG RAOUL ARMAND', leftX, ly); ly += 5;
+        font('bold', 9, INK);      pdf.text('Ets SE LOGER — SE LOGER CM', leftX, ly); ly += 6;
         font('normal', 9.5, GREY2);
         ['Boulevard de la République', 'Bonamoussadi, Douala', '(+237) 650 840 714', 'contact@selogercm.com']
           .forEach(line => { pdf.text(line, leftX, ly); ly += 5; });
@@ -1820,6 +1885,30 @@ table.inv-table {
         const modEnd = drawRich(modRuns, M, y, CW, lh(8.5));
         y = modEnd.y + 8;
 
+        /* ════════ COORDONNÉES BANCAIRES (cadre) ════════ */
+        const bkRowH = lh(8.5);
+        const bkH = 5.5 + 4.5 + SLCM_BANK.length * bkRowH + 3.5;
+        need(bkH + 6);
+        pdf.setFillColor(252, 252, 252);
+        pdf.rect(M, y, CW, bkH, 'F');
+        pdf.setDrawColor(229, 231, 235); pdf.setLineWidth(0.2);
+        pdf.rect(M, y, CW, bkH, 'S');
+        pdf.setFillColor(ORANGE[0], ORANGE[1], ORANGE[2]);
+        pdf.rect(M, y, 1, bkH, 'F');
+        let bky = y + 5.5;
+        font('normal', 7.5, GREY);
+        pdf.text('COORDONNÉES BANCAIRES', M + 6, bky, { charSpace: 0.3 });
+        bky += 5;
+        SLCM_BANK.forEach(function(row) {
+          font('bold', 8.5, INK);
+          pdf.text(row[0] + ' :', M + 6, bky);
+          const todo = /^\s*\[/.test(row[1]);
+          font('bold', 8.5, todo ? [194, 65, 12] : GREY2);
+          pdf.text(String(row[1]), M + 48, bky);
+          bky += bkRowH;
+        });
+        y += bkH + 8;
+
         /* ════════ NOTES ════════ */
         const notes = val('invNotes');
         need(10 + (notes ? 12 : 0));
@@ -1837,7 +1926,8 @@ table.inv-table {
         pdf.setDrawColor(ORANGE[0], ORANGE[1], ORANGE[2]); pdf.setLineWidth(0.3);
         pdf.line(M, fy, RX, fy);
         font('normal', 8, GREY);
-        pdf.text('SE LOGER CM · Bonamoussadi, Douala · (+237) 650 840 714 · contact@selogercm.com · selogercm.com',
+        font('normal', 7, GREY);
+        pdf.text('SE LOGER CM · KAMTCHUENG RAOUL ARMAND (Ets SE LOGER) · Bonamoussadi, Douala · (+237) 650 840 714 · contact@selogercm.com · selogercm.com',
                  PW / 2, fy + 5, { align: 'center' });
 
         /* ── Sauvegarde ── */
