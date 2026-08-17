@@ -169,10 +169,23 @@ function getAutomationSuggestions() {
 // Configuration WhatsApp Business
 const WHATSAPP_BUSINESS_NUMBER = '650840714';
 
-// Fonction pour envoyer WhatsApp via le compte business
+/* Normalise un numéro camerounais au format international attendu par wa.me :
+   "650 840 714", "+237650840714", "00237650840714" -> "237650840714" */
+function normalizePhone(phone) {
+  var d = String(phone || '').replace(/[^0-9]/g, '');
+  if (!d) return '';
+  if (d.indexOf('00') === 0) d = d.slice(2);
+  if (d.indexOf('237') === 0) return d;
+  if (d.length === 9) return '237' + d;          // numéro local
+  return d;
+}
+
+/* CORRECTIF 16/08/2026 — le paramètre `phone` était reçu puis ignoré :
+   l'URL était construite avec WHATSAPP_BUSINESS_NUMBER, donc toutes les
+   relances s'ouvraient sur une conversation avec soi-même. */
 function sendWhatsApp(phone, message) {
-  const encodedMessage = encodeURIComponent(message);
-  const whatsappUrl = `https://wa.me/${WHATSAPP_BUSINESS_NUMBER}?text=${encodedMessage}`;
+  const target = normalizePhone(phone) || WHATSAPP_BUSINESS_NUMBER;
+  const whatsappUrl = `https://wa.me/${target}?text=${encodeURIComponent(message)}`;
   window.open(whatsappUrl, '_blank');
 }
 
@@ -495,13 +508,35 @@ function initCharts(statusData, statusLabels, sourceStats) {
 async function showClients() {
   UI.showLoading();
   const clients = await getAll('clients');
+  window._clients = clients;
   mainContent.innerHTML = `
     <h2>Clients</h2>
-    <button onclick="showClientForm()">Ajouter Client</button>
-    <div class="list">
+    <div class="toolbar">
+      <input type="search" id="client-search" class="search-input" placeholder="Rechercher : nom, téléphone, statut, source…">
+      <button onclick="showClientForm()">Ajouter Client</button>
+      <button onclick="exportCSV('clients')" class="ghost-btn">Export CSV</button>
+    </div>
+    <div class="list" id="client-list">
       ${clients.length ? clients.map(c => `<div class="list-item"><div><strong>${c.name}</strong> - ${c.phone} <span class="status-badge" data-status="${c.status || 'nouvelle demande'}">${c.status || 'nouvelle demande'}</span></div><div class="item-meta">Source: ${c.source || 'Non renseignée'}${c.source_detail ? ' (' + c.source_detail + ')' : ''}</div><div class="item-meta">${formatDate(c.created_at)}</div><div><a href="${getWhatsApp(c.phone, c, 'general')}" target="_blank" class="whatsapp-btn" title="WhatsApp général"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/></svg></a><a href="${getWhatsApp(c.phone, c, 'followup')}" target="_blank" class="relance whatsapp-btn" title="Relance WhatsApp"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg></a><button onclick="editClient(${c.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div></div>`).join('') : '<p>Aucun client pour le moment.</p>'}
     </div>
   `;
+
+  const ci = document.getElementById('client-search');
+  if (ci) {
+    let ct = null;
+    ci.addEventListener('input', () => {
+      clearTimeout(ct);
+      ct = setTimeout(() => {
+        const q = ci.value.trim().toLowerCase();
+        const terms = q ? q.split(/\s+/) : [];
+        document.querySelectorAll('#client-list .list-item').forEach((el, i) => {
+          const c = window._clients[i] || {};
+          const hay = [c.name, c.phone, c.email, c.status, c.source, c.source_detail].join(' ').toLowerCase();
+          el.style.display = terms.every(t => hay.indexOf(t) !== -1) ? '' : 'none';
+        });
+      }, 180);
+    });
+  }
 }
 
 function showClientForm(client = null) {
@@ -602,16 +637,164 @@ function toggleClientSourceDetail() {
   }
 }
 
-async function showProperties() {
+/* État de la vue Propriétés : conservé entre les rendus pour que la
+   recherche n'oblige pas à re-télécharger les données à chaque frappe. */
+const propsView = { crm: [], site: [], q: '', src: 'all', loaded: false };
+
+async function showProperties(force) {
   UI.showLoading();
-  const properties = await getAll('properties');
+
+  if (!propsView.loaded || force) {
+    const [crm, site] = await Promise.all([
+      getAll('properties'),
+      (window.SLCM_SITE && window.SLCM_SITE.fetchListings) ? window.SLCM_SITE.fetchListings() : Promise.resolve([])
+    ]);
+    propsView.crm = crm;
+    propsView.site = site;
+    propsView.loaded = true;
+  }
+
   mainContent.innerHTML = `
     <h2>Propriétés</h2>
-    <button onclick="showPropertyForm()">Ajouter Propriété</button>
-    <div class="list">
-      ${properties.length ? properties.map(p => `<div class="list-item"><div><strong>${p.title}</strong> - ${p.address} - ${p.price} FCFA</div><div class="item-meta">${formatDate(p.created_at)}</div><button onclick="editProperty(${p.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div>`).join('') : '<p>Aucune propriété pour le moment.</p>'}
+    <div class="toolbar">
+      <input type="search" id="prop-search" class="search-input" placeholder="Rechercher : titre, quartier, prix, référence…" value="${escAttr(propsView.q)}">
+      <select id="prop-source" class="search-select">
+        <option value="all"  ${propsView.src === 'all'  ? 'selected' : ''}>Toutes les sources</option>
+        <option value="site" ${propsView.src === 'site' ? 'selected' : ''}>selogercm.com</option>
+        <option value="crm"  ${propsView.src === 'crm'  ? 'selected' : ''}>Saisies CRM</option>
+      </select>
+      <button onclick="showPropertyForm()">Ajouter</button>
+      <button onclick="exportCSV('properties')" class="ghost-btn" title="Exporter en CSV">Export CSV</button>
+      <button onclick="showProperties(true)" class="ghost-btn" title="Recharger depuis selogercm.com">↻</button>
     </div>
+    <p class="item-meta" id="prop-count"></p>
+    <div class="list" id="prop-list"></div>
   `;
+
+  const input = document.getElementById('prop-search');
+  const sel = document.getElementById('prop-source');
+  let t = null;
+  input.addEventListener('input', () => {
+    clearTimeout(t);
+    t = setTimeout(() => { propsView.q = input.value; renderPropsList(); }, 180);
+  });
+  sel.addEventListener('change', () => { propsView.src = sel.value; renderPropsList(); });
+
+  renderPropsList();
+}
+
+/* Fusionne les biens publiés sur selogercm.com et les saisies internes.
+   Un bien du site déjà rattaché à une fiche CRM (listing_id) n'apparaît
+   qu'une fois : la fiche CRM prime et porte le lien vers l'annonce. */
+function mergeProperties() {
+  const linked = new Set(propsView.crm.map(p => p.listing_id).filter(Boolean));
+  const crm = propsView.crm.map(p => Object.assign({}, p, {
+    _src: p.listing_id ? 'site' : 'crm',
+    _linked: !!p.listing_id
+  }));
+  const site = propsView.site
+    .filter(l => !linked.has(l.id))
+    .map(l => ({
+      id: null, _siteId: l.id, _slug: l.slug, _src: 'site', _linked: false,
+      title: l.title, address: [l.district, l.city].filter(Boolean).join(', '),
+      price: l.price, status: l.status, type: l.type, created_at: l.created_at
+    }));
+  return crm.concat(site);
+}
+
+function renderPropsList() {
+  const q = propsView.q.trim().toLowerCase();
+  let rows = mergeProperties();
+  if (propsView.src !== 'all') rows = rows.filter(r => r._src === propsView.src);
+  if (q) {
+    const terms = q.split(/\s+/);
+    rows = rows.filter(r => {
+      const hay = [r.title, r.address, r.type, r.status, r.price, r._slug].join(' ').toLowerCase();
+      return terms.every(t => hay.indexOf(t) !== -1);
+    });
+  }
+
+  const box = document.getElementById('prop-list');
+  const cnt = document.getElementById('prop-count');
+  if (cnt) {
+    const nSite = propsView.site.length;
+    cnt.textContent = `${rows.length} bien(s) affiché(s) · ${nSite} publié(s) sur selogercm.com · ${propsView.crm.length} fiche(s) CRM`;
+  }
+  if (!box) return;
+
+  if (!rows.length) {
+    box.innerHTML = '<p>Aucun bien ne correspond à cette recherche.</p>';
+    return;
+  }
+
+  box.innerHTML = rows.map(p => {
+    const badge = p._src === 'site'
+      ? '<span class="src-badge src-site" title="Publié sur selogercm.com">SITE</span>'
+      : '<span class="src-badge src-crm" title="Saisie interne">CRM</span>';
+    const price = Number(p.price) > 0 ? Number(p.price).toLocaleString('fr-FR') + ' FCFA' : 'Prix non renseigné';
+    const link = p._slug
+      ? `<a href="https://selogercm.com/annonce/${p._slug}" target="_blank" rel="noopener" class="ghost-btn" title="Voir l'annonce en ligne">Voir</a>`
+      : '';
+    const action = p.id
+      ? `<button onclick="editProperty(${p.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>`
+      : `<button onclick="importListing('${p._siteId}')" class="edit-btn" title="Créer une fiche CRM pour ce bien">+ Fiche</button>`;
+    return `<div class="list-item">
+      <div><strong>${escHtml(p.title || 'Sans titre')}</strong> ${badge}</div>
+      <div class="item-meta">${escHtml(p.address || '')} — ${price}</div>
+      <div class="item-meta">${formatDate(p.created_at)}</div>
+      <div>${link}${action}</div>
+    </div>`;
+  }).join('');
+}
+
+/* Crée une fiche CRM rattachée à une annonce du site.
+   Le bien n'est pas dupliqué : la fiche porte listing_id + listing_slug
+   et sert de point d'accroche aux activités, paiements et commissions. */
+async function importListing(siteId) {
+  const l = propsView.site.find(x => String(x.id) === String(siteId));
+  if (!l) return;
+  const { data, error } = await supabaseClient.from('properties').insert([{
+    title: l.title,
+    address: [l.district, l.city].filter(Boolean).join(', '),
+    type: l.type === 'apartment' ? 'apartment' : 'house',
+    price: l.price,
+    status: l.status === 'active' ? 'available' : 'available',
+    description: 'Importé depuis selogercm.com',
+    listing_id: l.id,
+    listing_slug: l.slug,
+    source: 'site'
+  }]).select();
+  if (error) { UI.toast('Import impossible : ' + error.message, 'error'); return; }
+  if (data && data[0]) propsView.crm.unshift(data[0]);
+  UI.toast('Fiche CRM créée pour « ' + (l.title || 'ce bien') + ' »', 'success');
+  renderPropsList();
+}
+
+/* Export CSV — la seule protection contre la perte de données du CRM. */
+async function exportCSV(table) {
+  const rows = await getAll(table);
+  if (!rows.length) { UI.toast('Rien à exporter.', 'error'); return; }
+  const cols = Object.keys(rows[0]);
+  const cell = (v) => {
+    if (v === null || v === undefined) return '';
+    const s = String(v).replace(/"/g, '""');
+    return /[";\n]/.test(s) ? '"' + s + '"' : s;
+  };
+  const csv = '\uFEFF' + [cols.join(';')].concat(rows.map(r => cols.map(c => cell(r[c])).join(';'))).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `slcm-${table}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  UI.toast(`${rows.length} ligne(s) exportée(s).`, 'success');
+}
+
+function escHtml(v) {
+  return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function escAttr(v) {
+  return escHtml(v).replace(/"/g, '&quot;');
 }
 
 function showPropertyForm(property = null) {
@@ -1018,8 +1201,20 @@ async function getCount(table) {
   return count || 0;
 }
 
+/* Colonnes explicites : select('*') tirait toutes les colonnes de chaque
+   table à chaque affichage, y compris les champs texte longs jamais utilisés
+   dans les listes. Sur une connexion mobile, c'est du volume inutile. */
+const TABLE_COLS = {
+  clients:    'id,name,phone,email,type,status,source,source_detail,notes,budget,created_at',
+  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at',
+  activities: 'id,type,client_id,property_id,notes,date,created_at',
+  tasks:      'id,title,description,due_date,status,created_at',
+  payments:   'id,client_id,property_id,amount,accompte,reste,status,payment_date,notes,created_at'
+};
+
 async function getAll(table) {
-  const { data, error } = await supabaseClient.from(table).select('*').order('created_at', { ascending: false });
+  const cols = TABLE_COLS[table] || '*';
+  const { data, error } = await supabaseClient.from(table).select(cols).order('created_at', { ascending: false });
   if (error) {
     console.error(`Erreur Supabase table ${table}:`, error.message);
     return [];
@@ -1028,7 +1223,8 @@ async function getAll(table) {
 }
 
 async function getRecent(table, limit) {
-  const { data, error } = await supabaseClient.from(table).select('*').order('created_at', { ascending: false }).limit(limit);
+  const cols = TABLE_COLS[table] || '*';
+  const { data, error } = await supabaseClient.from(table).select(cols).order('created_at', { ascending: false }).limit(limit);
   if (error) {
     console.error(`Erreur Supabase table ${table}:`, error.message);
     return [];

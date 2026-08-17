@@ -1274,3 +1274,42 @@ input::placeholder, textarea::placeholder {
     gap: var(--space-2);
   }
 }
+
+/* ── Barre d'outils : recherche, filtres, export (16/08/2026) ── */
+.toolbar {
+  display: flex; flex-wrap: wrap; gap: .5rem;
+  align-items: center; margin: .75rem 0 1rem;
+}
+.search-input {
+  flex: 1 1 240px; min-width: 0;
+  padding: .55rem .8rem; font-size: .9rem;
+  border: 1px solid var(--border, #ddd); border-radius: 8px;
+  background: var(--bg-input, #fff); color: inherit;
+}
+.search-input:focus { outline: none; border-color: #ff7a00; }
+.search-select {
+  padding: .55rem .7rem; font-size: .9rem;
+  border: 1px solid var(--border, #ddd); border-radius: 8px;
+  background: var(--bg-input, #fff); color: inherit;
+}
+.ghost-btn {
+  padding: .5rem .8rem; font-size: .85rem; font-weight: 600;
+  background: transparent; color: inherit;
+  border: 1px solid var(--border, #ccc); border-radius: 8px;
+  cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
+}
+.ghost-btn:hover { border-color: #ff7a00; color: #ff7a00; }
+
+/* Provenance d'un bien : annonce publiée vs saisie interne */
+.src-badge {
+  display: inline-block; margin-left: .4rem; padding: .1rem .45rem;
+  font-size: .62rem; font-weight: 800; letter-spacing: .04em;
+  border-radius: 4px; vertical-align: middle;
+}
+.src-site { background: rgba(255,122,0,.14); color: #ff7a00; }
+.src-crm  { background: rgba(120,120,140,.16); color: #6b6b7b; }
+
+@media (max-width: 560px) {
+  .toolbar { gap: .4rem; }
+  .search-input { flex: 1 1 100%; }
+}
