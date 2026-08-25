@@ -340,6 +340,20 @@
       align-items: center;
     }
     .inv-bank-grid label { font-weight: 600; color: #111; }
+    input.rate-input {
+      border: none; background: transparent;
+      font-family: inherit; font-size: 12px; color: #666;
+      text-align: right; width: 100%; padding: 2px 0;
+      border-bottom: 1px dotted transparent; outline: none;
+    }
+    input.rate-input:hover { border-bottom-color: #d1d5db; }
+    input.rate-input:focus { border-bottom-color: #ff7a00; background: #fff8f0; color: #111; }
+    body.printing input.rate-input {
+      border-bottom: none !important; background: transparent !important;
+      color: #666 !important; height: auto !important;
+      line-height: 1.5 !important; padding: 2px 0 !important;
+    }
+
     input.bank-input {
       border: none; background: transparent;
       font-family: inherit; font-size: 12px;
@@ -619,7 +633,10 @@ table.inv-table {
           <td class="right">
             <input class="num-input" id="base-location" placeholder="Loyer mensuel">
           </td>
-          <td class="right" style="font-size:12px;color:#666;">1 mois</td>
+          <td class="right">
+            <input class="rate-input" id="taux-location" value="1 mois"
+                   title="Ex : 1 mois · 2 mois · 1 mois × 50% · 50%" placeholder="1 mois">
+          </td>
           <td class="right"><span class="total-cell" id="total-location">—</span></td>
         </tr>
 
@@ -662,7 +679,10 @@ table.inv-table {
           <td class="right">
             <input class="num-input" id="base-commercial" placeholder="Loyer mensuel">
           </td>
-          <td class="right" style="font-size:12px;color:#666;">1 mois</td>
+          <td class="right">
+            <input class="rate-input" id="taux-commercial" value="1 mois"
+                   title="Ex : 1 mois · 2 mois · 1 mois × 50% · 50%" placeholder="1 mois">
+          </td>
           <td class="right"><span class="total-cell" id="total-commercial">—</span></td>
         </tr>
 
@@ -850,10 +870,29 @@ table.inv-table {
     updateRows();
 
     /* ─── Calculs ─── */
+    /* Interprète le texte du champ « Taux » des lignes location / commercial.
+       « 1 mois » → 1 · « 2 mois » → 2 · « 1 mois × 50% » → 0,5 · « 50% » → 0,5 · « 1,5 » → 1,5
+       Tout texte non interprétable retombe sur 1 (un mois plein). */
+    function rateCoef(txt) {
+      const raw = String(txt == null ? '' : txt).toLowerCase().replace(/,/g, '.');
+      if (!raw.trim()) return 1;
+      const mois = raw.match(/(\d+(?:\.\d+)?)\s*mois/);
+      const pct  = raw.match(/(\d+(?:\.\d+)?)\s*%/);
+      let c = null;
+      if (mois) c = parseFloat(mois[1]);
+      if (pct)  c = (c === null ? 1 : c) * parseFloat(pct[1]) / 100;
+      if (c === null && /^\s*\d+(\.\d+)?\s*$/.test(raw)) c = parseFloat(raw);
+      return (c !== null && isFinite(c) && c > 0) ? c : 1;
+    }
+    function rateText(type) {
+      const el = document.getElementById('taux-' + type);
+      return el ? (el.value || '').trim() : '';
+    }
+
     function calcLine(type) {
       let val = 0;
       if (type === 'location' || type === 'commercial') {
-        val = readNum('base-' + type);
+        val = Math.round(readNum('base-' + type) * rateCoef(rateText(type)));
       } else if (type === 'vente') {
         const base = readNum('base-vente');
         const taux = readNum('taux-vente');
@@ -937,8 +976,8 @@ table.inv-table {
     }
 
     /* Recalculer à chaque changement */
-    ['base-location','base-vente','taux-vente','base-visite','taux-visite',
-     'base-commercial','base-libre','taux-libre','remise','tvaRate'].forEach(id => {
+    ['base-location','taux-location','base-vente','taux-vente','base-visite','taux-visite',
+     'base-commercial','taux-commercial','base-libre','taux-libre','remise','tvaRate'].forEach(id => {
       const el = document.getElementById(id);
       if (el) {
         el.addEventListener('input', () => {
@@ -998,6 +1037,10 @@ table.inv-table {
         } else {
           el.value = '';
         }
+      });
+      ['location','commercial'].forEach(t => {
+        const el = document.getElementById('taux-' + t);
+        if (el) el.value = '1 mois';
       });
       ['location','vente','visite','commercial','libre'].forEach(t => lineTotals[t] = 0);
       ['location','vente','visite','commercial','libre'].forEach(t => {
@@ -1477,6 +1520,7 @@ table.inv-table {
             detail2: document.getElementById('desc-' + t + '-d2').value.trim() || null,
             base: readNum('base-' + t),
             rate: t === 'vente' ? readNum('taux-vente') : (t === 'visite' ? readNum('taux-visite') : null),
+            rate_label: (t === 'location' || t === 'commercial') ? (rateText(t) || '1 mois') : null,
             amount: lineTotals[t]
           });
         });
@@ -1808,7 +1852,8 @@ table.inv-table {
           visite: 'Frais de visite', commercial: 'Mise en location commerciale'
         };
         function baseTaux(t) {
-          if (t === 'location' || t === 'commercial') return [fmtNumOrText(val('base-' + t)), '1 mois'];
+          if (t === 'location' || t === 'commercial')
+            return [fmtNumOrText(val('base-' + t)), (val('taux-' + t) || '1 mois')];
           if (t === 'vente')   return [fmtNumOrText(val('base-vente')), (val('taux-vente') ? val('taux-vente') + ' %' : '')];
           if (t === 'visite')  return [fmtNumOrText(val('base-visite')), fmtNumOrText(val('taux-visite'))];
           return ['', ''];
@@ -1928,7 +1973,7 @@ table.inv-table {
         const modMeasure = drawRich(modRuns, M, 0, CW, lh(8.5), true);
         need(modMeasure.lines * lh(8.5) + 6);
         const modEnd = drawRich(modRuns, M, y, CW, lh(8.5));
-        y = modEnd.y + 8;
+        y = modEnd.y + 6;
 
         /* ════════ COORDONNÉES BANCAIRES (cadre — omis si aucun champ saisi) ════════ */
         const bankRows = collectBank();
@@ -1953,15 +1998,15 @@ table.inv-table {
             pdf.text(safe(row[1]), M + 48, bky);
             bky += bkRowH;
           });
-          y += bkH + 8;
+          y += bkH + 6;
         }
 
         /* ════════ NOTES ════════ */
         const notes = val('invNotes');
-        need(10 + (notes ? 12 : 0));
-        font('normal', 7.5, GREY);
-        pdf.text('NOTES / CONDITIONS PARTICULIÈRES', M, y, { charSpace: 0.3 }); y += 5;
         if (notes) {
+          need(10 + 12);
+          font('normal', 7.5, GREY);
+          pdf.text('NOTES / CONDITIONS PARTICULIÈRES', M, y, { charSpace: 0.3 }); y += 5;
           const noteLines = wrap(notes, 8.5, 'normal', CW);
           font('normal', 8.5, GREY2);
           noteLines.forEach(l => { pdf.text(l, M, y); y += lh(8.5); });
@@ -2057,6 +2102,10 @@ table.inv-table {
             document.getElementById('desc-' + item.type + '-d1').value   = item.detail1 || '';
             document.getElementById('desc-' + item.type + '-d2').value   = item.detail2 || '';
             document.getElementById('base-' + item.type).value           = item.base    || '';
+            if (item.type === 'location' || item.type === 'commercial') {
+              const rl = document.getElementById('taux-' + item.type);
+              if (rl) rl.value = item.rate_label || '1 mois';
+            }
             if (item.type === 'vente') document.getElementById('taux-vente').value = item.rate || '';
             if (item.type === 'visite') document.getElementById('taux-visite').value = item.rate || '';
             lineTotals[item.type] = item.amount || 0;
