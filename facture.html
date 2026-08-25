@@ -340,6 +340,10 @@
       align-items: center;
     }
     .inv-bank-grid label { font-weight: 600; color: #111; }
+    .tval.is-mention {
+      font-weight: 400 !important; font-size: 11px !important; color: #666 !important;
+    }
+
     input.rate-input {
       border: none; background: transparent;
       font-family: inherit; font-size: 12px; color: #666;
@@ -702,7 +706,7 @@ table.inv-table {
     <div class="inv-totals">
       <div class="inv-totals-table">
         <div class="total-row">
-          <span class="tlabel">Sous-total</span>
+          <span class="tlabel">Sous-total HT</span>
           <span class="tval" id="subtotal">0 FCFA</span>
         </div>
         <div class="total-row">
@@ -721,7 +725,6 @@ table.inv-table {
           <span class="tval" id="grandtotal">0 FCFA</span>
         </div>
       </div>
-      <div class="inv-tva-note" id="tvaNote" style="text-align:right;font-size:11px;color:#666;margin-top:6px;">TVA non applicable — exonéré</div>
     </div>
 
     <div class="inv-amount-words">
@@ -967,12 +970,12 @@ table.inv-table {
       const tva = Math.round(base * tvaRate / 100);
       const grand = base + tva;
       document.getElementById('subtotal').textContent   = fmtFCFA(sub);
-      document.getElementById('tvaAmount').textContent  = fmtFCFA(tva);
+      const tvaCell = document.getElementById('tvaAmount');
+      tvaCell.textContent = (tvaRate > 0) ? fmtFCFA(tva) : 'non assujetti';
+      tvaCell.classList.toggle('is-mention', tvaRate === 0);
       document.getElementById('grandtotal').textContent = fmtFCFA(grand);
       const wordsEl = document.getElementById('invInWords');
       if (wordsEl) wordsEl.textContent = grand > 0 ? (frenchAmountWords(grand) + ' francs CFA') : '—';
-      const tvaNote = document.getElementById('tvaNote');
-      if (tvaNote) tvaNote.style.display = (tvaRate > 0) ? 'none' : '';
     }
 
     /* Recalculer à chaque changement */
@@ -1930,20 +1933,25 @@ table.inv-table {
           pdf.text(value, tValX, y, { align: 'right' });
           y += opts.gap || 6.5;
         }
-        totalRow('Sous-total', fmtFCFApdf(sub));
+        totalRow('Sous-total HT', fmtFCFApdf(sub));
         totalRow('Remise', fmtNum(remise) + ' FCFA');
-        totalRow('TVA  ' + (tvaRate || 0) + '%', tva === 0 ? '\u2014' : fmtFCFApdf(tva));
+        if (tvaRate > 0) {
+          totalRow('TVA  ' + tvaRate + '%', fmtFCFApdf(tva));
+        } else {
+          /* Non assujetti : la mention légale tient lieu de montant */
+          font('normal', 10, GREY2);
+          pdf.text('TVA', tLabelX, y);
+          font('normal', 8.5, GREY);
+          pdf.text('non assujetti', tValX, y, { align: 'right' });
+          y += 6.5;
+        }
         // Filet orange + Total à payer
         y += 1.5;
         pdf.setDrawColor(ORANGE[0], ORANGE[1], ORANGE[2]); pdf.setLineWidth(0.5);
         pdf.line(tLabelX, y, RX, y);
         y += 6.5;
         totalRow('Total à payer', fmtFCFApdf(grand), { bold: true, size: 13, gap: 7 });
-        if (tvaRate === 0) {
-          font('normal', 8.5, GREY);
-          pdf.text('TVA non applicable — exonéré', RX, y - 1, { align: 'right' });
-        }
-        y += 6;
+        y += 4;
 
         /* ════════ MONTANT EN LETTRES (encadré orange clair) ════════ */
         const words = grand > 0
