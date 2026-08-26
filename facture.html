@@ -340,6 +340,10 @@
       align-items: center;
     }
     .inv-bank-grid label { font-weight: 600; color: #111; }
+    .tval.is-mention {
+      font-weight: 400 !important; font-size: 11px !important; color: #666 !important;
+    }
+
     input.rate-input {
       border: none; background: transparent;
       font-family: inherit; font-size: 12px; color: #666;
@@ -550,7 +554,7 @@ table.inv-table {
         <div class="inv-monogram">SL</div>
         <div>
           <div class="inv-brand-name">SE LOGER CM</div>
-          <div class="inv-brand-legal">[ KAMTCHUENG RAOUL ARMAND (Ets SE LOGER) ]</div>
+          <div class="inv-brand-legal">Ets SELOGER</div>
           <div class="inv-brand-tagline">Unique Solutions, Smart Living</div>
           <div class="inv-brand-rccm">RCCM DLA-02-2024-A10-00712 — NIU PO68916714973N</div>
         </div>
@@ -573,8 +577,8 @@ table.inv-table {
     <div class="inv-parties">
       <div>
         <div class="inv-party-label">Émetteur</div>
-        <div class="inv-party-name">KAMTCHUENG RAOUL ARMAND</div>
-        <div class="inv-party-legal">Ets SE LOGER — SE LOGER CM</div>
+        <div class="inv-party-name">Ets SELOGER</div>
+        <div class="inv-party-legal">Enseigne commerciale : SE LOGER CM</div>
         <div class="inv-party-detail">
           Boulevard de la République<br>
           Bonamoussadi, Douala<br>
@@ -702,7 +706,7 @@ table.inv-table {
     <div class="inv-totals">
       <div class="inv-totals-table">
         <div class="total-row">
-          <span class="tlabel">Sous-total</span>
+          <span class="tlabel">Sous-total HT</span>
           <span class="tval" id="subtotal">0 FCFA</span>
         </div>
         <div class="total-row">
@@ -721,7 +725,6 @@ table.inv-table {
           <span class="tval" id="grandtotal">0 FCFA</span>
         </div>
       </div>
-      <div class="inv-tva-note" id="tvaNote" style="text-align:right;font-size:11px;color:#666;margin-top:6px;">TVA non applicable — exonéré</div>
     </div>
 
     <div class="inv-amount-words">
@@ -737,19 +740,23 @@ table.inv-table {
       <div class="inv-bank-grid">
         <label for="bankHolder">Titulaire du compte :</label>
         <input class="bank-input" id="bankHolder" data-bank-label="Titulaire du compte"
-               placeholder="Intitulé exact tel qu'il figure à la banque" maxlength="120">
+               value="ETS SELOGER" maxlength="120">
 
-        <label for="bankName">Banque / Agence :</label>
-        <input class="bank-input" id="bankName" data-bank-label="Banque / Agence"
-               placeholder="Ex : ECOBANK — Agence Bonanjo" maxlength="120">
+        <label for="bankName">Banque :</label>
+        <input class="bank-input" id="bankName" data-bank-label="Banque"
+               value="UBA CAMEROUN" maxlength="120">
 
         <label for="bankRib">N° de compte (RIB) :</label>
         <input class="bank-input" id="bankRib" data-bank-label="N° de compte (RIB)"
-               placeholder="23 caractères" maxlength="60">
+               value="10033 05201 01016001793 31" maxlength="60">
+
+        <label for="bankIban">IBAN :</label>
+        <input class="bank-input" id="bankIban" data-bank-label="IBAN"
+               value="CM21 10033 05201 01016001793 31" maxlength="60">
 
         <label for="bankSwift">Code SWIFT / BIC :</label>
         <input class="bank-input" id="bankSwift" data-bank-label="Code SWIFT / BIC"
-               placeholder="Ex : ECOCCMCX" maxlength="20">
+               value="UNAFCMCX" maxlength="20">
       </div>
     </div>
 
@@ -759,7 +766,7 @@ table.inv-table {
     </div>
 
     <div class="inv-footer">
-      SE LOGER CM · KAMTCHUENG RAOUL ARMAND (Ets SE LOGER) · Bonamoussadi, Douala · (+237) 650 840 714 · contact@selogercm.com · selogercm.com
+      Ets SELOGER — SE LOGER CM · Bonamoussadi, Douala · (+237) 650 840 714 · contact@selogercm.com · selogercm.com
     </div>
   </div>
 
@@ -789,8 +796,10 @@ table.inv-table {
        mémorisés en local et repris sur toutes les factures suivantes.
        L'intitulé du titulaire doit être copié EXACTEMENT tel qu'il figure à la
        banque, sinon les virements SWIFT sont rejetés.                       */
-    const BANK_IDS = ['bankHolder', 'bankName', 'bankRib', 'bankSwift'];
-    const STORAGE_KEY_BANK = 'slcm_facture_bank';
+    const BANK_IDS = ['bankHolder', 'bankName', 'bankRib', 'bankIban', 'bankSwift'];
+    /* v2 : la clé est versionnée pour que les coordonnées UBA figées dans le HTML
+       remplacent d'office celles saisies avant l'ouverture du compte société. */
+    const STORAGE_KEY_BANK = 'slcm_facture_bank_v2';
 
     function bankInputs() {
       return BANK_IDS.map(id => document.getElementById(id)).filter(Boolean);
@@ -967,12 +976,12 @@ table.inv-table {
       const tva = Math.round(base * tvaRate / 100);
       const grand = base + tva;
       document.getElementById('subtotal').textContent   = fmtFCFA(sub);
-      document.getElementById('tvaAmount').textContent  = fmtFCFA(tva);
+      const tvaCell = document.getElementById('tvaAmount');
+      tvaCell.textContent = (tvaRate > 0) ? fmtFCFA(tva) : 'non assujetti';
+      tvaCell.classList.toggle('is-mention', tvaRate === 0);
       document.getElementById('grandtotal').textContent = fmtFCFA(grand);
       const wordsEl = document.getElementById('invInWords');
       if (wordsEl) wordsEl.textContent = grand > 0 ? (frenchAmountWords(grand) + ' francs CFA') : '—';
-      const tvaNote = document.getElementById('tvaNote');
-      if (tvaNote) tvaNote.style.display = (tvaRate > 0) ? 'none' : '';
     }
 
     /* Recalculer à chaque changement */
@@ -1751,7 +1760,7 @@ table.inv-table {
         // Bloc marque
         const bx = M + 16;
         font('bold', 18, INK);   pdf.text('SE LOGER CM', bx, y + 4.2);
-        font('bold', 8, GREY);   pdf.text('[ KAMTCHUENG RAOUL ARMAND (Ets SE LOGER) ]', bx, y + 8.2);
+        font('bold', 8, GREY);   pdf.text('Ets SELOGER', bx, y + 8.2);
         font('italic', 9, GREY); pdf.text('Unique Solutions, Smart Living', bx, y + 12);
         font('normal', 8, GREY); pdf.text('RCCM DLA-02-2024-A10-00712 — NIU PO68916714973N', bx, y + 15.6);
         // Méta droite
@@ -1774,8 +1783,8 @@ table.inv-table {
         // -- Colonne gauche : Émetteur (statique) --
         let ly = partsTop;
         font('normal', 8.5, GREY); pdf.text('ÉMETTEUR', leftX, ly, { charSpace: 0.4 }); ly += 6;
-        font('bold', 11, INK);     pdf.text('KAMTCHUENG RAOUL ARMAND', leftX, ly); ly += 5;
-        font('bold', 9, INK);      pdf.text('Ets SE LOGER — SE LOGER CM', leftX, ly); ly += 6;
+        font('bold', 11, INK);     pdf.text('Ets SELOGER', leftX, ly); ly += 5;
+        font('bold', 9, INK);      pdf.text('Enseigne commerciale : SE LOGER CM', leftX, ly); ly += 6;
         font('normal', 9.5, GREY2);
         ['Boulevard de la République', 'Bonamoussadi, Douala', '(+237) 650 840 714', 'contact@selogercm.com']
           .forEach(line => { pdf.text(line, leftX, ly); ly += 5; });
@@ -1930,20 +1939,25 @@ table.inv-table {
           pdf.text(value, tValX, y, { align: 'right' });
           y += opts.gap || 6.5;
         }
-        totalRow('Sous-total', fmtFCFApdf(sub));
+        totalRow('Sous-total HT', fmtFCFApdf(sub));
         totalRow('Remise', fmtNum(remise) + ' FCFA');
-        totalRow('TVA  ' + (tvaRate || 0) + '%', tva === 0 ? '\u2014' : fmtFCFApdf(tva));
+        if (tvaRate > 0) {
+          totalRow('TVA  ' + tvaRate + '%', fmtFCFApdf(tva));
+        } else {
+          /* Non assujetti : la mention légale tient lieu de montant */
+          font('normal', 10, GREY2);
+          pdf.text('TVA', tLabelX, y);
+          font('normal', 8.5, GREY);
+          pdf.text('non assujetti', tValX, y, { align: 'right' });
+          y += 6.5;
+        }
         // Filet orange + Total à payer
         y += 1.5;
         pdf.setDrawColor(ORANGE[0], ORANGE[1], ORANGE[2]); pdf.setLineWidth(0.5);
         pdf.line(tLabelX, y, RX, y);
         y += 6.5;
         totalRow('Total à payer', fmtFCFApdf(grand), { bold: true, size: 13, gap: 7 });
-        if (tvaRate === 0) {
-          font('normal', 8.5, GREY);
-          pdf.text('TVA non applicable — exonéré', RX, y - 1, { align: 'right' });
-        }
-        y += 6;
+        y += 4;
 
         /* ════════ MONTANT EN LETTRES (encadré orange clair) ════════ */
         const words = grand > 0
@@ -2019,7 +2033,7 @@ table.inv-table {
         pdf.line(M, fy, RX, fy);
         font('normal', 8, GREY);
         font('normal', 7, GREY);
-        pdf.text('SE LOGER CM · KAMTCHUENG RAOUL ARMAND (Ets SE LOGER) · Bonamoussadi, Douala · (+237) 650 840 714 · contact@selogercm.com · selogercm.com',
+        pdf.text('Ets SELOGER — SE LOGER CM · Bonamoussadi, Douala · (+237) 650 840 714 · contact@selogercm.com · selogercm.com',
                  PW / 2, fy + 5, { align: 'center' });
 
         /* ── Sauvegarde ── */
