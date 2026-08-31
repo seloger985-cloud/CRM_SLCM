@@ -1127,7 +1127,20 @@ input::placeholder, textarea::placeholder {
   margin-bottom: var(--space-2);
 }
 
-.priority-badge { font-size: var(--fs-base); }
+/* Pastille de priorité : un mot lisible plutôt qu'un emoji rond, qui était
+   dessiné par le système et ne suivait ni le thème ni la couleur du texte. */
+.priority-badge {
+  padding: 2px var(--space-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  border: 1px solid;
+  border-radius: var(--radius-sm);
+}
+.priority-badge.high   { color: var(--danger);  border-color: var(--danger-border); }
+.priority-badge.medium { color: var(--warning); border-color: var(--warning-border); }
+.priority-badge.low    { color: var(--success); border-color: var(--success-border); }
 .suggestion-type { font-weight: 500; color: var(--fg-0); }
 
 .suggestion-content p {
@@ -1141,28 +1154,9 @@ input::placeholder, textarea::placeholder {
   gap: var(--space-2);
 }
 
-.action-btn {
-  padding: 6px 12px;
-  border: 1px solid var(--border-2);
-  background: transparent;
-  color: var(--fg-0);
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  font-size: var(--fs-sm);
-  font-weight: 500;
-  transition: background var(--duration) var(--ease);
-}
-.action-btn:hover { background: var(--bg-2); }
-
-.action-btn.secondary {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent);
-}
-.action-btn.secondary:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-}
+/* (.action-btn et .action-btn.secondary retirés le 31/08/2026 : l'écran
+   Automatisation utilise désormais la famille .btn comme le reste du CRM.
+   C'était le troisième vocabulaire de boutons du projet.) */
 
 .no-suggestions {
   text-align: center;
@@ -1346,81 +1340,158 @@ input::placeholder, textarea::placeholder {
   }
 }
 
-/* ── Barre d'outils : recherche, filtres, export (16/08/2026) ── */
+/* =====================================================================
+   Recherche, rapprochements et partage
+
+   Ces composants ont été ajoutés le 16/08/2026 en marge du système : leurs
+   espacements, tailles et rayons étaient écrits en rem arbitraires — .55rem,
+   .62rem, 10px — au lieu des échelles définies en tête de fichier. Deux
+   écrans voisins ne s'alignaient donc pas sur la même grille, sans qu'on
+   puisse dire pourquoi. Réécrits avec les tokens le 31/08/2026 ; aucune
+   valeur inventée ne subsiste.
+   ===================================================================== */
+
+/* ---------- Barre d'outils ---------- */
 .toolbar {
-  display: flex; flex-wrap: wrap; gap: .5rem;
-  align-items: center; margin: .75rem 0 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 var(--space-4);
 }
-.search-input {
-  flex: 1 1 240px; min-width: 0;
-  padding: .55rem .8rem; font-size: .9rem;
-  border: 1px solid var(--border, #ddd); border-radius: 8px;
-  background: var(--bg-input, #fff); color: inherit;
-}
-.search-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+
+/* Même gabarit que les champs de formulaire : rayon --radius-md et non 8px,
+   pour qu'une recherche et une saisie ne paraissent pas de familles
+   différentes sur des écrans qui se suivent. */
+.search-input,
 .search-select {
-  padding: .55rem .7rem; font-size: .9rem;
-  border: 1px solid var(--border, #ddd); border-radius: 8px;
-  background: var(--bg-input, #fff); color: inherit;
+  padding: 8px var(--space-3);
+  font-family: inherit;
+  font-size: var(--fs-base);
+  color: var(--fg-0);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--duration) var(--ease), box-shadow var(--duration) var(--ease);
 }
+.search-input { flex: 1 1 240px; min-width: 0; }
+
+.search-input:hover,
+.search-select:hover { border-color: var(--border-2); }
+
+.search-input:focus,
+.search-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+/* Aligné sur le gabarit des autres boutons (voir .btn et le sélecteur de
+   rattrapage) : dans une barre d'outils, « Export CSV » et « Ajouter »
+   doivent avoir exactement la même hauteur. */
 .ghost-btn {
-  padding: .5rem .8rem; font-size: .85rem; font-weight: 600;
-  background: transparent; color: inherit;
-  border: 1px solid var(--border, #ccc); border-radius: 8px;
-  cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px 13px;
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  background: transparent;
+  color: var(--fg-0);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-decoration: none;
+  transition: background var(--duration) var(--ease), border-color var(--duration) var(--ease);
 }
 .ghost-btn:hover { border-color: var(--accent); color: var(--accent-text); }
 
-/* Provenance d'un bien : annonce publiée vs saisie interne */
+/* ---------- Provenance d'un bien : annonce publiée vs saisie interne ---------- */
+/* Calqué sur .status-badge : même taille, même graisse, même rayon.
+   La version d'origine descendait à .62rem — 9,9px — en graisse 800. */
 .src-badge {
-  display: inline-block; margin-left: .4rem; padding: .1rem .45rem;
-  font-size: .62rem; font-weight: 800; letter-spacing: .04em;
-  border-radius: 4px; vertical-align: middle;
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: 2px var(--space-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  border-radius: var(--radius-sm);
+  vertical-align: middle;
 }
 .src-site { background: var(--accent-soft); color: var(--accent-text); }
 .src-crm  { background: var(--bg-2); color: var(--fg-1); }
 
-@media (max-width: 560px) {
-  .toolbar { gap: .4rem; }
-  .search-input { flex: 1 1 100%; }
-}
-
-/* ── Rapprochements et partage (16/08/2026) ── */
+/* ---------- Bloc « Sa recherche » du formulaire client ---------- */
 .demand-block {
-  border: 1px solid var(--border, #ddd); border-radius: 10px;
-  padding: .9rem 1rem; margin: 1rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
 }
-.demand-block legend { font-size: .85rem; font-weight: 700; padding: 0 .4rem; }
-.demand-block select[multiple] { min-height: 6.5rem; }
+.demand-block legend {
+  padding: 0 var(--space-1);
+  font-size: var(--fs-md);
+  font-weight: 600;
+}
+.demand-block select[multiple] { min-height: 104px; }
 
+/* ---------- Rapprochements ---------- */
 .match-card {
-  border: 1px solid var(--border, #e3e3e8); border-radius: 12px;
-  padding: .9rem 1rem; margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
 }
 .match-head {
-  display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline;
-  padding-bottom: .6rem; margin-bottom: .4rem;
-  border-bottom: 1px solid var(--border, #eee);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding-bottom: var(--space-2);
+  margin-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border);
 }
 
-.pick-list { max-height: 46vh; overflow-y: auto; border: 1px solid var(--border, #ddd); border-radius: 8px; }
+/* ---------- Choix des destinataires d'un partage ---------- */
+.pick-list {
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
 .pick-row {
-  display: flex; align-items: center; gap: .55rem;
-  padding: .5rem .7rem; cursor: pointer;
-  border-bottom: 1px solid var(--border, #f0f0f0);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
 }
 .pick-row:last-child { border-bottom: none; }
 .pick-row:hover { background: var(--accent-soft); }
-.pick-name { font-weight: 600; font-size: .9rem; }
+.pick-name { font-weight: 600; font-size: var(--fs-base); }
 .pick-row input[disabled] + .pick-name { opacity: .45; }
 
 .share-btn:hover { border-color: var(--whatsapp); color: var(--whatsapp-text); }
 
+/* ---------- État vide ---------- */
 .empty-state {
-  border: 1px dashed var(--border, #ccc); border-radius: 12px;
-  padding: 1.6rem 1.2rem; text-align: center; max-width: 46rem;
+  border: 1px dashed var(--border-2);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5) var(--space-4);
+  text-align: center;
+  max-width: 60ch;   /* mesure de lecture, pas une valeur d'échelle */
 }
-.empty-state p { margin: 0 0 .7rem; }
+.empty-state p { margin: 0 0 var(--space-2); }
+.empty-state p:last-child { margin-bottom: 0; }
+
+@media (max-width: 560px) {
+  .toolbar { gap: var(--space-1); }
+  .search-input { flex: 1 1 100%; }
+}
+
 
 /* =====================================================================
    Mouvement réduit (31/08/2026)

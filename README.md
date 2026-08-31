@@ -85,11 +85,19 @@ Sept tables : `clients`, `properties`, `activities`, `tasks`, `payments`,
 
 À savoir avant de chercher le bouton :
 
-- **Rien ne se supprime.** Aucune fonction de suppression n'existe, pour
-  aucune table. Une fiche créée par erreur reste en base — et continue de
-  compter dans les statistiques du tableau de bord. Décision à trancher :
-  soit assumer, soit ajouter une colonne `archived_at` plutôt qu'un `DELETE`,
-  ce qui vaut mieux sur des données de facturation.
+- **Rien ne se supprime, et c'est voulu.** Aucune fonction de suppression
+  n'existe, pour aucune table. Sur des données de facturation, ne pas pouvoir
+  effacer d'un clic est une sécurité plutôt qu'une limite.
+
+  En pratique : une fiche créée par erreur se **corrige**, elle ne s'efface
+  pas. En dernier recours, elle se retire depuis le *Table Editor* du
+  tableau de bord Supabase.
+
+  Le point de bascule à surveiller : une fiche erronée continue de compter
+  dans les statistiques du tableau de bord — total clients, taux de
+  conversion. Le jour où ces chiffres deviennent faux, la réponse n'est pas
+  d'ajouter un `DELETE` mais une colonne `archived_at` : la fiche sort des
+  listes et des calculs, la donnée reste.
 - **Pas de suivi acompte / solde.** Un paiement porte un montant et un statut
   (`pending` ou `paid`), rien de plus. Une tentative avait été amorcée côté
   interface sans jamais atteindre la base ; elle a été retirée le 31/08/2026.

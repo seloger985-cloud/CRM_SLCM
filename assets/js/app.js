@@ -39,6 +39,13 @@ automationBtn.addEventListener('click', navTo(automationBtn, showAutomation));
 pipelineBtn.addEventListener('click', navTo(pipelineBtn, showPipeline));
 matchingBtn.addEventListener('click', navTo(matchingBtn, showMatching));
 
+/* Redessine le tableau de bord au changement de thème, uniquement s'il est à
+   l'écran : ses deux graphiques sont peints sur un canevas et ne suivent pas
+   la cascade CSS. Les autres vues n'en ont pas besoin. */
+document.addEventListener('slcm:theme-changed', () => {
+  if (window.SLCM_SESSION && dashboardBtn.classList.contains('active')) showDashboard();
+});
+
 // Initialize — on n'interroge la base qu'une fois la session confirmée
 // par auth.js. Sans session, RLS bloque tout et l'écran resterait vide.
 mainContent.innerHTML = '<div class="loading"><div class="spinner"></div><div>Chargement…</div></div>';
@@ -194,36 +201,36 @@ function sendWhatsApp(phone, message) {
 // Fonction pour afficher les suggestions d'automatisation
 async function showAutomation() {
   mainContent.innerHTML = `
-    <h2>🤖 Automatisation & Suggestions</h2>
+    <h2>Automatisation</h2>
 
     <div class="automation-section">
-      <h3>📝 Templates de Messages</h3>
+      <h3>Modèles de messages</h3>
       <div class="templates-grid">
         <div class="template-card">
           <h4>WhatsApp - Message général</h4>
           <p class="template-text">${messageTemplates.whatsapp.general}</p>
-          <button onclick="copyTemplate('whatsapp', 'general')">Copier</button>
+          <button onclick="copyTemplate('whatsapp', 'general')" class="btn btn-outline">Copier</button>
         </div>
         <div class="template-card">
           <h4>WhatsApp - Relance</h4>
           <p class="template-text">${messageTemplates.whatsapp.followup}</p>
-          <button onclick="copyTemplate('whatsapp', 'followup')">Copier</button>
+          <button onclick="copyTemplate('whatsapp', 'followup')" class="btn btn-outline">Copier</button>
         </div>
         <div class="template-card">
           <h4>WhatsApp - Rappel visite</h4>
           <p class="template-text">${messageTemplates.whatsapp.visit_reminder}</p>
-          <button onclick="copyTemplate('whatsapp', 'visit_reminder')">Copier</button>
+          <button onclick="copyTemplate('whatsapp', 'visit_reminder')" class="btn btn-outline">Copier</button>
         </div>
         <div class="template-card">
           <h4>WhatsApp - Rappel paiement</h4>
           <p class="template-text">${messageTemplates.whatsapp.payment_reminder}</p>
-          <button onclick="copyTemplate('whatsapp', 'payment_reminder')">Copier</button>
+          <button onclick="copyTemplate('whatsapp', 'payment_reminder')" class="btn btn-outline">Copier</button>
         </div>
       </div>
     </div>
 
     <div class="automation-section">
-      <h3>🚀 Actions Automatiques Suggérées</h3>
+      <h3>Relances suggérées</h3>
       <div id="suggestions-container">
         <div class="loading"><div class="spinner"></div>Analyse des données...</div>
       </div>
@@ -239,7 +246,7 @@ function displaySuggestions(suggestions) {
   const container = document.getElementById('suggestions-container');
 
   if (suggestions.length === 0) {
-    container.innerHTML = '<p class="no-suggestions">🎉 Aucune action automatique nécessaire pour le moment !</p>';
+    container.innerHTML = '<p class="no-suggestions">Aucune relance à proposer pour le moment.</p>';
     return;
   }
 
@@ -248,14 +255,14 @@ function displaySuggestions(suggestions) {
       ${suggestions.map((suggestion, index) => `
         <div class="suggestion-item ${suggestion.priority}">
           <div class="suggestion-header">
-            <span class="priority-badge ${suggestion.priority}">${suggestion.priority === 'high' ? '🔴' : suggestion.priority === 'medium' ? '🟡' : '🟢'}</span>
+            <span class="priority-badge ${suggestion.priority}">${suggestion.priority === 'high' ? 'Urgent' : suggestion.priority === 'medium' ? 'À faire' : 'Quand possible'}</span>
             <span class="suggestion-type">${getSuggestionTypeLabel(suggestion.type)}</span>
           </div>
           <div class="suggestion-content">
             <p>${escHtml(suggestion.message)}</p>
             <div class="suggestion-actions">
-              <button onclick="executeSuggestion(${index})" class="action-btn">📱 WhatsApp</button>
-              <button onclick="createActivityFromSuggestion(${index})" class="action-btn secondary">📝 Activité</button>
+              <button onclick="executeSuggestion(${index})" class="btn btn-primary">WhatsApp</button>
+              <button onclick="createActivityFromSuggestion(${index})" class="btn btn-outline">Noter une activité</button>
             </div>
           </div>
         </div>
@@ -481,6 +488,43 @@ function token(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
+/* ═══════════════ COULEURS DES GRAPHIQUES ═══════════════
+
+   Validées le 31/08/2026 contre les deux surfaces réelles du CRM (#ffffff et
+   #18181b) : bande de luminosité, seuil de saturation, séparation en vision
+   déficiente (pire paire voisine ΔE 9,1 en protanopie, seuil 8) et contraste.
+   Ce ne sont pas des couleurs choisies à l'œil.
+
+   Deux jeux, parce que les deux graphiques ne font pas le même travail :
+
+     RAMPE   pour le pipeline. Ses quatre étapes sont ORDONNÉES, et elles sont
+             déjà nommées sous l'axe : quatre teintes sans rapport laissaient
+             croire à quatre catégories indépendantes, et la couleur
+             n'encodait rien. Une seule teinte, du clair au foncé, dit qu'on
+             avance vers la signature.
+
+     SOURCES pour l'origine des clients. Là, les catégories sont bien
+             indépendantes : six teintes fixes, jamais recyclées.
+
+   L'orange de marque #ED7A14 ne peut pas servir tel quel sur fond sombre —
+   luminosité 0,698, hors de la bande 0,48–0,67. D'où l'échelon #D4720F, sur
+   le même principe que --accent-text dans la feuille de style. */
+const CHART_COLORS = {
+  light: {
+    ramp:    ['#E9A45F', '#DF8730', '#C4680C', '#824509'],
+    sources: ['#2a78d6', '#ED7A14', '#1baf7a', '#eda100', '#e87ba4', '#008300']
+  },
+  dark: {
+    ramp:    ['#F6C795', '#EDA05A', '#D4720F', '#8A4E0D'],
+    sources: ['#3987e5', '#D4720F', '#199e70', '#c98500', '#d55181', '#008300']
+  }
+};
+
+function chartColors() {
+  return document.documentElement.getAttribute('data-theme') === 'dark'
+    ? CHART_COLORS.dark : CHART_COLORS.light;
+}
+
 function initCharts(statusData, statusLabels, sourceStats) {
   /* Axes, légendes et grilles suivent le thème. */
   Chart.defaults.color = token('--fg-1');
@@ -493,7 +537,10 @@ function initCharts(statusData, statusLabels, sourceStats) {
      parent sans hauteur, et le camembert débordait de sa carte en étirant la
      colonne voisine. */
   const baseOptions = { responsive: true, maintainAspectRatio: false };
-  // Graphique du pipeline
+  const palette = chartColors();
+  const surface = token('--bg-0');
+
+  // Pipeline — série unique, rampe ordonnée, pas de bordure
   const statusCtx = document.getElementById('statusChart');
   if (statusCtx) {
     new Chart(statusCtx, {
@@ -501,38 +548,26 @@ function initCharts(statusData, statusLabels, sourceStats) {
       data: {
         labels: statusLabels,
         datasets: [{
-          label: 'Nombre de clients',
+          label: 'Clients',
           data: statusData,
-          backgroundColor: [
-            '#ffeaa7', // nouvelles demandes
-            '#74b9ff', // visites
-            '#fdcb6e', // négociations
-            '#55efc4'  // signés
-          ],
-          borderColor: [
-            '#d63031',
-            '#0984e3',
-            '#e17055',
-            '#00b894'
-          ],
-          borderWidth: 2
+          backgroundColor: palette.ramp,
+          borderWidth: 0,
+          /* Extrémité arrondie côté valeur, pied carré sur la ligne de base. */
+          borderRadius: { topLeft: 4, topRight: 4 },
+          maxBarThickness: 24
         }]
       },
       options: Object.assign({}, baseOptions, {
-        plugins: {
-          legend: { display: false }
-        },
+        plugins: { legend: { display: false } },
         scales: {
-          y: {
-            beginAtZero: true,
-            ticks: { stepSize: 1 }
-          }
+          y: { beginAtZero: true, ticks: { stepSize: 1 } },
+          x: { grid: { display: false } }
         }
       })
     });
   }
 
-  // Graphique des sources
+  // Origine des clients — six catégories indépendantes
   const sourceCtx = document.getElementById('sourceChart');
   if (sourceCtx) {
     new Chart(sourceCtx, {
@@ -541,22 +576,15 @@ function initCharts(statusData, statusLabels, sourceStats) {
         labels: Object.keys(sourceStats),
         datasets: [{
           data: Object.values(sourceStats),
-          backgroundColor: [
-            '#f59a23',
-            '#25d366',
-            '#e74c3c',
-            '#9b59b6',
-            '#3498db',
-            '#95a5a6'
-          ]
+          backgroundColor: palette.sources,
+          /* Écart de 2px à la couleur du fond entre segments, plutôt qu'un
+             contour : deux secteurs voisins ne se touchent jamais. */
+          borderColor: surface,
+          borderWidth: 2
         }]
       },
       options: Object.assign({}, baseOptions, {
-        plugins: {
-          legend: {
-            position: 'bottom'
-          }
-        }
+        plugins: { legend: { position: 'bottom' } }
       })
     });
   }
@@ -607,7 +635,7 @@ async function showClients() {
     <h2>Clients</h2>
     <div class="toolbar">
       <input type="search" id="client-search" class="search-input" placeholder="Rechercher : nom, téléphone, statut, source…">
-      <button onclick="showClientForm()">Ajouter Client</button>
+      <button onclick="showClientForm()" class="btn btn-primary">Ajouter Client</button>
       <button onclick="exportCSV('clients')" class="ghost-btn">Export CSV</button>
     </div>
     <div class="list" id="client-list">
@@ -727,8 +755,8 @@ function showClientForm(client = null) {
         <label>Notes:</label>
         <textarea id="client-notes">${escHtml((client && client.notes) || '')}</textarea>
       </div>
-      <button type="submit">${client ? 'Modifier' : 'Ajouter'}</button>
-      <button type="button" onclick="showClients()">Annuler</button>
+      <button type="submit" class="btn btn-primary">${client ? 'Modifier' : 'Ajouter'}</button>
+      <button type="button" onclick="showClients()" class="btn btn-outline">Annuler</button>
     </form>
   `;
 
@@ -833,7 +861,7 @@ async function showProperties(force) {
         <option value="site" ${propsView.src === 'site' ? 'selected' : ''}>selogercm.com</option>
         <option value="crm"  ${propsView.src === 'crm'  ? 'selected' : ''}>Saisies CRM</option>
       </select>
-      <button onclick="showPropertyForm()">Ajouter</button>
+      <button onclick="showPropertyForm()" class="btn btn-primary">Ajouter</button>
       <button onclick="exportCSV('properties')" class="ghost-btn" title="Exporter en CSV">Export CSV</button>
       <button onclick="showProperties(true)" class="ghost-btn" title="Recharger depuis selogercm.com">↻</button>
     </div>
@@ -1041,7 +1069,7 @@ async function showMatching() {
         ${listings.length} annonces publiées sur selogercm.com. Pour qu'il
         fonctionne, ouvrez une fiche client et renseignez au moins un critère :
         budget, quartier, type de bien ou nombre de chambres.</p>
-        <button onclick="showClients()">Ouvrir les clients</button>
+        <button onclick="showClients()" class="btn btn-primary">Ouvrir les clients</button>
       </div>`;
     return;
   }
@@ -1170,8 +1198,8 @@ function showPropertyForm(property = null) {
         <label>Description:</label>
         <textarea id="property-description">${escHtml((property && property.description) || '')}</textarea>
       </div>
-      <button type="submit">${property ? 'Modifier' : 'Ajouter'}</button>
-      <button type="button" onclick="showProperties()">Annuler</button>
+      <button type="submit" class="btn btn-primary">${property ? 'Modifier' : 'Ajouter'}</button>
+      <button type="button" onclick="showProperties()" class="btn btn-outline">Annuler</button>
     </form>
   `;
 
@@ -1213,7 +1241,7 @@ async function showActivities() {
   const activities = await getAll('activities');
   mainContent.innerHTML = `
     <h2>Journal d'activités</h2>
-    <button onclick="showActivityForm()">Ajouter Activité</button>
+    <button onclick="showActivityForm()" class="btn btn-primary">Ajouter Activité</button>
     <div class="list">
       ${activities.length ? activities.map(a => `<div class="list-item">
         <div><strong>${getActivityLabel(a.type)}</strong> — ${escHtml(a.notes)}</div>
@@ -1259,8 +1287,8 @@ function showActivityForm(activity = null) {
         <label>Date:</label>
         <input type="date" id="activity-date" value="${escAttr((activity && activity.date) || new Date().toISOString().split('T')[0])}" required>
       </div>
-      <button type="submit">${activity ? 'Modifier' : 'Ajouter'}</button>
-      <button type="button" onclick="showActivities()">Annuler</button>
+      <button type="submit" class="btn btn-primary">${activity ? 'Modifier' : 'Ajouter'}</button>
+      <button type="button" onclick="showActivities()" class="btn btn-outline">Annuler</button>
     </form>
   `;
 
@@ -1312,7 +1340,7 @@ async function showTasks() {
   const tasks = await getAll('tasks');
   mainContent.innerHTML = `
     <h2>Tâches</h2>
-    <button onclick="showTaskForm()">Ajouter Tâche</button>
+    <button onclick="showTaskForm()" class="btn btn-primary">Ajouter Tâche</button>
     <div class="list">
       ${tasks.length ? tasks.map(t => `<div class="list-item">
         <div><strong>${escHtml(t.title)}</strong> — ${getTaskStatusLabel(t.status)}</div>
@@ -1346,8 +1374,8 @@ function showTaskForm(task = null) {
           <option value="completed" ${task && task.status === 'completed' ? 'selected' : ''}>Terminée</option>
         </select>
       </div>
-      <button type="submit">${task ? 'Modifier' : 'Ajouter'}</button>
-      <button type="button" onclick="showTasks()">Annuler</button>
+      <button type="submit" class="btn btn-primary">${task ? 'Modifier' : 'Ajouter'}</button>
+      <button type="button" onclick="showTasks()" class="btn btn-outline">Annuler</button>
     </form>
   `;
 
@@ -1399,10 +1427,10 @@ async function showPipeline() {
   
   const stages = ['nouvelle demande', 'visite', 'négociation', 'signé'];
   const stageTitles = {
-    'nouvelle demande': '🆕 Nouvelles Demandes',
-    'visite': '👁️ Visites',
-    'négociation': '💬 Négociation',
-    'signé': '✅ Signés'
+    'nouvelle demande': 'Nouvelles demandes',
+    'visite': 'Visites',
+    'négociation': 'Négociation',
+    'signé': 'Signés'
   };
 
   // Grouper les clients par statut
@@ -1416,7 +1444,7 @@ async function showPipeline() {
   const conversionRate = totalClients > 0 ? (((grouped['signé']?.length || 0) / totalClients) * 100).toFixed(1) : 0;
 
   mainContent.innerHTML = `
-    <h2>📊 Pipeline de Vente</h2>
+    <h2>Pipeline de vente</h2>
     
     <div class="pipeline-stats">
       <div class="stat">
@@ -1460,7 +1488,7 @@ async function showPipeline() {
     </div>
 
     <div class="pipeline-help">
-      <p>💡 Glissez-déposez les cartes pour avancer les clients dans le pipeline</p>
+      <p>Glissez-déposez une carte pour faire avancer un client dans le pipeline.</p>
     </div>
   `;
 
@@ -1725,7 +1753,7 @@ async function showPayments() {
 
   mainContent.innerHTML = `
     <h2>Paiements</h2>
-    <button onclick="showPaymentForm()">Ajouter Paiement</button>
+    <button onclick="showPaymentForm()" class="btn btn-primary">Ajouter Paiement</button>
     <div class="list">
       ${payments.length ? payments.map(p => `<div class="list-item">
         <div><strong>${formatMoney(p.amount)} FCFA</strong> — ${getPaymentStatusLabel(p.status)}</div>
@@ -1772,8 +1800,8 @@ function showPaymentForm(payment = null) {
         <label>Notes:</label>
         <textarea id="payment-notes">${escHtml((payment && payment.notes) || '')}</textarea>
       </div>
-      <button type="submit">${payment ? 'Modifier' : 'Ajouter'}</button>
-      <button type="button" onclick="showPayments()">Annuler</button>
+      <button type="submit" class="btn btn-primary">${payment ? 'Modifier' : 'Ajouter'}</button>
+      <button type="button" onclick="showPayments()" class="btn btn-outline">Annuler</button>
     </form>
   `;
 

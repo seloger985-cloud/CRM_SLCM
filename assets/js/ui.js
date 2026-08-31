@@ -346,6 +346,11 @@
     }
     try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch (e) {}
 
+    /* Les graphiques sont peints sur un canevas : ils ne suivent pas la
+       cascade CSS et gardent les couleurs du thème précédent. On préviens
+       les vues qui en affichent pour qu'elles se redessinent. */
+    document.dispatchEvent(new Event('slcm:theme-changed'));
+
     /* Libellé du bouton. Les emoji ☀️ / 🌙 ont été remplacés le 31/08 par les
        icônes du même jeu SVG que la navigation : un emoji est dessiné par le
        système, il ne suit ni la couleur du texte, ni le thème, ni la graisse,
