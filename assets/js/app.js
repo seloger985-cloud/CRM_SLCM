@@ -252,7 +252,7 @@ function displaySuggestions(suggestions) {
             <span class="suggestion-type">${getSuggestionTypeLabel(suggestion.type)}</span>
           </div>
           <div class="suggestion-content">
-            <p>${suggestion.message}</p>
+            <p>${escHtml(suggestion.message)}</p>
             <div class="suggestion-actions">
               <button onclick="executeSuggestion(${index})" class="action-btn">📱 WhatsApp</button>
               <button onclick="createActivityFromSuggestion(${index})" class="action-btn secondary">📝 Activité</button>
@@ -562,6 +562,43 @@ function initCharts(statusData, statusLabels, sourceStats) {
   }
 }
 
+/* ═══════════════ RENDU DES LISTES ═══════════════
+
+   Les icônes étaient recopiées à l'identique dans cinq listes — le crayon
+   cinq fois, les deux WhatsApp deux fois. Chaque ligne de liste dépassait
+   les 3 000 caractères, ce qui rendait impossible de vérifier d'un coup
+   d'œil que les valeurs venant de la base sont bien échappées. C'était la
+   vraie raison pour laquelle l'échappement manquait ici : personne ne peut
+   relire ça.
+
+   Règle, désormais uniforme sur tout le fichier :
+     escHtml() pour du texte, escAttr() dans un attribut,
+     Number() pour un identifiant passé à un onclick. */
+
+const ICON_EDIT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>';
+
+const ICON_WHATSAPP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/></svg>';
+
+const ICON_RELANCE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>';
+
+function clientRow(c) {
+  const status = c.status || 'nouvelle demande';
+  const source = c.source || 'Non renseignée';
+  return `<div class="list-item">
+    <div>
+      <strong>${escHtml(c.name)}</strong> — ${escHtml(c.phone || 'pas de numéro')}
+      <span class="status-badge" data-status="${escAttr(status)}">${escHtml(status)}</span>
+    </div>
+    <div class="item-meta">Source : ${escHtml(source)}${c.source_detail ? ' (' + escHtml(c.source_detail) + ')' : ''}</div>
+    <div class="item-meta">${formatDate(c.created_at)}</div>
+    <div>
+      <a href="${escAttr(getWhatsApp(c.phone, c, 'general'))}" target="_blank" rel="noopener" class="whatsapp-btn" title="WhatsApp général">${ICON_WHATSAPP}</a>
+      <a href="${escAttr(getWhatsApp(c.phone, c, 'followup'))}" target="_blank" rel="noopener" class="relance whatsapp-btn" title="Relance WhatsApp">${ICON_RELANCE}</a>
+      <button onclick="editClient(${Number(c.id)})" class="edit-btn" title="Modifier">${ICON_EDIT}</button>
+    </div>
+  </div>`;
+}
+
 async function showClients() {
   UI.showLoading();
   const clients = await getAll('clients');
@@ -574,7 +611,7 @@ async function showClients() {
       <button onclick="exportCSV('clients')" class="ghost-btn">Export CSV</button>
     </div>
     <div class="list" id="client-list">
-      ${clients.length ? clients.map(c => `<div class="list-item"><div><strong>${c.name}</strong> - ${c.phone} <span class="status-badge" data-status="${c.status || 'nouvelle demande'}">${c.status || 'nouvelle demande'}</span></div><div class="item-meta">Source: ${c.source || 'Non renseignée'}${c.source_detail ? ' (' + c.source_detail + ')' : ''}</div><div class="item-meta">${formatDate(c.created_at)}</div><div><a href="${getWhatsApp(c.phone, c, 'general')}" target="_blank" class="whatsapp-btn" title="WhatsApp général"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/></svg></a><a href="${getWhatsApp(c.phone, c, 'followup')}" target="_blank" class="relance whatsapp-btn" title="Relance WhatsApp"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg></a><button onclick="editClient(${c.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div></div>`).join('') : '<p>Aucun client pour le moment.</p>'}
+      ${clients.length ? clients.map(clientRow).join('') : '<p class="item-meta">Aucun client pour le moment.</p>'}
     </div>
   `;
 
@@ -602,15 +639,15 @@ function showClientForm(client = null) {
     <form id="client-form">
       <div class="form-group">
         <label>Nom:</label>
-        <input type="text" id="client-name" value="${(client && client.name) || ''}" required>
+        <input type="text" id="client-name" value="${escAttr((client && client.name) || '')}" required>
       </div>
       <div class="form-group">
         <label>Téléphone:</label>
-        <input type="tel" id="client-phone" value="${(client && client.phone) || ''}">
+        <input type="tel" id="client-phone" value="${escAttr((client && client.phone) || '')}">
       </div>
       <div class="form-group">
         <label>Email:</label>
-        <input type="email" id="client-email" value="${(client && client.email) || ''}">
+        <input type="email" id="client-email" value="${escAttr((client && client.email) || '')}">
       </div>
       <div class="form-group">
         <label>Source de contact:</label>
@@ -625,7 +662,7 @@ function showClientForm(client = null) {
       </div>
       <div class="form-group" id="client-source-detail-group" style="display: ${client && client.source === 'autres' ? 'block' : 'none'};">
         <label>Précisez:</label>
-        <input type="text" id="client-source-detail" value="${client ? (client.source_detail || '') : ''}">
+        <input type="text" id="client-source-detail" value="${escAttr(client ? (client.source_detail || '') : '')}">
       </div>
       <div class="form-group">
         <label>Type:</label>
@@ -657,22 +694,22 @@ function showClientForm(client = null) {
         <div class="form-group">
           <label>Types recherchés <span class="item-meta">(Ctrl / Cmd pour plusieurs)</span></label>
           <select id="client-types" multiple size="5">
-            ${Object.keys(DEMAND_TYPE_FR).map(t => `<option value="${t}" ${client && (client.wanted_types || []).indexOf(t) !== -1 ? 'selected' : ''}>${DEMAND_TYPE_FR[t]}</option>`).join('')}
+            ${Object.keys(DEMAND_TYPE_FR).map(t => `<option value="${escAttr(t)}" ${client && (client.wanted_types || []).indexOf(t) !== -1 ? 'selected' : ''}>${DEMAND_TYPE_FR[t]}</option>`).join('')}
           </select>
         </div>
         <div class="form-group">
           <label>Quartiers visés:</label>
           <select id="client-districts" multiple size="5">
-            ${DEMAND_DISTRICTS.map(d => `<option value="${d}" ${client && (client.wanted_districts || []).indexOf(d) !== -1 ? 'selected' : ''}>${d}</option>`).join('')}
+            ${DEMAND_DISTRICTS.map(d => `<option value="${escAttr(d)}" ${client && (client.wanted_districts || []).indexOf(d) !== -1 ? 'selected' : ''}>${d}</option>`).join('')}
           </select>
         </div>
         <div class="form-group">
           <label>Budget maximum (FCFA):</label>
-          <input type="number" id="client-budget" value="${client && client.budget ? client.budget : ''}" placeholder="Loyer mensuel ou prix de vente">
+          <input type="number" id="client-budget" value="${escAttr(client && client.budget ? client.budget : '')}" placeholder="Loyer mensuel ou prix de vente">
         </div>
         <div class="form-group">
           <label>Chambres minimum:</label>
-          <input type="number" id="client-bedrooms" min="0" value="${client && client.min_bedrooms ? client.min_bedrooms : ''}">
+          <input type="number" id="client-bedrooms" min="0" value="${escAttr(client && client.min_bedrooms ? client.min_bedrooms : '')}">
         </div>
         <div class="form-group">
           <label><input type="checkbox" id="client-furnished" ${client && client.wants_furnished ? 'checked' : ''}> Meublé exigé</label>
@@ -684,7 +721,7 @@ function showClientForm(client = null) {
 
       <div class="form-group">
         <label>Notes:</label>
-        <textarea id="client-notes">${(client && client.notes) || ''}</textarea>
+        <textarea id="client-notes">${escHtml((client && client.notes) || '')}</textarea>
       </div>
       <button type="submit">${client ? 'Modifier' : 'Ajouter'}</button>
       <button type="button" onclick="showClients()">Annuler</button>
@@ -862,17 +899,17 @@ function renderPropsList() {
     const price = Number(p.price) > 0 ? Number(p.price).toLocaleString('fr-FR') + ' FCFA' : 'Prix non renseigné';
     const slug = p._slug || p.listing_slug;
     const link = slug
-      ? `<a href="https://selogercm.com/annonce/${slug}" target="_blank" rel="noopener" class="ghost-btn" title="Voir l'annonce en ligne">Voir</a>`
+      ? `<a href="https://selogercm.com/annonce/${encodeURIComponent(slug)}" target="_blank" rel="noopener" class="ghost-btn" title="Voir l'annonce en ligne">Voir</a>`
       : '';
     /* Partage : uniquement pour un bien ayant une page publique.
        Une fiche purement interne n'a pas d'URL à envoyer. */
     const sid = p._siteId || p.listing_id;
     const share = (slug && sid)
-      ? `<button onclick="shareListing('${sid}')" class="ghost-btn share-btn" title="Partager à un client">Partager</button>`
+      ? `<button onclick="shareListing('${escAttr(sid)}')" class="ghost-btn share-btn" title="Partager à un client">Partager</button>`
       : '';
     const action = p.id
-      ? `<button onclick="editProperty(${p.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button>`
-      : `<button onclick="importListing('${p._siteId}')" class="edit-btn" title="Créer une fiche CRM pour ce bien">+ Fiche</button>`;
+      ? `<button onclick="editProperty(${Number(p.id)})" class="edit-btn" title="Modifier">${ICON_EDIT}</button>`
+      : `<button onclick="importListing('${escAttr(p._siteId)}')" class="edit-btn" title="Créer une fiche CRM pour ce bien">+ Fiche</button>`;
     return `<div class="list-item">
       <div><strong>${escHtml(p.title || 'Sans titre')}</strong> ${badge}</div>
       <div class="item-meta">${escHtml(p.address || '')} — ${price}</div>
@@ -931,7 +968,7 @@ async function shareListing(siteId) {
     <div class="pick-list" id="pick-list">
       ${scored.map(({ c, score, fit }) => `
         <label class="pick-row"${c.phone ? '' : ' title="Pas de numéro : envoi impossible"'}>
-          <input type="checkbox" value="${c.id}"${c.phone ? '' : ' disabled'}>
+          <input type="checkbox" value="${escAttr(c.id)}"${c.phone ? '' : ' disabled'}>
           <span class="pick-name">${escHtml(c.name || 'Sans nom')}</span>
           <span class="item-meta">${escHtml(c.phone || 'pas de numéro')}</span>
           ${fit ? `<span class="src-badge src-site">MATCH ${score}%</span>` : ''}
@@ -1024,7 +1061,7 @@ async function showMatching() {
               <div class="item-meta">${escHtml([h.listing.district, h.listing.city].filter(Boolean).join(', '))} — ${Number(h.listing.price) > 0 ? Number(h.listing.price).toLocaleString('fr-FR') + ' FCFA' : 'prix sur demande'}</div>
               <div class="item-meta">${escHtml(h.reasons.join(' · '))}</div>
               <div>
-                ${h.listing.slug ? `<a href="https://selogercm.com/annonce/${h.listing.slug}" target="_blank" rel="noopener" class="ghost-btn">Voir</a>` : ''}
+                ${h.listing.slug ? `<a href="https://selogercm.com/annonce/${encodeURIComponent(h.listing.slug)}" target="_blank" rel="noopener" class="ghost-btn">Voir</a>` : ''}
                 <button onclick="sendMatch(${mi},${hi})" class="ghost-btn share-btn">Envoyer</button>
               </div>
             </div>`).join('')}
@@ -1097,11 +1134,11 @@ function showPropertyForm(property = null) {
     <form id="property-form">
       <div class="form-group">
         <label>Titre:</label>
-        <input type="text" id="property-title" value="${(property && property.title) || ''}" required>
+        <input type="text" id="property-title" value="${escAttr((property && property.title) || '')}" required>
       </div>
       <div class="form-group">
         <label>Adresse:</label>
-        <input type="text" id="property-address" value="${(property && property.address) || ''}" required>
+        <input type="text" id="property-address" value="${escAttr((property && property.address) || '')}" required>
       </div>
       <div class="form-group">
         <label>Type:</label>
@@ -1112,7 +1149,7 @@ function showPropertyForm(property = null) {
       </div>
       <div class="form-group">
         <label>Prix (FCFA):</label>
-        <input type="number" id="property-price" value="${(property && property.price) || ''}">
+        <input type="number" id="property-price" value="${escAttr((property && property.price) || '')}">
       </div>
       <div class="form-group">
         <label>Statut:</label>
@@ -1124,7 +1161,7 @@ function showPropertyForm(property = null) {
       </div>
       <div class="form-group">
         <label>Description:</label>
-        <textarea id="property-description">${(property && property.description) || ''}</textarea>
+        <textarea id="property-description">${escHtml((property && property.description) || '')}</textarea>
       </div>
       <button type="submit">${property ? 'Modifier' : 'Ajouter'}</button>
       <button type="button" onclick="showProperties()">Annuler</button>
@@ -1171,7 +1208,11 @@ async function showActivities() {
     <h2>Journal d'activités</h2>
     <button onclick="showActivityForm()">Ajouter Activité</button>
     <div class="list">
-      ${activities.length ? activities.map(a => `<div class="list-item"><div><strong>${getActivityLabel(a.type)}</strong> - ${a.notes}</div><div>${formatDate(a.date)}</div><div><button onclick="editActivity(${a.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div></div>`).join('') : '<p>Aucune activité pour le moment.</p>'}
+      ${activities.length ? activities.map(a => `<div class="list-item">
+        <div><strong>${getActivityLabel(a.type)}</strong> — ${escHtml(a.notes)}</div>
+        <div class="item-meta">${formatDate(a.date)}</div>
+        <div><button onclick="editActivity(${Number(a.id)})" class="edit-btn" title="Modifier">${ICON_EDIT}</button></div>
+      </div>`).join('') : '<p class="item-meta">Aucune activité pour le moment.</p>'}
     </div>
   `;
 }
@@ -1205,11 +1246,11 @@ function showActivityForm(activity = null) {
       </div>
       <div class="form-group">
         <label>Notes:</label>
-        <textarea id="activity-notes" required>${(activity && activity.notes) || ''}</textarea>
+        <textarea id="activity-notes" required>${escHtml((activity && activity.notes) || '')}</textarea>
       </div>
       <div class="form-group">
         <label>Date:</label>
-        <input type="date" id="activity-date" value="${(activity && activity.date) || new Date().toISOString().split('T')[0]}" required>
+        <input type="date" id="activity-date" value="${escAttr((activity && activity.date) || new Date().toISOString().split('T')[0])}" required>
       </div>
       <button type="submit">${activity ? 'Modifier' : 'Ajouter'}</button>
       <button type="button" onclick="showActivities()">Annuler</button>
@@ -1266,7 +1307,11 @@ async function showTasks() {
     <h2>Tâches</h2>
     <button onclick="showTaskForm()">Ajouter Tâche</button>
     <div class="list">
-      ${tasks.length ? tasks.map(t => `<div class="list-item"><div><strong>${t.title}</strong> - ${getTaskStatusLabel(t.status)}</div><div class="item-meta">Créé le ${formatDate(t.created_at)}</div><button onclick="editTask(${t.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div>`).join('') : '<p>Aucune tâche pour le moment.</p>'}
+      ${tasks.length ? tasks.map(t => `<div class="list-item">
+        <div><strong>${escHtml(t.title)}</strong> — ${getTaskStatusLabel(t.status)}</div>
+        <div class="item-meta">${t.due_date ? 'Échéance ' + formatDate(t.due_date) : 'Sans échéance'} · créée le ${formatDate(t.created_at)}</div>
+        <div><button onclick="editTask(${Number(t.id)})" class="edit-btn" title="Modifier">${ICON_EDIT}</button></div>
+      </div>`).join('') : '<p class="item-meta">Aucune tâche pour le moment.</p>'}
     </div>
   `;
 }
@@ -1277,15 +1322,15 @@ function showTaskForm(task = null) {
     <form id="task-form">
       <div class="form-group">
         <label>Titre:</label>
-        <input type="text" id="task-title" value="${(task && task.title) || ''}" required>
+        <input type="text" id="task-title" value="${escAttr((task && task.title) || '')}" required>
       </div>
       <div class="form-group">
         <label>Description:</label>
-        <textarea id="task-description">${(task && task.description) || ''}</textarea>
+        <textarea id="task-description">${escHtml((task && task.description) || '')}</textarea>
       </div>
       <div class="form-group">
         <label>Date d'échéance:</label>
-        <input type="date" id="task-due-date" value="${(task && task.due_date) || ''}">
+        <input type="date" id="task-due-date" value="${escAttr((task && task.due_date) || '')}">
       </div>
       <div class="form-group">
         <label>Statut:</label>
@@ -1390,14 +1435,14 @@ async function showPipeline() {
           </div>
           <div class="column-body" id="column-${stage}">
             ${(grouped[stage] || []).map(client => `
-              <div class="pipeline-card" draggable="true" data-client-id="${client.id}" data-status="${stage}" onclick="viewClientDetails(${client.id})">
+              <div class="pipeline-card" draggable="true" data-client-id="${Number(client.id)}" data-status="${escAttr(stage)}" onclick="viewClientDetails(${Number(client.id)})">
                 <div class="card-header">
-                  <strong>${client.name}</strong>
+                  <strong>${escHtml(client.name)}</strong>
                   <span class="status-indicator"></span>
                 </div>
                 <div class="card-body">
-                  <p class="card-phone">${client.phone || 'N/A'}</p>
-                  <p class="card-source">${client.source || 'Non renseignée'}</p>
+                  <p class="card-phone">${escHtml(client.phone || 'Pas de numéro')}</p>
+                  <p class="card-source">${escHtml(client.source || 'Non renseignée')}</p>
                   <div class="card-date">${formatDate(client.created_at)}</div>
                 </div>
               </div>
@@ -1676,7 +1721,12 @@ async function showPayments() {
     <h2>Paiements</h2>
     <button onclick="showPaymentForm()">Ajouter Paiement</button>
     <div class="list">
-      ${payments.length ? payments.map(p => `<div class="list-item"><div><strong>${p.amount} FCFA</strong> - ${getPaymentStatusLabel(p.status)}</div><div>${findName(p.client_id, clients) || 'Client #' + p.client_id} / ${findName(p.property_id, properties) || 'Propriété #' + p.property_id}</div><div class="item-meta">Créé le ${formatDate(p.created_at)}</div><button onclick="editPayment(${p.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div>`).join('') : '<p>Aucun paiement pour le moment.</p>'}
+      ${payments.length ? payments.map(p => `<div class="list-item">
+        <div><strong>${formatMoney(p.amount)} FCFA</strong> — ${getPaymentStatusLabel(p.status)}</div>
+        <div class="item-meta">${escHtml(findName(p.client_id, clients) || 'Client #' + p.client_id)} · ${escHtml(findName(p.property_id, properties) || 'Bien #' + p.property_id)}</div>
+        <div class="item-meta">${formatDate(p.payment_date)}</div>
+        <div><button onclick="editPayment(${Number(p.id)})" class="edit-btn" title="Modifier">${ICON_EDIT}</button></div>
+      </div>`).join('') : '<p class="item-meta">Aucun paiement pour le moment.</p>'}
     </div>
   `;
 }
@@ -1699,7 +1749,7 @@ function showPaymentForm(payment = null) {
       </div>
       <div class="form-group">
         <label>Montant (FCFA):</label>
-        <input type="number" id="payment-amount" value="${(payment && payment.amount) || ''}" required>
+        <input type="number" id="payment-amount" value="${escAttr((payment && payment.amount) || '')}" required>
       </div>
       <div class="form-group">
         <label>Statut:</label>
@@ -1710,11 +1760,11 @@ function showPaymentForm(payment = null) {
       </div>
       <div class="form-group">
         <label>Date de paiement:</label>
-        <input type="date" id="payment-date" value="${(payment && payment.payment_date) || new Date().toISOString().split('T')[0]}" required>
+        <input type="date" id="payment-date" value="${escAttr((payment && payment.payment_date) || new Date().toISOString().split('T')[0])}" required>
       </div>
       <div class="form-group">
         <label>Notes:</label>
-        <textarea id="payment-notes">${(payment && payment.notes) || ''}</textarea>
+        <textarea id="payment-notes">${escHtml((payment && payment.notes) || '')}</textarea>
       </div>
       <button type="submit">${payment ? 'Modifier' : 'Ajouter'}</button>
       <button type="button" onclick="showPayments()">Annuler</button>
