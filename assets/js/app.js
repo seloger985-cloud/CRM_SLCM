@@ -1446,7 +1446,13 @@ const TABLE_COLS = {
   properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at',
   activities: 'id,type,client_id,property_id,notes,date,created_at',
   tasks:      'id,title,description,due_date,status,created_at',
-  payments:   'id,client_id,property_id,amount,accompte,reste,status,payment_date,notes,created_at'
+  /* CORRECTIF 31/08/2026 — `accompte` et `reste` étaient demandés ici alors
+     qu'ils n'existent pas dans la table (voir sql/01_schema.sql). PostgREST
+     rejetait donc TOUTE lecture de payments (42703), getAll() retournait un
+     tableau vide, et par ricochet : écran Paiements toujours vide, chiffre
+     d'affaires à 0, alerte retards muette, relances jamais proposées.
+     Le suivi acompte / solde reste à construire, base comprise. */
+  payments:   'id,client_id,property_id,amount,status,payment_date,notes,created_at'
 };
 
 async function getAll(table) {
@@ -1491,8 +1497,6 @@ function getActivityLabel(type) {
 function getPaymentStatusLabel(status) {
   switch (status) {
     case 'pending': return 'En attente';
-    case 'accompte': return 'Accompte';
-    case 'reste': return 'Reste';
     case 'paid': return 'Payé';
     default: return status;
   }
@@ -1639,8 +1643,6 @@ function showPaymentForm(payment = null) {
         <label>Statut:</label>
         <select id="payment-status">
           <option value="pending" ${payment && payment.status === 'pending' ? 'selected' : ''}>En attente</option>
-          <option value="accompte" ${payment && payment.status === 'accompte' ? 'selected' : ''}>Accompte</option>
-          <option value="reste" ${payment && payment.status === 'reste' ? 'selected' : ''}>Reste</option>
           <option value="paid" ${payment && payment.status === 'paid' ? 'selected' : ''}>Payé</option>
         </select>
       </div>
