@@ -370,7 +370,7 @@ async function showDashboard() {
     <div class="dashboard">
       <div class="card highlight">
         <h3>💰 Chiffre d'Affaires</h3>
-        <p class="metric">${totalRevenue.toLocaleString()} FCFA</p>
+        <p class="metric">${formatMoney(totalRevenue)} FCFA</p>
         <small>Total des paiements</small>
       </div>
       <div class="card">
@@ -380,7 +380,7 @@ async function showDashboard() {
       </div>
       <div class="card">
         <h3>🏠 Prix Moyen</h3>
-        <p class="metric">${parseInt(avgPropertyPrice).toLocaleString()} FCFA</p>
+        <p class="metric">${formatMoney(avgPropertyPrice)} FCFA</p>
         <small>Prix moyen des propriétés</small>
       </div>
       <div class="card">
@@ -394,11 +394,11 @@ async function showDashboard() {
     <div class="dashboard-charts">
       <div class="chart-container">
         <h3>📊 Pipeline de Vente</h3>
-        <canvas id="statusChart" width="400" height="200"></canvas>
+        <div class="chart-box"><canvas id="statusChart"></canvas></div>
       </div>
       <div class="chart-container">
         <h3>🎯 Sources de Leads</h3>
-        <canvas id="sourceChart" width="400" height="200"></canvas>
+        <div class="chart-box"><canvas id="sourceChart"></canvas></div>
       </div>
     </div>
 
@@ -421,11 +421,11 @@ async function showDashboard() {
       </div>
       <div class="list">
         <h3>📅 Activités récentes</h3>
-        ${recentActivities.map(a => `<div class="list-item"><span>${getActivityLabel(a.type)} - ${a.notes}</span><span>${new Date(a.date).toLocaleDateString()}</span></div>`).join('')}
+        ${recentActivities.map(a => `<div class="list-item"><span>${getActivityLabel(a.type)} - ${a.notes}</span><span>${formatDate(a.date)}</span></div>`).join('')}
       </div>
       <div class="list">
         <h3>✅ Tâches récentes</h3>
-        ${recentTasks.map(t => `<div class="list-item"><span>${t.title}</span><span>${t.status}</span></div>`).join('')}
+        ${recentTasks.map(t => `<div class="list-item"><span>${t.title}</span><span>${getTaskStatusLabel(t.status)}</span></div>`).join('')}
       </div>
     </div>
   `;
@@ -436,7 +436,25 @@ async function showDashboard() {
   }, 100);
 }
 
+/* Lit un token du thème courant. Chart.js ne connaît pas les variables CSS :
+   sans ça, ses axes et ses légendes restent en gris foncé et disparaissent
+   sur le fond sombre. */
+function token(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
 function initCharts(statusData, statusLabels, sourceStats) {
+  /* Axes, légendes et grilles suivent le thème. */
+  Chart.defaults.color = token('--fg-1');
+  Chart.defaults.borderColor = token('--border-1');
+  const family = token('--font-sans');
+  if (family) Chart.defaults.font.family = family;
+
+  /* maintainAspectRatio: false délègue la hauteur au CSS (.chart-box, 300px).
+     Sans ça, Chart.js ignore les attributs du <canvas>, se dimensionne sur un
+     parent sans hauteur, et le camembert débordait de sa carte en étirant la
+     colonne voisine. */
+  const baseOptions = { responsive: true, maintainAspectRatio: false };
   // Graphique du pipeline
   const statusCtx = document.getElementById('statusChart');
   if (statusCtx) {
@@ -462,8 +480,7 @@ function initCharts(statusData, statusLabels, sourceStats) {
           borderWidth: 2
         }]
       },
-      options: {
-        responsive: true,
+      options: Object.assign({}, baseOptions, {
         plugins: {
           legend: { display: false }
         },
@@ -473,7 +490,7 @@ function initCharts(statusData, statusLabels, sourceStats) {
             ticks: { stepSize: 1 }
           }
         }
-      }
+      })
     });
   }
 
@@ -496,14 +513,13 @@ function initCharts(statusData, statusLabels, sourceStats) {
           ]
         }]
       },
-      options: {
-        responsive: true,
+      options: Object.assign({}, baseOptions, {
         plugins: {
           legend: {
             position: 'bottom'
           }
         }
-      }
+      })
     });
   }
 }
@@ -1117,7 +1133,7 @@ async function showActivities() {
     <h2>Journal d'activités</h2>
     <button onclick="showActivityForm()">Ajouter Activité</button>
     <div class="list">
-      ${activities.length ? activities.map(a => `<div class="list-item"><div><strong>${getActivityLabel(a.type)}</strong> - ${a.notes}</div><div>${new Date(a.date).toLocaleDateString()}</div><div><button onclick="editActivity(${a.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div></div>`).join('') : '<p>Aucune activité pour le moment.</p>'}
+      ${activities.length ? activities.map(a => `<div class="list-item"><div><strong>${getActivityLabel(a.type)}</strong> - ${a.notes}</div><div>${formatDate(a.date)}</div><div><button onclick="editActivity(${a.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div></div>`).join('') : '<p>Aucune activité pour le moment.</p>'}
     </div>
   `;
 }
@@ -1212,7 +1228,7 @@ async function showTasks() {
     <h2>Tâches</h2>
     <button onclick="showTaskForm()">Ajouter Tâche</button>
     <div class="list">
-      ${tasks.length ? tasks.map(t => `<div class="list-item"><div><strong>${t.title}</strong> - ${t.status}</div><div class="item-meta">Créé le ${formatDate(t.created_at)}</div><button onclick="editTask(${t.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div>`).join('') : '<p>Aucune tâche pour le moment.</p>'}
+      ${tasks.length ? tasks.map(t => `<div class="list-item"><div><strong>${t.title}</strong> - ${getTaskStatusLabel(t.status)}</div><div class="item-meta">Créé le ${formatDate(t.created_at)}</div><button onclick="editTask(${t.id})" class="edit-btn" title="Modifier"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></button></div>`).join('') : '<p>Aucune tâche pour le moment.</p>'}
     </div>
   `;
 }
@@ -1323,7 +1339,7 @@ async function showPipeline() {
       </div>
       <div class="stat">
         <span class="stat-label">Prévisions</span>
-        <span class="stat-value">${(grouped['signé']?.length || 0).toLocaleString()} signés</span>
+        <span class="stat-value">${grouped['signé']?.length || 0} signés</span>
       </div>
     </div>
 
@@ -1494,6 +1510,17 @@ function getActivityLabel(type) {
   }
 }
 
+/* Manquait, alors que ses deux jumelles existaient : le statut brut de la base
+   — « pending » — s'affichait tel quel dans les tâches, sur le tableau de bord
+   comme sur l'écran Tâches. */
+function getTaskStatusLabel(status) {
+  switch (status) {
+    case 'pending': return 'En attente';
+    case 'completed': return 'Terminée';
+    default: return status;
+  }
+}
+
 function getPaymentStatusLabel(status) {
   switch (status) {
     case 'pending': return 'En attente';
@@ -1510,6 +1537,17 @@ function formatDate(value) {
     month: '2-digit',
     year: 'numeric'
   });
+}
+
+/* CORRECTIF 31/08/2026 — plusieurs montants passaient par toLocaleString() sans
+   locale : le navigateur choisissait la sienne, et le tableau de bord affichait
+   « 1,500,000 FCFA » à la virgule américaine pendant que les prix des biens
+   s'écrivaient « 350 000 FCFA ». Même problème sur les dates, en pire : une
+   activité du 1er septembre s'affichait « 9/1/2026 », lisible comme le 9
+   janvier. Un format ne doit jamais dépendre du navigateur qui regarde. */
+function formatMoney(value) {
+  const n = Number(value);
+  return (Number.isFinite(n) ? n : 0).toLocaleString('fr-FR');
 }
 
 /* CORRECTIF 31/08/2026 — même bug que sendWhatsApp le 16/08, corrigé ici

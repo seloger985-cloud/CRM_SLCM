@@ -67,11 +67,6 @@
     }
     .login-card button[type="submit"]:hover:not(:disabled) { background: var(--accent-hover); }
     .login-card button[type="submit"]:disabled { opacity: .6; cursor: default; }
-    .login-card button[type="submit"]:focus-visible,
-    .login-card input:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
-    }
 
     .login-error {
       display: none;
@@ -122,6 +117,10 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <script src="assets/js/config.js"></script>
   <script src="assets/js/auth.js"></script>
+  <!-- ui.js pose data-theme sur le document. Sans lui, cette page restait
+       toujours claire : un agent en mode sombre passait du noir au blanc en
+       plein visage, puis revenait au noir une fois connecté. -->
+  <script src="assets/js/ui.js"></script>
   <script>
   (function () {
     'use strict';

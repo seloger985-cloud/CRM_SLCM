@@ -13,11 +13,29 @@
 
   --fg-0: #1a1a1a;
   --fg-1: #555555;
-  --fg-2: #888888;
-  --fg-3: #b0b0b0;
+  /* 31/08/2026 — anciennement #888888 (3,54:1) et #b0b0b0 (2,17:1), tous deux
+     sous le seuil WCAG AA de 4,5:1. Or --fg-2 porte tout le texte de contexte
+     du CRM (source, dates, quartiers, prix) en 12px. Nouvelles valeurs :
+     5,33:1 et 4,61:1, hiérarchie entre les deux gris préservée. */
+  --fg-2: #6B6B6B;
+  --fg-3: #757575;
 
   --border-1: #e8e8e8;
   --border-2: #d4d4d4;
+
+  /* Alias attendus par les composants ajoutés le 16/08 (barre d'outils,
+     rapprochements, partage). Ils appelaient var(--border) et var(--bg-input),
+     qui n'existaient pas : onze déclarations retombaient donc en silence sur
+     un gris clair et un fond blanc codés en dur — d'où un champ de recherche
+     blanc à texte blanc en mode sombre. Définis ici, ils se résolvent à
+     l'usage et suivent donc le thème sans surcharge. */
+  --border: var(--border-1);
+  --bg-input: var(--bg-0);
+
+  /* Couleur de marque WhatsApp. --whatsapp pour les fonds et bordures,
+     --whatsapp-text pour du texte (5,36:1 sur blanc). */
+  --whatsapp: #25D366;
+  --whatsapp-text: #0F7B3D;
 
   --accent: #ED7A14;
   --accent-hover: #D86C0E;
@@ -83,11 +101,14 @@
 
   --fg-0: #fafafa;
   --fg-1: #c0c0c0;
-  --fg-2: #888888;
-  --fg-3: #5a5a5a;
+  /* 31/08/2026 — --fg-3 valait #5a5a5a (2,57:1). Relevés à 6,30:1 et 5,13:1. */
+  --fg-2: #9a9a9a;
+  --fg-3: #8A8A8A;
 
   --border-1: #2a2a2e;
   --border-2: #3f3f46;
+
+  --whatsapp-text: #4ADE80;
 
   --accent-soft: #3a2410;
   --accent-text: #FFA85C;
@@ -118,6 +139,20 @@ body {
 
 a { color: var(--accent); text-decoration: none; }
 a:hover { color: var(--accent-hover); }
+
+/* Focus clavier. Vivait auparavant en <style> inline dans index.html et
+   login.html — deux rustines légèrement différentes pour un même trou, et
+   facture.html qui n'en avait aucune. Ici, les trois pages sont couvertes,
+   y compris celles qui n'existent pas encore. Les champs de formulaire ont
+   leur propre traitement plus bas (--focus-ring). */
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
 
 /* ---------- Layout : sidebar + main ---------- */
 body {
@@ -230,6 +265,10 @@ nav button svg {
   font-family: inherit;
 }
 .theme-toggle:hover { color: var(--fg-0); }
+.theme-toggle svg { flex-shrink: 0; width: 16px; height: 16px; opacity: 0.85; }
+/* Deux boutons se suivent en bas de colonne : seul le premier prend la marge
+   automatique, sinon le second serait poussé hors de la barre latérale. */
+.theme-toggle ~ .theme-toggle { margin-top: 0; border-top: none; padding-top: 0; }
 
 /* ---------- Main content ---------- */
 main {
@@ -255,6 +294,19 @@ main {
   color: var(--fg-0);
   margin: 0;
 }
+
+/* app.js émet des <h2> nus, jamais enveloppés dans .section-header. Sans cette
+   règle ils retombaient sur le défaut du navigateur — 21px gras — et, le reset
+   posant margin:0 partout, se collaient au contenu suivant. Les sept écrans du
+   CRM ouvraient donc sur un titre qui n'avait jamais été dessiné. */
+main > h2 {
+  font-size: var(--fs-xl);
+  font-weight: 500;
+  color: var(--fg-0);
+  letter-spacing: -0.01em;
+  margin: 0 0 var(--space-5);
+}
+main > h2:not(:first-child) { margin-top: var(--space-6); }
 
 .section-header .meta {
   font-size: var(--fs-sm);
@@ -594,6 +646,16 @@ input::placeholder, textarea::placeholder {
   border: 1px solid var(--border-1);
   border-radius: var(--radius-lg);
   padding: var(--space-5);
+}
+
+/* Hauteur imposée au canevas. Chart.js en mode responsive ignore les attributs
+   width/height du <canvas> et se dimensionne sur son parent ; le parent n'ayant
+   pas de hauteur propre, le camembert grandissait jusqu'à déborder de sa carte
+   et, la grille alignant les deux colonnes, laissait un grand vide sous
+   l'histogramme voisin. À utiliser avec maintainAspectRatio: false. */
+.chart-box {
+  position: relative;
+  height: 300px;   /* le camembert porte sa légende en dessous, sur deux rangs */
 }
 
 .chart-container h3 {
@@ -1286,7 +1348,7 @@ input::placeholder, textarea::placeholder {
   border: 1px solid var(--border, #ddd); border-radius: 8px;
   background: var(--bg-input, #fff); color: inherit;
 }
-.search-input:focus { outline: none; border-color: #ff7a00; }
+.search-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
 .search-select {
   padding: .55rem .7rem; font-size: .9rem;
   border: 1px solid var(--border, #ddd); border-radius: 8px;
@@ -1298,7 +1360,7 @@ input::placeholder, textarea::placeholder {
   border: 1px solid var(--border, #ccc); border-radius: 8px;
   cursor: pointer; text-decoration: none; display: inline-flex; align-items: center;
 }
-.ghost-btn:hover { border-color: #ff7a00; color: #ff7a00; }
+.ghost-btn:hover { border-color: var(--accent); color: var(--accent-text); }
 
 /* Provenance d'un bien : annonce publiée vs saisie interne */
 .src-badge {
@@ -1306,8 +1368,8 @@ input::placeholder, textarea::placeholder {
   font-size: .62rem; font-weight: 800; letter-spacing: .04em;
   border-radius: 4px; vertical-align: middle;
 }
-.src-site { background: rgba(255,122,0,.14); color: #ff7a00; }
-.src-crm  { background: rgba(120,120,140,.16); color: #6b6b7b; }
+.src-site { background: var(--accent-soft); color: var(--accent-text); }
+.src-crm  { background: var(--bg-2); color: var(--fg-1); }
 
 @media (max-width: 560px) {
   .toolbar { gap: .4rem; }
@@ -1339,14 +1401,32 @@ input::placeholder, textarea::placeholder {
   border-bottom: 1px solid var(--border, #f0f0f0);
 }
 .pick-row:last-child { border-bottom: none; }
-.pick-row:hover { background: rgba(255,122,0,.06); }
+.pick-row:hover { background: var(--accent-soft); }
 .pick-name { font-weight: 600; font-size: .9rem; }
 .pick-row input[disabled] + .pick-name { opacity: .45; }
 
-.share-btn:hover { border-color: #25D366; color: #25D366; }
+.share-btn:hover { border-color: var(--whatsapp); color: var(--whatsapp-text); }
 
 .empty-state {
   border: 1px dashed var(--border, #ccc); border-radius: 12px;
   padding: 1.6rem 1.2rem; text-align: center; max-width: 46rem;
 }
 .empty-state p { margin: 0 0 .7rem; }
+
+/* =====================================================================
+   Mouvement réduit (31/08/2026)
+
+   Cinq animations tournaient sans condition : le spinner, le glissement
+   des toasts, l'ouverture des modales, le fondu du voile, le miroitement
+   des squelettes. Pour qui a activé « réduire les animations » — trouble
+   vestibulaire, migraine, ou simple préférence — le CRM ignorait la
+   demande. Bloc placé en fin de feuille pour l'emporter sur le reste.
+   ===================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -346,10 +346,19 @@
     }
     try { localStorage.setItem(THEME_STORAGE_KEY, theme); } catch (e) {}
 
-    // Mettre à jour le label du bouton si présent
+    /* Libellé du bouton. Les emoji ☀️ / 🌙 ont été remplacés le 31/08 par les
+       icônes du même jeu SVG que la navigation : un emoji est dessiné par le
+       système, il ne suit ni la couleur du texte, ni le thème, ni la graisse,
+       et change d'aspect d'une machine à l'autre. Le bouton voisin
+       (Déconnexion) est passé au SVG pour la même raison. */
     const btn = document.getElementById('theme-toggle');
     if (btn) {
-      btn.textContent = theme === 'dark' ? '☀️  Mode clair' : '🌙  Mode sombre';
+      const icon = theme === 'dark'
+        ? '<path d="M12 7c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5zm0-5l2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42L12 2zM3.34 7l4.16-.35C6.9 7.22 6.34 7.86 5.92 8.59c-.42.73-.66 1.5-.77 2.28L3.34 7zm0 10l1.81-3.87c.11.78.35 1.55.77 2.28.42.73.98 1.37 1.58 1.94L3.34 17zM20.66 7l-1.81 3.87c-.11-.78-.35-1.55-.77-2.28-.42-.73-.98-1.37-1.58-1.94L20.66 7zm0 10l-4.16.35c.6-.57 1.16-1.21 1.58-1.94.42-.73.66-1.5.77-2.28L20.66 17zM12 22l-2.39-3.42c.74.27 1.55.42 2.39.42s1.65-.15 2.39-.42L12 22z"/>'
+        : '<path d="M9.37 5.51c-.18.64-.27 1.31-.27 1.99 0 4.08 3.32 7.4 7.4 7.4.68 0 1.35-.09 1.99-.27C17.45 17.19 14.93 19 12 19c-3.86 0-7-3.14-7-7 0-2.93 1.81-5.45 4.37-6.49zM12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/>';
+      btn.innerHTML =
+        '<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" aria-hidden="true">' + icon + '</svg>' +
+        (theme === 'dark' ? 'Mode clair' : 'Mode sombre');
     }
   }
 

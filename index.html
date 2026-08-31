@@ -16,17 +16,10 @@
   <link rel="stylesheet" href="assets/css/style.css">
   <style>
     /* Masqué jusqu'à validation de la session par auth.js : sans cela, le
-       contenu du CRM s'affiche une fraction de seconde avant la redirection. */
+       contenu du CRM s'affiche une fraction de seconde avant la redirection.
+       (Le focus clavier vivait ici ; il est passé dans style.css le 31/08,
+       pour couvrir aussi login.html et facture.html.) */
     body { visibility: hidden; }
-    /* Focus clavier : style.css ne traite que les champs de formulaire.
-       Boutons et liens n'avaient aucun indicateur visible à la tabulation. */
-    button:focus-visible,
-    a:focus-visible,
-    [tabindex]:focus-visible {
-      outline: 2px solid var(--accent);
-      outline-offset: 2px;
-      border-radius: 4px;
-    }
   </style>
 </head>
 <body>
@@ -74,8 +67,15 @@
         Rapprochements
       </button>
     </nav>
-    <button id="theme-toggle" class="theme-toggle" aria-label="Changer le thème">🌙  Mode sombre</button>
-    <button id="logout-btn" class="theme-toggle" aria-label="Se déconnecter">⏻  Déconnexion</button>
+    <!-- Libellé et icône posés par ui.js (applyTheme), qui connaît le thème actif. -->
+    <button id="theme-toggle" class="theme-toggle" aria-label="Changer le thème"></button>
+    <!-- Le libellé commençait par ⏻ (U+23FB) : aucune police Windows ne le
+         fournit, le bouton affichait donc un carré vide. Remplacé par une
+         icône du même jeu SVG que la navigation. -->
+    <button id="logout-btn" class="theme-toggle" aria-label="Se déconnecter">
+      <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" aria-hidden="true"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4z"/></svg>
+      Déconnexion
+    </button>
   </header>
 
   <main id="main-content">
