@@ -474,6 +474,15 @@ main button:not(.btn):not(.theme-toggle):not(.toast-close):not(.modal-close):hov
   color: var(--fg-2);
 }
 
+/* Carte « À faire » quand il reste quelque chose : un liseré, pas un aplat.
+   L'accent visuel du tableau de bord reste le chiffre d'affaires ; celle-ci
+   doit se remarquer sans lui voler la vedette. */
+.dashboard .card.attention {
+  border-color: var(--warning-border);
+  background: var(--warning-soft);
+}
+.dashboard .card.attention .metric { color: var(--warning); }
+
 .dashboard .card.highlight {
   background: var(--accent-soft);
   border-color: var(--accent);

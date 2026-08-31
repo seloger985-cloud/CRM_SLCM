@@ -322,24 +322,49 @@ async function createActivityFromSuggestion(index) {
 /* (doublon du handler d'erreur global retiré — il était enregistré deux fois,
    ce qui affichait chaque erreur en double à l'utilisateur) */
 
+/* ═══════════════ TABLEAU DE BORD ═══════════════
+
+   Ce que cet écran doit répondre, en un regard :
+     à faire   — ce qui attend une action de ma part
+     entrant   — les demandes à qualifier
+     en cours  — ce qui est engagé et pas encore conclu
+     résultat  — ce qui est encaissé
+
+   Les quatre cartes suivent cet ordre, de gauche à droite. C'est
+   l'entonnoir de l'agence, pas une collection de statistiques.
+
+   Refonte des données du 31/08/2026 : onze requêtes séquentielles, dont
+   cinq redondantes — quatre comptages de statuts et un getRecent('clients')
+   que getAll('clients') contenait déjà. Ramenées à quatre, en parallèle. */
 async function showDashboard() {
-  // Récupération des données de base
-  const newRequests = await getStatusCount('clients', 'nouvelle demande');
-  const visits = await getStatusCount('clients', 'visite');
-  const negotiations = await getStatusCount('clients', 'négociation');
-  const signed = await getStatusCount('clients', 'signé');
-  const paymentsCount = await getCount('payments');
+  const [allClients, allPayments, allTasks, recentActivities] = await Promise.all([
+    getAll('clients'),
+    getAll('payments'),
+    getAll('tasks'),
+    getRecent('activities', 5)
+  ]);
 
-  // Données pour métriques avancées
-  const allClients = await getAll('clients');
-  const allPayments = await getAll('payments');
-  const allProperties = await getAll('properties');
+  /* Comptages dérivés de la liste déjà en mémoire, plus par requête. */
+  const byStatus = (s) => allClients.filter(c => (c.status || 'nouvelle demande') === s).length;
+  const newRequests  = byStatus('nouvelle demande');
+  const visits       = byStatus('visite');
+  const negotiations = byStatus('négociation');
+  const signed       = byStatus('signé');
+  const inProgress   = visits + negotiations;
 
-  // Calculs des métriques
   const totalRevenue = allPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
   const conversionRate = allClients.length > 0 ? ((signed / allClients.length) * 100).toFixed(1) : 0;
-  const avgPropertyPrice = allProperties.length > 0 ?
-    (allProperties.reduce((sum, p) => sum + (parseFloat(p.price) || 0), 0) / allProperties.length).toFixed(0) : 0;
+
+  /* getAll trie par created_at décroissant : les plus récents sont en tête. */
+  const recentClients = allClients.slice(0, 5);
+
+  /* À faire : les tâches non terminées, la plus urgente d'abord. Une tâche
+     sans échéance passe après celles qui en ont une. */
+  const openTasks = allTasks
+    .filter(t => t.status !== 'completed')
+    .sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'));
+  const today = new Date().toISOString().slice(0, 10);
+  const lateTasks = openTasks.filter(t => t.due_date && t.due_date < today).length;
 
   // Données pour graphiques
   const statusData = [newRequests, visits, negotiations, signed];
@@ -359,45 +384,45 @@ async function showDashboard() {
     new Date(p.payment_date) < new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Plus de 7 jours de retard
   );
 
-  const recentActivities = await getRecent('activities', 5);
-  const recentTasks = await getRecent('tasks', 5);
-  const recentClients = await getRecent('clients', 5);
-
   mainContent.innerHTML = `
     <h2>Tableau de bord</h2>
 
-    <!-- Métriques principales -->
+    <!-- Les quatre temps de l'agence : à faire → entrant → en cours → résultat.
+         « Prix moyen » a été retiré : une moyenne sur des biens hétérogènes —
+         studio et immeuble dans le même calcul — n'oriente aucune décision. -->
     <div class="dashboard">
+      <div class="card${openTasks.length ? ' attention' : ''}">
+        <h3>À faire</h3>
+        <p class="metric">${openTasks.length}</p>
+        <small>${openTasks.length === 0
+          ? 'Rien en attente'
+          : 'tâche' + (openTasks.length > 1 ? 's' : '') + ' ouverte' + (openTasks.length > 1 ? 's' : '') + (lateTasks ? ' · ' + lateTasks + ' en retard' : '')}</small>
+      </div>
+      <div class="card">
+        <h3>Nouvelles demandes</h3>
+        <p class="metric">${newRequests}</p>
+        <small>${newRequests === 0 ? 'Aucune à qualifier' : 'à qualifier'}</small>
+      </div>
+      <div class="card">
+        <h3>En cours</h3>
+        <p class="metric">${inProgress}</p>
+        <small>${visits} en visite · ${negotiations} en négociation</small>
+      </div>
       <div class="card highlight">
-        <h3>💰 Chiffre d'Affaires</h3>
+        <h3>Chiffre d'affaires</h3>
         <p class="metric">${formatMoney(totalRevenue)} FCFA</p>
-        <small>Total des paiements</small>
-      </div>
-      <div class="card">
-        <h3>📈 Taux de Conversion</h3>
-        <p class="metric">${conversionRate}%</p>
-        <small>Clients signés / Total clients</small>
-      </div>
-      <div class="card">
-        <h3>🏠 Prix Moyen</h3>
-        <p class="metric">${formatMoney(avgPropertyPrice)} FCFA</p>
-        <small>Prix moyen des propriétés</small>
-      </div>
-      <div class="card">
-        <h3>👥 Total Clients</h3>
-        <p class="metric">${allClients.length}</p>
-        <small>Clients actifs</small>
+        <small>${signed} signé${signed > 1 ? 's' : ''} sur ${allClients.length} client${allClients.length > 1 ? 's' : ''} · ${conversionRate}% de conversion</small>
       </div>
     </div>
 
     <!-- Graphiques -->
     <div class="dashboard-charts">
       <div class="chart-container">
-        <h3>📊 Pipeline de Vente</h3>
+        <h3>Pipeline de vente</h3>
         <div class="chart-box"><canvas id="statusChart"></canvas></div>
       </div>
       <div class="chart-container">
-        <h3>🎯 Sources de Leads</h3>
+        <h3>Origine des clients</h3>
         <div class="chart-box"><canvas id="sourceChart"></canvas></div>
       </div>
     </div>
@@ -405,7 +430,7 @@ async function showDashboard() {
     <!-- Alertes -->
     ${overduePayments.length > 0 ? `
     <div class="alerts">
-      <h3>⚠️ Alertes</h3>
+      <h3>Alertes</h3>
       <div class="alert alert-warning">
         <strong>${overduePayments.length} paiement(s) en retard</strong>
         <p>Vérifiez les paiements en attente depuis plus de 7 jours.</p>
@@ -413,19 +438,32 @@ async function showDashboard() {
     </div>
     ` : ''}
 
-    <!-- Sections existantes -->
+    <!-- À gauche ce qui arrive, au centre ce qui a été fait, à droite ce qui
+         attend. La colonne des tâches ne montre plus « les 5 plus récentes »
+         — une tâche déjà terminée n'a rien à faire sur un tableau de bord —
+         mais les tâches ouvertes, échéance la plus proche en tête. -->
     <div class="dashboard-sections">
       <div class="list">
-        <h3>👤 Clients récents</h3>
-        ${recentClients.length ? recentClients.map(c => `<div class="list-item"><span>${c.name}</span><span>${formatDate(c.created_at)}</span></div>`).join('') : '<p>Aucun client récent.</p>'}
+        <h3>Derniers clients</h3>
+        ${recentClients.length
+          ? recentClients.map(c => `<div class="list-item"><span>${escHtml(c.name)}</span><span class="item-meta">${formatDate(c.created_at)}</span></div>`).join('')
+          : '<p class="item-meta">Aucun client enregistré.</p>'}
       </div>
       <div class="list">
-        <h3>📅 Activités récentes</h3>
-        ${recentActivities.map(a => `<div class="list-item"><span>${getActivityLabel(a.type)} - ${a.notes}</span><span>${formatDate(a.date)}</span></div>`).join('')}
+        <h3>Dernières activités</h3>
+        ${recentActivities.length
+          ? recentActivities.map(a => `<div class="list-item"><span>${getActivityLabel(a.type)} — ${escHtml(a.notes)}</span><span class="item-meta">${formatDate(a.date)}</span></div>`).join('')
+          : '<p class="item-meta">Aucune activité enregistrée.</p>'}
       </div>
       <div class="list">
-        <h3>✅ Tâches récentes</h3>
-        ${recentTasks.map(t => `<div class="list-item"><span>${t.title}</span><span>${getTaskStatusLabel(t.status)}</span></div>`).join('')}
+        <h3>À faire</h3>
+        ${openTasks.length
+          ? openTasks.slice(0, 6).map(t => `<div class="list-item"><span>${escHtml(t.title)}</span><span class="item-meta">${
+              t.due_date
+                ? (t.due_date < today ? '<strong style="color:var(--danger)">' + formatDate(t.due_date) + '</strong>' : formatDate(t.due_date))
+                : 'sans échéance'
+            }</span></div>`).join('')
+          : '<p class="item-meta">Rien en attente.</p>'}
       </div>
     </div>
   `;
@@ -1445,14 +1483,9 @@ function viewClientDetails(clientId) {
 
 
 // Utility functions
-async function getCount(table) {
-  const { count, error } = await supabaseClient.from(table).select('*', { count: 'exact', head: true });
-  if (error) {
-    console.error(`Erreur Supabase table ${table}:`, error.message);
-    return 0;
-  }
-  return count || 0;
-}
+/* (getCount et getStatusCount retirés le 31/08/2026 : le tableau de bord était
+   leur seul appelant, et il dérive désormais ses compteurs de la liste des
+   clients qu'il charge de toute façon. Cinq allers-retours réseau en moins.) */
 
 /* Colonnes explicites : select('*') tirait toutes les colonnes de chaque
    table à chaque affichage, y compris les champs texte longs jamais utilisés
@@ -1489,15 +1522,6 @@ async function getRecent(table, limit) {
     return [];
   }
   return data || [];
-}
-
-async function getStatusCount(table, status) {
-  const { count, error } = await supabaseClient.from(table).select('*', { count: 'exact', head: true }).eq('status', status);
-  if (error) {
-    console.error(`Erreur Supabase status ${status}:`, error.message);
-    return 0;
-  }
-  return count || 0;
 }
 
 function getActivityLabel(type) {
