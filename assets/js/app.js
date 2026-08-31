@@ -13,6 +13,7 @@ const invoicesBtn = document.getElementById('invoices-btn');
 const tasksBtn = document.getElementById('tasks-btn');
 const automationBtn = document.getElementById('automation-btn');
 const pipelineBtn = document.getElementById('pipeline-btn');
+const matchingBtn = document.getElementById('matching-btn');
 
 // Event listeners — wrappés pour marquer l'état actif dans la sidebar
 function setActiveNav(btn) {
@@ -36,6 +37,7 @@ invoicesBtn.addEventListener('click', () => { window.location.href = 'facture.ht
 tasksBtn.addEventListener('click', navTo(tasksBtn, showTasks));
 automationBtn.addEventListener('click', navTo(automationBtn, showAutomation));
 pipelineBtn.addEventListener('click', navTo(pipelineBtn, showPipeline));
+matchingBtn.addEventListener('click', navTo(matchingBtn, showMatching));
 
 // Initialize — on n'interroge la base qu'une fois la session confirmée
 // par auth.js. Sans session, RLS bloque tout et l'écran resterait vide.
@@ -312,9 +314,10 @@ async function createActivityFromSuggestion(index) {
   }
 }
 
-// Initialize
-mainContent.innerHTML = '<div class="loading"><div class="spinner"></div>Chargement...</div>';
-showDashboard();
+/* (doublon du bloc d'initialisation retiré — il rappelait showDashboard()
+   sans attendre 'slcm:auth-ready'. Le premier rendu partait donc sans
+   session, RLS renvoyait zéro ligne, et tout se redessinait ensuite.
+   Le bloc du haut de fichier fait déjà le travail, dans le bon ordre.) */
 
 /* (doublon du handler d'erreur global retiré — il était enregistré deux fois,
    ce qui affichait chaque erreur en double à l'utilisateur) */
@@ -1508,9 +1511,14 @@ function formatDate(value) {
   });
 }
 
+/* CORRECTIF 31/08/2026 — même bug que sendWhatsApp le 16/08, corrigé ici
+   seulement aujourd'hui : le paramètre `phone` était reçu puis ignoré au
+   profit de WHATSAPP_BUSINESS_NUMBER. Les deux icônes WhatsApp de chaque
+   ligne client ouvraient donc une conversation avec notre propre numéro.
+   Même règle de repli que sendWhatsApp : à défaut de numéro client, on
+   retombe sur la ligne business plutôt que de produire une URL invalide. */
 function getWhatsApp(phone, client, messageType = 'general') {
-  // Utiliser le numéro business WhatsApp (650 840 714)
-  const businessNumber = WHATSAPP_BUSINESS_NUMBER;
+  const target = normalizePhone(phone) || WHATSAPP_BUSINESS_NUMBER;
 
   let msg = '';
   switch (messageType) {
@@ -1524,7 +1532,7 @@ function getWhatsApp(phone, client, messageType = 'general') {
       msg = `Bonjour ${client.name}, nous avons des nouvelles concernant votre recherche immobilière.`;
   }
 
-  return `https://wa.me/${businessNumber}?text=${encodeURIComponent(msg)}`;
+  return `https://wa.me/${target}?text=${encodeURIComponent(msg)}`;
 }
 
 async function populateSelect(selectId, table, field) {
