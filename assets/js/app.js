@@ -708,6 +708,10 @@ function showClientForm(client = null) {
           <input type="number" id="client-budget" value="${escAttr(client && client.budget ? client.budget : '')}" placeholder="Loyer mensuel ou prix de vente">
         </div>
         <div class="form-group">
+          <label>Budget minimum (FCFA) <span class="item-meta">— facultatif</span></label>
+          <input type="number" id="client-budget-min" value="${escAttr(client && client.budget_min ? client.budget_min : '')}" placeholder="Écarte les biens trop en dessous des attentes">
+        </div>
+        <div class="form-group">
           <label>Chambres minimum:</label>
           <input type="number" id="client-bedrooms" min="0" value="${escAttr(client && client.min_bedrooms ? client.min_bedrooms : '')}">
         </div>
@@ -751,6 +755,7 @@ async function saveClient(id) {
     wanted_types: multiVals('client-types'),
     wanted_districts: multiVals('client-districts'),
     budget: numOrNull('client-budget'),
+    budget_min: numOrNull('client-budget-min'),
     min_bedrooms: numOrNull('client-bedrooms'),
     wants_furnished: document.getElementById('client-furnished').checked ? true : null,
     matching_active: document.getElementById('client-matching').checked
@@ -1081,7 +1086,9 @@ function demandLabel(c) {
   if (c.wanted_types && c.wanted_types.length) bits.push(c.wanted_types.join('/'));
   if (c.wanted_districts && c.wanted_districts.length) bits.push(c.wanted_districts.join(', '));
   if (c.min_bedrooms) bits.push(c.min_bedrooms + '+ ch.');
-  if (c.budget) bits.push('≤ ' + Number(c.budget).toLocaleString('fr-FR') + ' FCFA');
+  if (c.budget_min && c.budget) bits.push(formatMoney(c.budget_min) + ' – ' + formatMoney(c.budget) + ' FCFA');
+  else if (c.budget) bits.push('≤ ' + formatMoney(c.budget) + ' FCFA');
+  else if (c.budget_min) bits.push('≥ ' + formatMoney(c.budget_min) + ' FCFA');
   if (c.wants_furnished) bits.push('meublé');
   return bits.join(' · ') || 'critères partiels';
 }
@@ -1506,7 +1513,6 @@ async function updateClientStatus(clientId, newStatus) {
     if (error) throw error;
     
     // Créer une activité pour tracer le changement
-    const client = await getById('clients', clientId);
     await supabaseClient.from('activities').insert([{
       client_id: clientId,
       type: 'meeting',

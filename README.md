@@ -1,83 +1,109 @@
-# Mini CRM Immobilier
+# CRM SE LOGER CM
 
-Un système de gestion de la relation client simple pour l'immobilier.
+Back-office de l'agence immobilière SE LOGER CM, à Douala. Un seul agent
+l'utilise. Pas de build, pas de dépendances à installer : trois pages HTML,
+six fichiers JavaScript, une feuille de style. On ouvre, ça marche.
 
-## Fonctionnalités
+Il accompagne le site public [selogercm.com](https://selogercm.com), dont il
+lit les annonces en direct — sans jamais les recopier.
 
-- **Tableau de bord** : Vue d'ensemble avec statistiques
-- **Gestion des clients** : Ajouter, modifier les clients (acheteurs, vendeurs, locataires)
-- **Gestion des propriétés** : Ajouter, modifier les propriétés
-- **Journal d'activités** : Enregistrer les interactions (appels, rendez-vous, emails)
-- **Tâches** : Gestion des tâches à faire
+## Ce qu'il fait
 
-## Installation
+| Écran | Rôle |
+|---|---|
+| **Tableau de bord** | Ce qui attend, ce qui entre, ce qui est engagé, ce qui est encaissé. |
+| **Clients** | Fiches, statut dans le pipeline, critères de recherche, contact WhatsApp. |
+| **Biens** | Les annonces publiées sur le site *et* les saisies internes, fusionnées. |
+| **Activités** | Journal des appels, rendez-vous, e-mails et visites. |
+| **Paiements** | Encaissements rattachés à un client et à un bien. |
+| **Factures** | Page dédiée (`facture.html`), numérotation automatique, export PDF. |
+| **Tâches** | Ce qu'il reste à faire, avec échéance. |
+| **Automatisation** | Relances suggérées : visites proches, paiements en retard, clients sans activité. |
+| **Pipeline** | Vue kanban, glisser-déposer pour faire avancer un client. |
+| **Rapprochements** | Confronte les demandes des clients aux annonces en ligne. |
 
-1. Créez un projet Supabase : https://supabase.com
-2. Copiez l'URL et la clé anon de votre projet
-3. Remplacez `YOUR_SUPABASE_URL` et `YOUR_SUPABASE_ANON_KEY` dans `assets/js/app.js`
+## Démarrer
 
-## Configuration de la base de données
+Aucune installation. Ouvrir `index.html` dans un navigateur, ou servir le
+dossier en statique. La page redirige vers `login.html` tant qu'aucune session
+Supabase n'est ouverte.
 
-Créez les tables suivantes dans Supabase :
+Les identifiants du projet Supabase sont dans `assets/js/config.js`. **La clé
+anon qui s'y trouve n'est pas un secret** : elle est servie à chaque
+navigateur, on ne peut pas la cacher. C'est un identifiant de projet. Ce qui
+protège réellement les données, c'est le RLS — voir [`sql/`](sql/).
 
-### clients
-```sql
-CREATE TABLE clients (
-  id SERIAL PRIMARY KEY,
-  name TEXT NOT NULL,
-  phone TEXT,
-  email TEXT,
-  type TEXT CHECK (type IN ('buyer', 'seller', 'renter')),
-  notes TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-);
+## Comment c'est fait
+
+```
+index.html          le CRM
+login.html          connexion
+facture.html        facturation (autonome, avec son propre style)
+assets/css/style.css
+assets/js/
+  config.js         client Supabase — source unique des identifiants
+  auth.js           garde de session : pas de session, pas de page
+  site.js           pont lecture seule vers la base du site public
+  match.js          rapprochement demandes ↔ annonces, partage WhatsApp
+  ui.js             toasts, modales, thème, autocomplétion
+  app.js            les écrans
+sql/                le schéma et les politiques de sécurité, versionnés
 ```
 
-### properties
-```sql
-CREATE TABLE properties (
-  id SERIAL PRIMARY KEY,
-  title TEXT NOT NULL,
-  address TEXT NOT NULL,
-  type TEXT CHECK (type IN ('house', 'apartment')),
-  price INTEGER,
-  status TEXT CHECK (status IN ('available', 'sold', 'rented')) DEFAULT 'available',
-  description TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-```
+L'ordre de chargement des scripts est impératif : `config` → `auth` → `site`
+→ `match` → `ui` → `app`. `app.js` attend l'événement `slcm:auth-ready`
+avant d'interroger la base ; sans session, le RLS bloque tout et l'écran
+resterait vide sans explication.
 
-### activities
-```sql
-CREATE TABLE activities (
-  id SERIAL PRIMARY KEY,
-  type TEXT CHECK (type IN ('call', 'meeting', 'email')) NOT NULL,
-  client_id INTEGER REFERENCES clients(id),
-  property_id INTEGER REFERENCES properties(id),
-  notes TEXT NOT NULL,
-  date DATE NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-```
+## Deux projets Supabase
 
-### tasks
-```sql
-CREATE TABLE tasks (
-  id SERIAL PRIMARY KEY,
-  title TEXT NOT NULL,
-  description TEXT,
-  due_date DATE,
-  status TEXT CHECK (status IN ('pending', 'completed')) DEFAULT 'pending',
-  created_at TIMESTAMP DEFAULT NOW()
-);
-```
+| Projet | Référence | Contenu | Accès |
+|---|---|---|---|
+| CRM | `dukwtseqticijlvrmkgz` | clients, biens, activités, tâches, paiements, factures | lecture / écriture, session requise |
+| Site | `hozlyddiqodvjguqywty` | annonces publiques de selogercm.com | lecture seule, via `site.js` |
 
-## Utilisation
+**Les annonces ne sont jamais copiées dans le CRM.** Un second client Supabase,
+en lecture seule, interroge directement la base du site. Aucune
+synchronisation à maintenir, aucune donnée périmée : une annonce modifiée sur
+le site l'est instantanément ici.
 
-Ouvrez `index.html` dans votre navigateur. Le CRM se charge automatiquement avec le tableau de bord.
+Quand un bien a besoin de données propres au CRM — commission, contact
+propriétaire, historique de négociation — on crée une fiche `properties`
+portant `listing_id` et `listing_slug`. La fiche **pointe** vers l'annonce,
+elle ne la duplique pas.
 
-Utilisez les boutons de navigation pour accéder aux différentes sections.
+## Base de données
 
-## Responsive
+Le schéma, les contraintes, les index et les politiques RLS sont versionnés
+dans [`sql/`](sql/), avec la requête qui permet de les régénérer depuis le
+tableau de bord Supabase. **Ces fichiers font foi** — pas ce README.
 
-Le design est adapté pour mobile et PC.
+Sept tables : `clients`, `properties`, `activities`, `tasks`, `payments`,
+`invoices`, `shared_listings`. Le RLS est actif sur toutes.
+
+## Ce que le CRM ne fait pas
+
+À savoir avant de chercher le bouton :
+
+- **Rien ne se supprime.** Aucune fonction de suppression n'existe, pour
+  aucune table. Une fiche créée par erreur reste en base — et continue de
+  compter dans les statistiques du tableau de bord. Décision à trancher :
+  soit assumer, soit ajouter une colonne `archived_at` plutôt qu'un `DELETE`,
+  ce qui vaut mieux sur des données de facturation.
+- **Pas de suivi acompte / solde.** Un paiement porte un montant et un statut
+  (`pending` ou `paid`), rien de plus. Une tentative avait été amorcée côté
+  interface sans jamais atteindre la base ; elle a été retirée le 31/08/2026.
+- **Pas d'envoi automatique.** L'écran Automatisation *propose* des relances ;
+  c'est toujours l'agent qui déclenche l'envoi WhatsApp. C'est délibéré : un
+  message mal ciblé coûte plus cher qu'une relance manquée.
+- **Un seul utilisateur.** Les colonnes `owner_id` sont remplies et les
+  politiques `owner_all` existent, mais des politiques plus larges les
+  neutralisent. Le passage au multi-agent demande de supprimer ces dernières —
+  voir l'en-tête de `sql/02_rls.sql`.
+
+## Sur mobile
+
+La mise en page bascule à 768 px : la barre latérale devient une rangée
+horizontale et les grilles passent sur une colonne. Utilisable, mais la
+navigation à dix entrées occupe plusieurs rangées — c'est le prochain
+chantier d'ergonomie.

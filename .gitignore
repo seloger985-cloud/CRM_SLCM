@@ -1,0 +1,25 @@
+# ── OneDrive ──
+# Le dépôt vit dans un dossier synchronisé : OneDrive y dépose ses propres
+# fichiers, et crée une copie horodatée à chaque conflit de synchronisation.
+*-Copie*.
+*conflicted copy*
+.tmp.drivedownload/
+.tmp.driveupload/
+
+# ── Windows ──
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ── Éditeurs ──
+.vscode/
+.idea/
+*.swp
+*~
+
+# ── Rien de tout ceci n'existe encore dans le projet, mais le jour où ──
+node_modules/
+.env
+.env.local
+*.log

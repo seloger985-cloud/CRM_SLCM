@@ -2,7 +2,11 @@
    MATCH — Rapprochement demandes clients ↔ annonces selogercm.com
            + partage d'une annonce à un client par WhatsApp
 
-   Dépendances : config.js, site.js, ui.js  (charger avant app.js)
+   Dépendances : config.js et site.js pour les données, UI pour l'affichage.
+   Toutes sont résolues à l'appel, pas au chargement : ce fichier ne fait que
+   déclarer des fonctions. L'ordre réel dans index.html — config, auth, site,
+   match, ui, app — place donc ui.js APRÈS celui-ci sans que cela pose
+   problème. Seule contrainte : charger avant app.js, qui appelle SLCM_MATCH.
 
    Principe
    --------
