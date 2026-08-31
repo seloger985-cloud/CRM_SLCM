@@ -805,6 +805,10 @@ function showClientForm(client = null) {
     </form>
   `;
 
+  /* Le champ « Précisez » de la source « autres » se répète d'un client à
+     l'autre : on rappelle ce qui a déjà été écrit. */
+  wireSuggestions('client-source-detail', 'clients', 'source_detail');
+
   document.getElementById('client-form').addEventListener('submit', (e) => {
     e.preventDefault();
     saveClient(client ? client.id : null);
@@ -1124,6 +1128,68 @@ function dismissFreshAlert() {
   if (el) el.remove();
 }
 
+/* ═══════════════ SUGGESTIONS ET VALEURS RETENUES ═══════════════
+
+   Deux conforts de saisie, sans intelligence artificielle non plus.
+
+   Les suggestions ne devinent rien : elles rappellent ce qui a déjà été
+   saisi. Le but n'est pas de taper moins vite, c'est d'éviter les variantes.
+   « Bonapriso », « bonapriso » et « Bonaprisso » sont trois quartiers pour
+   une base de données et un seul pour un humain — et c'est exactement ce
+   genre d'écart qui rend un rapprochement muet sans qu'on comprenne
+   pourquoi. */
+
+function looseKey(v) {
+  return String(v == null ? '' : v)
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().trim();
+}
+
+/** Fabrique un fetchSuggestions à partir de valeurs déjà en base. */
+function suggestFrom(values, extra) {
+  const uniques = [...new Set(
+    (values || []).concat(extra || [])
+      .filter(Boolean).map(v => String(v).trim()).filter(v => v.length > 1)
+  )].sort((a, b) => a.localeCompare(b, 'fr'));
+
+  return (q) => {
+    const key = looseKey(q);
+    return uniques
+      .filter(v => looseKey(v).indexOf(key) !== -1)
+      .slice(0, 8)
+      .map(v => ({ label: v }));
+  };
+}
+
+/* ─── Valeurs retenues d'une saisie à l'autre ───
+
+   Un agent qui enregistre quatre visites d'affilée reprend quatre fois le
+   même type. La dernière valeur choisie devient le défaut de la CRÉATION
+   suivante — jamais d'une modification, où elle écraserait une donnée
+   existante. Le repère est local au navigateur : c'est une habitude de
+   saisie, pas une donnée du CRM. */
+
+/** Branche l'autocomplétion d'un champ sur les valeurs déjà en base. */
+async function wireSuggestions(inputId, table, column, extra) {
+  const el = document.getElementById(inputId);
+  if (!el || !window.UI || typeof UI.autocomplete !== 'function') return;
+  const rows = await getAll(table);
+  if (!el.isConnected) return;   // l'agent a quitté le formulaire entre-temps
+  UI.autocomplete(el, {
+    minChars: 1,
+    fetchSuggestions: suggestFrom(rows.map(r => r[column]), extra)
+  });
+}
+
+function rememberChoice(key, value) {
+  try { if (value) localStorage.setItem('slcm-last-' + key, value); } catch (e) {}
+}
+
+function lastChoice(key, fallback) {
+  try { return localStorage.getItem('slcm-last-' + key) || fallback; }
+  catch (e) { return fallback; }
+}
+
 /* ═══════════════ DÉTECTION DE DOUBLONS ═══════════════
 
    Sans aucune intelligence artificielle, délibérément : rapprocher deux
@@ -1359,48 +1425,60 @@ function escAttr(v) {
 }
 
 function showPropertyForm(property = null) {
+  const v = property || {};
+  const editing = !!property;
+  /* En création, on reprend le dernier choix de l'agent ; en modification,
+     jamais — ce serait écraser une donnée existante par une habitude. */
+  const defType   = v.type   || (editing ? '' : lastChoice('property-type', 'house'));
+  const defStatus = v.status || (editing ? '' : lastChoice('property-status', 'available'));
+
   mainContent.innerHTML = `
-    <h2>${property ? 'Modifier' : 'Ajouter'} Propriété</h2>
+    <h2>${editing ? 'Modifier' : 'Ajouter'} un bien</h2>
     <form id="property-form">
       <div class="form-group">
         <label>Titre:</label>
-        <input type="text" id="property-title" value="${escAttr((property && property.title) || '')}" required>
+        <input type="text" id="property-title" value="${escAttr(v.title || '')}" required>
       </div>
       <div class="form-group">
         <label>Adresse:</label>
-        <input type="text" id="property-address" value="${escAttr((property && property.address) || '')}" required>
+        <input type="text" id="property-address" value="${escAttr(v.address || '')}" required
+               placeholder="Quartier, ville" autocomplete="off">
       </div>
       <div class="form-group">
         <label>Type:</label>
         <select id="property-type">
-          <option value="house" ${property && property.type === 'house' ? 'selected' : ''}>Maison</option>
-          <option value="apartment" ${property && property.type === 'apartment' ? 'selected' : ''}>Appartement</option>
+          <option value="house" ${defType === 'house' ? 'selected' : ''}>Maison</option>
+          <option value="apartment" ${defType === 'apartment' ? 'selected' : ''}>Appartement</option>
         </select>
       </div>
       <div class="form-group">
         <label>Prix (FCFA):</label>
-        <input type="number" id="property-price" value="${escAttr((property && property.price) || '')}">
+        <input type="number" id="property-price" value="${escAttr(v.price || '')}">
       </div>
       <div class="form-group">
         <label>Statut:</label>
         <select id="property-status">
-          <option value="available" ${property && property.status === 'available' ? 'selected' : ''}>Disponible</option>
-          <option value="sold" ${property && property.status === 'sold' ? 'selected' : ''}>Vendu</option>
-          <option value="rented" ${property && property.status === 'rented' ? 'selected' : ''}>Loué</option>
+          <option value="available" ${defStatus === 'available' ? 'selected' : ''}>Disponible</option>
+          <option value="sold" ${defStatus === 'sold' ? 'selected' : ''}>Vendu</option>
+          <option value="rented" ${defStatus === 'rented' ? 'selected' : ''}>Loué</option>
         </select>
       </div>
       <div class="form-group">
         <label>Description:</label>
-        <textarea id="property-description">${escHtml((property && property.description) || '')}</textarea>
+        <textarea id="property-description">${escHtml(v.description || '')}</textarea>
       </div>
-      <button type="submit" class="btn btn-primary">${property ? 'Modifier' : 'Ajouter'}</button>
+      <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Ajouter'}</button>
       <button type="button" onclick="showProperties()" class="btn btn-outline">Annuler</button>
     </form>
   `;
 
+  /* Adresses déjà saisies + les quartiers connus du rapprochement : écrire
+     « Bonaprisso » une fois suffit à rendre un bien introuvable. */
+  wireSuggestions('property-address', 'properties', 'address', DEMAND_DISTRICTS);
+
   document.getElementById('property-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    saveProperty(property ? property.id : null);
+    saveProperty(editing ? property.id : null);
   });
 }
 
@@ -1424,6 +1502,8 @@ async function saveProperty(id) {
       const { error } = await supabaseClient.from('properties').insert([property]);
       if (error) throw error;
     }
+    rememberChoice('property-type', property.type);
+    rememberChoice('property-status', property.status);
     showProperties();
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement de la propriété:', error);
@@ -1465,16 +1545,17 @@ async function showActivities() {
 function showActivityForm(activity = null, draft = null, back = null) {
   const v = activity || draft || {};
   const editing = !!activity;
+  const defType = v.type || (editing ? '' : lastChoice('activity-type', 'call'));
   mainContent.innerHTML = `
     <h2>${editing ? 'Modifier' : 'Ajouter'} une activité</h2>
     <form id="activity-form">
       <div class="form-group">
         <label>Type:</label>
         <select id="activity-type">
-          <option value="call" ${v.type === 'call' ? 'selected' : ''}>Appel</option>
-          <option value="meeting" ${v.type === 'meeting' ? 'selected' : ''}>Rendez-vous</option>
-          <option value="email" ${v.type === 'email' ? 'selected' : ''}>Email</option>
-          <option value="visit" ${v.type === 'visit' ? 'selected' : ''}>Visite</option>
+          <option value="call" ${defType === 'call' ? 'selected' : ''}>Appel</option>
+          <option value="meeting" ${defType === 'meeting' ? 'selected' : ''}>Rendez-vous</option>
+          <option value="email" ${defType === 'email' ? 'selected' : ''}>Email</option>
+          <option value="visit" ${defType === 'visit' ? 'selected' : ''}>Visite</option>
         </select>
       </div>
       <div class="form-group">
@@ -1531,6 +1612,7 @@ async function saveActivity(id, back) {
       const { error } = await supabaseClient.from('activities').insert([activity]);
       if (error) throw error;
     }
+    rememberChoice('activity-type', activity.type);
     returnTo(back, showActivities);
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement de l\'activité:', error);
@@ -1980,6 +2062,7 @@ async function showPayments() {
 function showPaymentForm(payment = null, draft = null, back = null) {
   const v = payment || draft || {};
   const editing = !!payment;
+  const defStatus = v.status || (editing ? '' : lastChoice('payment-status', 'pending'));
   mainContent.innerHTML = `
     <h2>${editing ? 'Modifier' : 'Ajouter'} un paiement</h2>
     <form id="payment-form">
@@ -2002,8 +2085,8 @@ function showPaymentForm(payment = null, draft = null, back = null) {
       <div class="form-group">
         <label>Statut:</label>
         <select id="payment-status">
-          <option value="pending" ${v.status === 'pending' ? 'selected' : ''}>En attente</option>
-          <option value="paid" ${v.status === 'paid' ? 'selected' : ''}>Payé</option>
+          <option value="pending" ${defStatus === 'pending' ? 'selected' : ''}>En attente</option>
+          <option value="paid" ${defStatus === 'paid' ? 'selected' : ''}>Payé</option>
         </select>
       </div>
       <div class="form-group">
@@ -2046,6 +2129,7 @@ async function savePayment(id, back) {
       const { error } = await supabaseClient.from('payments').insert([payment]);
       if (error) throw error;
     }
+    rememberChoice('payment-status', payment.status);
     returnTo(back, showPayments);
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement du paiement:', error);

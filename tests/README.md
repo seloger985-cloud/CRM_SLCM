@@ -19,6 +19,7 @@ précis est passé au travers d'une relecture humaine.
 | **check-handlers** | Le bouton « Rapprochements » était câblé `onclick="navTo(this, showMatching)"`. Or `navTo` *fabrique* un gestionnaire, elle ne navigue pas : le clic partait dans le vide, sans erreur en console, et tout l'écran était inaccessible. |
 | **test-escaping** | Les valeurs de la base étaient injectées brutes dans `innerHTML`. Un client nommé « Ets \<Nkolo\> & Fils » disparaissait de l'écran sans un mot. |
 | **test-matching** | `match.js` est le seul endroit où une décision métier est *calculée*. Une régression y est invisible : le CRM continue de fonctionner, il propose simplement moins bien — ou trop. |
+| **test-suggestions** | Les suggestions ne devinent rien, elles rappellent ce qui a déjà été saisi. Une variante — « Bonaprisso » pour « Bonapriso » — suffit à rendre un bien introuvable au rapprochement, sans erreur ni message. |
 | **test-duplicates** | Le tableau de bord affichait « M. Dicka » deux fois, le même jour. Les biens sont protégés du double import par un index unique ; les clients ne l'étaient par rien. Et comme le CRM ne sait pas supprimer, une fiche en double reste — et fausse le total clients comme le taux de conversion. |
 
 ## Deux principes

@@ -62,7 +62,7 @@ resterait vide sans explication.
 node tests/run.js
 ```
 
-Node seul, rien à installer. À lancer avant chaque commit. Les cinq contrôles
+Node seul, rien à installer. À lancer avant chaque commit. Les six contrôles
 ne sont pas génériques : chacun existe parce qu'un bug précis est passé au
 travers d'une relecture. Voir [`tests/`](tests/).
 
@@ -130,6 +130,23 @@ active est ramenée dans le champ de vision.
 Rien n'est replié derrière un menu, délibérément : masquer trois écrans
 supposerait de savoir lesquels sont secondaires, et cela dépend de la façon
 dont l'agence travaille, pas du CSS.
+
+## Aide à la saisie
+
+Deux conforts, sans intelligence artificielle non plus.
+
+**Les suggestions rappellent, elles ne devinent pas.** L'adresse d'un bien
+propose les adresses déjà saisies et les quartiers connus du rapprochement ;
+le champ « Précisez » d'une source propose ce qui y a déjà été écrit. Le but
+n'est pas de taper plus vite, c'est d'éviter les variantes : « Bonaprisso »
+écrit une fois suffit à rendre un bien introuvable au rapprochement, sans
+erreur ni message.
+
+**Le dernier choix devient le défaut suivant.** Type d'activité, type et
+statut d'un bien, statut d'un paiement : la valeur retenue est reprise à la
+**création** suivante — jamais en modification, où elle écraserait une donnée
+existante par une habitude. Ce repère vit dans le navigateur : c'est une
+habitude de saisie, pas une donnée du CRM.
 
 ## Doublons
 
