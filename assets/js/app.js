@@ -352,7 +352,7 @@ async function createActivityFromSuggestion(index) {
    cinq redondantes — quatre comptages de statuts et un getRecent('clients')
    que getAll('clients') contenait déjà. Ramenées à quatre, en parallèle. */
 async function showDashboard() {
-  const [allClients, allPayments, allTasks, recentActivities, siteListings, shared] = await Promise.all([
+  const [allClients, allPayments, allTasks, recentActivities, siteListings, shared, allDemands] = await Promise.all([
     getAll('clients'),
     getAll('payments'),
     getAll('tasks'),
@@ -361,11 +361,12 @@ async function showDashboard() {
        appels dégradent en silence : le tableau de bord reste utilisable même
        si selogercm.com ne répond pas. */
     window.SLCM_SITE.fetchListings(),
-    window.SLCM_MATCH.loadShared()
+    window.SLCM_MATCH.loadShared(),
+    getAll('demands')
   ]);
 
-  /* Annonces parues depuis le dernier passage qui répondent à une demande. */
-  const fresh = window.SLCM_MATCH.freshMatches(allClients, siteListings, shared);
+  /* Annonces parues depuis le dernier passage qui répondent à une recherche. */
+  const fresh = window.SLCM_MATCH.freshMatches(allDemands, siteListings, shared);
   window._freshListings = siteListings;
 
   /* Comptages dérivés de la liste déjà en mémoire, plus par requête. */
@@ -458,9 +459,13 @@ async function showDashboard() {
       ${fresh.length ? `
       <div class="alert alert-match" id="fresh-alert">
         <strong>${fresh.length} nouvelle${fresh.length > 1 ? 's' : ''} annonce${fresh.length > 1 ? 's' : ''} sur selogercm.com trouve${fresh.length > 1 ? 'nt' : ''} preneur</strong>
-        ${fresh.slice(0, 4).map(f => `<p>${escHtml(f.listing.title || 'Sans titre')} — ${
-          f.clients.slice(0, 3).map(h => escHtml(h.client.name || 'sans nom')).join(', ')
-        }${f.clients.length > 3 ? ' et ' + (f.clients.length - 3) + ' autre(s)' : ''}</p>`).join('')}
+        ${fresh.slice(0, 4).map(f => {
+          const noms = [...new Set(f.demands.map(h => {
+            const c = allClients.find(x => String(x.id) === String(h.demand.client_id));
+            return (c && c.name) || 'sans nom';
+          }))];
+          return `<p>${escHtml(f.listing.title || 'Sans titre')} — ${noms.slice(0, 3).map(escHtml).join(', ')}${noms.length > 3 ? ' et ' + (noms.length - 3) + ' autre(s)' : ''}</p>`;
+        }).join('')}
         ${fresh.length > 4 ? `<p class="item-meta">et ${fresh.length - 4} autre(s).</p>` : ''}
         <div class="alert-actions">
           <button onclick="goToMatching()" class="btn btn-primary">Ouvrir les rapprochements</button>
@@ -642,6 +647,8 @@ function returnTo(back, fallback) {
   return fallback();
 }
 
+const ICON_SEARCH = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 001.48-5.34c-.47-2.78-2.79-5-5.59-5.34a6.505 6.505 0 00-7.27 7.27c.34 2.8 2.56 5.12 5.34 5.59a6.5 6.5 0 005.34-1.48l.27.28v.79l4.25 4.25c.41.41 1.08.41 1.49 0 .41-.41.41-1.08 0-1.49L15.5 14zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>';
+
 const ICON_ACTIVITY = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 002 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>';
 
 const ICON_PAYMENT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg>';
@@ -655,16 +662,20 @@ const ICON_RELANCE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="curr
 function clientRow(c) {
   const status = c.status || 'nouvelle demande';
   const source = c.source || 'Non renseignée';
+  /* Compté par showClients, qui charge les recherches une seule fois. */
+  const nb = (window._demandCount && window._demandCount[String(c.id)]) || 0;
   return `<div class="list-item">
     <div>
       <strong>${escHtml(c.name)}</strong> — ${escHtml(c.phone || 'pas de numéro')}
       <span class="status-badge" data-status="${escAttr(status)}">${escHtml(status)}</span>
     </div>
     <div class="item-meta">Source : ${escHtml(source)}${c.source_detail ? ' (' + escHtml(c.source_detail) + ')' : ''}</div>
+    <div class="item-meta">${nb ? nb + ' recherche' + (nb > 1 ? 's' : '') + ' active' + (nb > 1 ? 's' : '') : 'aucune recherche'}</div>
     <div class="item-meta">${formatDate(c.created_at)}</div>
     <div>
       <a href="${escAttr(getWhatsApp(c.phone, c, 'general'))}" target="_blank" rel="noopener" class="whatsapp-btn" title="WhatsApp général">${ICON_WHATSAPP}</a>
       <a href="${escAttr(getWhatsApp(c.phone, c, 'followup'))}" target="_blank" rel="noopener" class="relance whatsapp-btn" title="Relance WhatsApp">${ICON_RELANCE}</a>
+      <button onclick="showClientDemands(${Number(c.id)})" class="edit-btn" title="Ses recherches">${ICON_SEARCH}</button>
       <button onclick="addActivityFor('client', ${Number(c.id)})" class="edit-btn" title="Noter une activité pour ce client">${ICON_ACTIVITY}</button>
       <button onclick="addPaymentFor('client', ${Number(c.id)})" class="edit-btn" title="Enregistrer un paiement de ce client">${ICON_PAYMENT}</button>
       <button onclick="editClient(${Number(c.id)})" class="edit-btn" title="Modifier la fiche">${ICON_EDIT}</button>
@@ -674,7 +685,15 @@ function clientRow(c) {
 
 async function showClients() {
   UI.showLoading();
-  const clients = await getAll('clients');
+  const [clients, demands] = await Promise.all([getAll('clients'), getAll('demands')]);
+
+  /* Compteur de recherches actives, calculé une fois pour toute la liste
+     plutôt qu'une requête par ligne. */
+  window._demandCount = {};
+  demands.filter(d => d.active !== false).forEach(d => {
+    const k = String(d.client_id);
+    window._demandCount[k] = (window._demandCount[k] || 0) + 1;
+  });
   window._clients = clients;
   mainContent.innerHTML = `
     <h2>Clients</h2>
@@ -754,47 +773,9 @@ function showClientForm(client = null) {
           <option value="signé" ${client && client.status === 'signé' ? 'selected' : ''}>Signé</option>
         </select>
       </div>
-      <fieldset class="demand-block">
-        <legend>Sa recherche <span class="item-meta">— alimente les rapprochements</span></legend>
-        <div class="form-group">
-          <label>Transaction:</label>
-          <select id="client-rentsale">
-            <option value="">Déduire du type de client</option>
-            <option value="rent" ${client && client.rent_sale === 'rent' ? 'selected' : ''}>Location</option>
-            <option value="sale" ${client && client.rent_sale === 'sale' ? 'selected' : ''}>Achat</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Types recherchés <span class="item-meta">(Ctrl / Cmd pour plusieurs)</span></label>
-          <select id="client-types" multiple size="5">
-            ${Object.keys(DEMAND_TYPE_FR).map(t => `<option value="${escAttr(t)}" ${client && (client.wanted_types || []).indexOf(t) !== -1 ? 'selected' : ''}>${DEMAND_TYPE_FR[t]}</option>`).join('')}
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Quartiers visés:</label>
-          <select id="client-districts" multiple size="5">
-            ${DEMAND_DISTRICTS.map(d => `<option value="${escAttr(d)}" ${client && (client.wanted_districts || []).indexOf(d) !== -1 ? 'selected' : ''}>${d}</option>`).join('')}
-          </select>
-        </div>
-        <div class="form-group">
-          <label>Budget maximum (FCFA):</label>
-          <input type="number" id="client-budget" value="${escAttr(client && client.budget ? client.budget : '')}" placeholder="Loyer mensuel ou prix de vente">
-        </div>
-        <div class="form-group">
-          <label>Budget minimum (FCFA) <span class="item-meta">— facultatif</span></label>
-          <input type="number" id="client-budget-min" value="${escAttr(client && client.budget_min ? client.budget_min : '')}" placeholder="Écarte les biens trop en dessous des attentes">
-        </div>
-        <div class="form-group">
-          <label>Chambres minimum:</label>
-          <input type="number" id="client-bedrooms" min="0" value="${escAttr(client && client.min_bedrooms ? client.min_bedrooms : '')}">
-        </div>
-        <div class="form-group">
-          <label><input type="checkbox" id="client-furnished" ${client && client.wants_furnished ? 'checked' : ''}> Meublé exigé</label>
-        </div>
-        <div class="form-group">
-          <label><input type="checkbox" id="client-matching" ${!client || client.matching_active !== false ? 'checked' : ''}> Actif dans les rapprochements</label>
-        </div>
-      </fieldset>
+      <!-- Le bloc « Sa recherche » a quitté ce formulaire le 31/08/2026 :
+           un client peut porter plusieurs recherches. Elles vivent désormais
+           dans leur propre table et se gèrent depuis la liste des clients. -->
 
       <div class="form-group">
         <label>Notes:</label>
@@ -824,18 +805,7 @@ async function saveClient(id) {
     source_detail: document.getElementById('client-source-detail') ? document.getElementById('client-source-detail').value : null,
     type: document.getElementById('client-type').value,
     status: document.getElementById('client-status').value,
-    notes: document.getElementById('client-notes').value,
-
-    /* Critères de recherche — null quand non renseigné, jamais 0 ni ''.
-       Un 0 serait interprété comme « budget nul » et bloquerait tout. */
-    rent_sale: document.getElementById('client-rentsale').value || null,
-    wanted_types: multiVals('client-types'),
-    wanted_districts: multiVals('client-districts'),
-    budget: numOrNull('client-budget'),
-    budget_min: numOrNull('client-budget-min'),
-    min_bedrooms: numOrNull('client-bedrooms'),
-    wants_furnished: document.getElementById('client-furnished').checked ? true : null,
-    matching_active: document.getElementById('client-matching').checked
+    notes: document.getElementById('client-notes').value
   };
 
   /* Doublon : on demande avant d'écrire, pas après. Une fois la fiche créée,
@@ -848,8 +818,11 @@ async function saveClient(id) {
     const liste = jumeaux.slice(0, 3)
       .map(d => (d.client.name || 'sans nom') + ' (' + d.raison + ')').join(', ');
     const continuer = await UI.confirm(
-      'Une fiche existe déjà : ' + liste + '.\n\nCréer quand même une seconde fiche ?',
-      { title: 'Doublon possible', confirmLabel: 'Créer quand même', cancelLabel: 'Revenir à la saisie' });
+      'Une fiche existe déjà : ' + liste + '.'
+      + '\n\nSi c\'est la même personne avec une SECONDE recherche, créer une '
+      + 'deuxième fiche est aujourd\'hui la seule façon de faire — le formulaire '
+      + 'ne porte qu\'une demande par client.',
+      { title: 'Fiche similaire', confirmLabel: 'Créer quand même', cancelLabel: 'Revenir à la saisie' });
     if (!continuer) return;
   }
 
@@ -863,7 +836,6 @@ async function saveClient(id) {
     if (error) throw error;
 
     showClients();
-    if (data && data[0]) alertMatchesForClient(data[0]);
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement du client:', error);
     UI.handleError(error);
@@ -1057,9 +1029,18 @@ async function shareListing(siteId) {
 
   /* Les clients dont la demande colle au bien remontent en tête :
      inutile de faire défiler toute la base à chaque partage. */
+  /* Un client peut porter plusieurs recherches : on retient la meilleure,
+     puisque c'est la personne qu'on va contacter, pas sa recherche. */
+  const demands = await getAll('demands');
+  const meilleur = new Map();
+  window.SLCM_MATCH.demandsForListing(listing, demands).forEach(h => {
+    const k = String(h.demand.client_id);
+    if (!meilleur.has(k) || meilleur.get(k) < h.score) meilleur.set(k, h.score);
+  });
+
   const scored = clients.map(c => {
-    const r = window.SLCM_MATCH.hasDemand(c) ? window.SLCM_MATCH.evaluate(listing, c) : null;
-    return { c, score: r ? r.score : 0, fit: !!r };
+    const score = meilleur.get(String(c.id)) || 0;
+    return { c, score, fit: score > 0 };
   }).sort((a, b) => b.score - a.score || String(a.c.name || '').localeCompare(String(b.c.name || '')));
 
   const body = document.createElement('div');
@@ -1251,6 +1232,186 @@ function addPaymentFor(kind, id) {
                   kind === 'client' ? 'clients' : 'properties');
 }
 
+/* ═══════════════ LES RECHERCHES D'UN CLIENT ═══════════════
+
+   Un client peut chercher plusieurs choses à la fois — un studio pour lui,
+   un deux-chambres pour sa mère. Jusqu'au 31/08/2026 la fiche client ne
+   portait qu'une recherche, et le seul contournement était de créer deux
+   fiches au même nom. Voir sql/03_demands.sql. */
+
+/** Libellé lisible d'une recherche : celui saisi, sinon déduit des critères. */
+function demandLabel(d) {
+  if (d.label) return d.label;
+  const bits = [];
+  if (d.rent_sale) bits.push(d.rent_sale === 'rent' ? 'location' : 'achat');
+  if (d.wanted_types && d.wanted_types.length) {
+    bits.push(d.wanted_types.map(t => DEMAND_TYPE_FR[t] || t).join(' / '));
+  }
+  if (d.wanted_districts && d.wanted_districts.length) bits.push(d.wanted_districts.join(', '));
+  if (d.min_bedrooms) bits.push(d.min_bedrooms + '+ ch.');
+  if (d.budget_min && d.budget) bits.push(formatMoney(d.budget_min) + ' – ' + formatMoney(d.budget) + ' FCFA');
+  else if (d.budget) bits.push('≤ ' + formatMoney(d.budget) + ' FCFA');
+  else if (d.budget_min) bits.push('≥ ' + formatMoney(d.budget_min) + ' FCFA');
+  if (d.wants_furnished) bits.push('meublé');
+  return bits.join(' · ') || 'critères à préciser';
+}
+
+async function showClientDemands(clientId) {
+  UI.showLoading();
+  const [client, demands] = await Promise.all([
+    getById('clients', clientId),
+    getAll('demands')
+  ]);
+  if (!client) { UI.toast('Client introuvable.', 'error'); return showClients(); }
+  const siennes = demands.filter(d => String(d.client_id) === String(clientId));
+
+  mainContent.innerHTML = `
+    <h2>Recherches de ${escHtml(client.name)}</h2>
+    <div class="toolbar">
+      <button onclick="showDemandForm(null, { client_id: ${Number(clientId)} })" class="btn btn-primary">Ajouter une recherche</button>
+      <button onclick="showClients()" class="btn btn-outline">Retour aux clients</button>
+    </div>
+    ${siennes.length ? `<div class="list">${siennes.map(d => `
+      <div class="list-item">
+        <div><strong>${escHtml(demandLabel(d))}</strong>
+          ${d.active ? '' : '<span class="src-badge src-crm">EN PAUSE</span>'}</div>
+        <div class="item-meta">${escHtml(d.notes || '')}</div>
+        <div class="item-meta">créée le ${formatDate(d.created_at)}</div>
+        <div>
+          <button onclick="editDemand(${Number(d.id)})" class="edit-btn" title="Modifier">${ICON_EDIT}</button>
+          <button onclick="toggleDemand(${Number(d.id)}, ${d.active ? 'false' : 'true'})" class="ghost-btn">${d.active ? 'Mettre en pause' : 'Réactiver'}</button>
+        </div>
+      </div>`).join('')}</div>`
+      : `<div class="empty-state">
+           <p><strong>Aucune recherche enregistrée.</strong></p>
+           <p>Sans recherche, ce client n'apparaît jamais dans les rapprochements.
+           Une recherche porte un budget, des quartiers, un type de bien — et un
+           même client peut en avoir plusieurs.</p>
+         </div>`}
+  `;
+}
+
+function showDemandForm(demand = null, draft = null) {
+  const v = demand || draft || {};
+  const editing = !!demand;
+  const clientId = v.client_id;
+
+  mainContent.innerHTML = `
+    <h2>${editing ? 'Modifier' : 'Ajouter'} une recherche</h2>
+    <form id="demand-form">
+      <div class="form-group">
+        <label>Intitulé <span class="item-meta">— facultatif, par exemple « pour sa mère »</span></label>
+        <input type="text" id="demand-label" value="${escAttr(v.label || '')}"
+               placeholder="À défaut, l'intitulé est déduit des critères">
+      </div>
+      <fieldset class="demand-block">
+        <legend>Critères <span class="item-meta">— alimentent les rapprochements</span></legend>
+        <div class="form-group">
+          <label>Transaction:</label>
+          <select id="demand-rentsale" required>
+            <option value="">À préciser</option>
+            <option value="rent" ${v.rent_sale === 'rent' ? 'selected' : ''}>Location</option>
+            <option value="sale" ${v.rent_sale === 'sale' ? 'selected' : ''}>Achat</option>
+          </select>
+          <p class="item-meta">Sans transaction, aucun rapprochement n'est possible.</p>
+        </div>
+        <div class="form-group">
+          <label>Types recherchés <span class="item-meta">(Ctrl / Cmd pour plusieurs)</span></label>
+          <select id="demand-types" multiple size="5">
+            ${Object.keys(DEMAND_TYPE_FR).map(t => `<option value="${escAttr(t)}" ${(v.wanted_types || []).indexOf(t) !== -1 ? 'selected' : ''}>${DEMAND_TYPE_FR[t]}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Quartiers visés:</label>
+          <select id="demand-districts" multiple size="5">
+            ${DEMAND_DISTRICTS.map(d => `<option value="${escAttr(d)}" ${(v.wanted_districts || []).indexOf(d) !== -1 ? 'selected' : ''}>${d}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Budget maximum (FCFA):</label>
+          <input type="number" id="demand-budget" value="${escAttr(v.budget || '')}" placeholder="Loyer mensuel ou prix de vente">
+        </div>
+        <div class="form-group">
+          <label>Budget minimum (FCFA) <span class="item-meta">— facultatif</span></label>
+          <input type="number" id="demand-budget-min" value="${escAttr(v.budget_min || '')}" placeholder="Écarte les biens trop en dessous des attentes">
+        </div>
+        <div class="form-group">
+          <label>Chambres minimum:</label>
+          <input type="number" id="demand-bedrooms" min="0" value="${escAttr(v.min_bedrooms || '')}">
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" id="demand-furnished" ${v.wants_furnished ? 'checked' : ''}> Meublé exigé</label>
+        </div>
+      </fieldset>
+      <div class="form-group">
+        <label>Notes:</label>
+        <textarea id="demand-notes">${escHtml(v.notes || '')}</textarea>
+      </div>
+      <div class="form-group">
+        <label><input type="checkbox" id="demand-active" ${v.active === false ? '' : 'checked'}> Active dans les rapprochements</label>
+      </div>
+      <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Ajouter'}</button>
+      <button type="button" onclick="showClientDemands(${Number(clientId)})" class="btn btn-outline">Annuler</button>
+    </form>
+  `;
+
+  document.getElementById('demand-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveDemand(editing ? demand.id : null, clientId);
+  });
+}
+
+async function saveDemand(id, clientId) {
+  const demand = {
+    client_id: clientId,
+    label: document.getElementById('demand-label').value || null,
+    /* Critères — null quand non renseigné, jamais 0 ni '' : un 0 serait lu
+       comme « budget nul » et bloquerait tout rapprochement. */
+    rent_sale: document.getElementById('demand-rentsale').value || null,
+    wanted_types: multiVals('demand-types'),
+    wanted_districts: multiVals('demand-districts'),
+    budget: numOrNull('demand-budget'),
+    budget_min: numOrNull('demand-budget-min'),
+    min_bedrooms: numOrNull('demand-bedrooms'),
+    wants_furnished: document.getElementById('demand-furnished').checked ? true : null,
+    notes: document.getElementById('demand-notes').value || null,
+    active: document.getElementById('demand-active').checked
+  };
+
+  try {
+    const { data, error } = id
+      ? await supabaseClient.from('demands').update(demand).eq('id', id).select()
+      : await supabaseClient.from('demands').insert([demand]).select();
+    if (error) throw error;
+
+    showClientDemands(clientId);
+    if (data && data[0]) alertMatchesForDemand(data[0]);
+  } catch (error) {
+    console.error('Erreur lors de l\'enregistrement de la recherche:', error);
+    UI.handleError(error);
+  }
+}
+
+async function editDemand(id) {
+  const demand = await getById('demands', id);
+  if (!demand) { UI.toast('Recherche introuvable.', 'error'); return; }
+  showDemandForm(demand);
+}
+
+/** Met une recherche en pause, ou la réveille. Rien ne se supprime. */
+async function toggleDemand(id, active) {
+  const demand = await getById('demands', id);
+  if (!demand) return;
+  try {
+    const { error } = await supabaseClient.from('demands').update({ active }).eq('id', id);
+    if (error) throw error;
+    UI.toast(active ? 'Recherche réactivée.' : 'Recherche mise en pause.', 'success');
+    showClientDemands(demand.client_id);
+  } catch (error) {
+    UI.handleError(error);
+  }
+}
+
 /* ═══════════════ ALERTES DE RAPPROCHEMENT ═══════════════
 
    Le rapprochement existait déjà, mais il fallait aller le chercher : ouvrir
@@ -1281,27 +1442,36 @@ async function matchContext() {
 }
 
 /** Après l'enregistrement d'une demande : ce qui y répond, s'il y a lieu. */
-async function alertMatchesForClient(client) {
-  if (!client || !window.SLCM_MATCH.hasDemand(client)) return;
+async function alertMatchesForDemand(demand) {
+  if (!demand || !window.SLCM_MATCH.isLive(demand)) return;
   const { listings, shared } = await matchContext();
-  const hits = window.SLCM_MATCH.matchesForClient(client, listings, shared);
+  const hits = window.SLCM_MATCH.matchesForDemand(demand, listings, shared);
   if (!hits.length) return;
   UI.toast(
     hits.length + ' annonce' + (hits.length > 1 ? 's correspondent' : ' correspond')
-      + ' à la demande de ' + (client.name || 'ce client') + '.',
+      + ' à cette recherche : ' + demandLabel(demand) + '.',
     'success', 7000);
 }
 
 /** Après l'entrée d'un bien : les clients qui l'attendaient. */
 async function alertClientsForListing(listing) {
   if (!listing) return;
-  const [{ shared }, clients] = await Promise.all([matchContext(), getAll('clients')]);
-  const hits = window.SLCM_MATCH.clientsForListing(listing, clients, shared);
+  const [{ shared }, demands, clients] = await Promise.all([
+    matchContext(), getAll('demands'), getAll('clients')
+  ]);
+  const hits = window.SLCM_MATCH.demandsForListing(listing, demands, shared);
   if (!hits.length) return;
+
+  /* Deux recherches d'un même client ne comptent que pour une personne :
+     c'est à elle qu'on écrira, pas à sa recherche. */
+  const parClient = new Map(clients.map(c => [String(c.id), c]));
+  const noms = [...new Set(hits.map(h => {
+    const c = parClient.get(String(h.demand.client_id));
+    return (c && c.name) || 'sans nom';
+  }))];
   UI.toast(
-    hits.length + ' client' + (hits.length > 1 ? 's attendaient' : ' attendait')
-      + ' ce bien : ' + hits.slice(0, 3).map(h => h.client.name).join(', ')
-      + (hits.length > 3 ? '…' : ''),
+    noms.length + ' client' + (noms.length > 1 ? 's attendaient' : ' attendait')
+      + ' ce bien : ' + noms.slice(0, 3).join(', ') + (noms.length > 3 ? '…' : ''),
     'success', 8000);
 }
 
@@ -1310,41 +1480,48 @@ async function alertClientsForListing(listing) {
 async function showMatching() {
   UI.showLoading();
 
-  const [clients, listings, sent] = await Promise.all([
+  const [clients, demands, listings, sent] = await Promise.all([
     getAll('clients'),
+    getAll('demands'),
     window.SLCM_SITE.fetchListings(),
     window.SLCM_MATCH.loadShared()
   ]);
 
-  const withDemand = clients.filter(window.SLCM_MATCH.hasDemand);
-  const matches = window.SLCM_MATCH.computeMatches(clients, listings, sent);
+  /* Le moteur ne connaît que des demandes ; l'écran doit nommer des gens.
+     La jointure se fait ici, une fois, plutôt qu'à chaque affichage. */
+  const parClient = new Map(clients.map(c => [String(c.id), c]));
+  const vivantes = demands.filter(window.SLCM_MATCH.isLive);
+  const matches = window.SLCM_MATCH.computeMatches(demands, listings, sent);
 
-  /* Cas fréquent au démarrage : des clients existent mais aucun ne porte
-     de critère. Le dire explicitement évite de croire à un bug. */
-  if (!withDemand.length) {
+  if (!vivantes.length) {
     mainContent.innerHTML = `
       <h2>Rapprochements</h2>
       <div class="empty-state">
-        <p><strong>Aucune demande enregistrée.</strong></p>
+        <p><strong>Aucune recherche enregistrée.</strong></p>
         <p>Le rapprochement compare ce que cherchent vos clients aux
         ${listings.length} annonces publiées sur selogercm.com. Pour qu'il
-        fonctionne, ouvrez une fiche client et renseignez au moins un critère :
-        budget, quartier, type de bien ou nombre de chambres.</p>
+        fonctionne, ouvrez une fiche client, puis « Recherches », et renseignez
+        au moins une transaction et un critère. Un même client peut porter
+        plusieurs recherches.</p>
         <button onclick="showClients()" class="btn btn-primary">Ouvrir les clients</button>
       </div>`;
     return;
   }
 
-  window._matchCache = { listings, matches };
+  window._matchCache = { listings, matches, parClient };
+
+  const nbClients = new Set(vivantes.map(d => String(d.client_id))).size;
 
   mainContent.innerHTML = `
     <h2>Rapprochements</h2>
-    <p class="item-meta">${withDemand.length} client(s) avec une demande · ${listings.length} annonce(s) en ligne · ${matches.length} client(s) avec au moins une correspondance</p>
-    ${matches.length ? matches.map((m, mi) => `
+    <p class="item-meta">${vivantes.length} recherche(s) active(s) chez ${nbClients} client(s) · ${listings.length} annonce(s) en ligne · ${matches.length} recherche(s) avec au moins une correspondance</p>
+    ${matches.length ? matches.map((m, mi) => {
+      const client = parClient.get(String(m.demand.client_id));
+      return `
       <div class="match-card">
         <div class="match-head">
-          <strong>${escHtml(m.client.name || 'Sans nom')}</strong>
-          <span class="item-meta">${escHtml(demandLabel(m.client))}</span>
+          <strong>${escHtml((client && client.name) || 'Client inconnu')}</strong>
+          <span class="item-meta">${escHtml(demandLabel(m.demand))}</span>
           <span class="src-badge src-site">${m.total} bien(s)</span>
         </div>
         <div class="list">
@@ -1352,7 +1529,7 @@ async function showMatching() {
             <div class="list-item">
               <div><strong>${escHtml(h.listing.title || 'Sans titre')}</strong>
                 <span class="src-badge src-site">${h.score}%</span></div>
-              <div class="item-meta">${escHtml([h.listing.district, h.listing.city].filter(Boolean).join(', '))} — ${Number(h.listing.price) > 0 ? Number(h.listing.price).toLocaleString('fr-FR') + ' FCFA' : 'prix sur demande'}</div>
+              <div class="item-meta">${escHtml([h.listing.district, h.listing.city].filter(Boolean).join(', '))} — ${Number(h.listing.price) > 0 ? formatMoney(h.listing.price) + ' FCFA' : 'prix sur demande'}</div>
               <div class="item-meta">${escHtml(h.reasons.join(' · '))}</div>
               <div>
                 ${h.listing.slug ? `<a href="https://selogercm.com/annonce/${encodeURIComponent(h.listing.slug)}" target="_blank" rel="noopener" class="ghost-btn">Voir</a>` : ''}
@@ -1360,39 +1537,29 @@ async function showMatching() {
               </div>
             </div>`).join('')}
         </div>
-      </div>`).join('')
+      </div>`; }).join('')
       : `<div class="empty-state"><p><strong>Aucune correspondance actuellement.</strong></p>
          <p>Les critères de vos clients ne trouvent pas d'écho dans le stock en ligne,
          ou les biens correspondants leur ont déjà été envoyés.</p></div>`}
   `;
 }
 
-/* Libellé lisible de la demande, affiché sous le nom du client */
-function demandLabel(c) {
-  const bits = [];
-  const tx = window.SLCM_MATCH.wantedTransaction(c);
-  if (tx) bits.push(tx === 'rent' ? 'location' : 'achat');
-  if (c.wanted_types && c.wanted_types.length) bits.push(c.wanted_types.join('/'));
-  if (c.wanted_districts && c.wanted_districts.length) bits.push(c.wanted_districts.join(', '));
-  if (c.min_bedrooms) bits.push(c.min_bedrooms + '+ ch.');
-  if (c.budget_min && c.budget) bits.push(formatMoney(c.budget_min) + ' – ' + formatMoney(c.budget) + ' FCFA');
-  else if (c.budget) bits.push('≤ ' + formatMoney(c.budget) + ' FCFA');
-  else if (c.budget_min) bits.push('≥ ' + formatMoney(c.budget_min) + ' FCFA');
-  if (c.wants_furnished) bits.push('meublé');
-  return bits.join(' · ') || 'critères partiels';
-}
-
-/* Envoi d'un match : WhatsApp s'ouvre, la trace est enregistrée,
-   et le bien disparaît des propositions suivantes pour ce client. */
+/* Envoi d'un match : WhatsApp s'ouvre, la trace est enregistrée, et le bien
+   disparaît des propositions suivantes — pour TOUTES les recherches de ce
+   client, puisque l'historique est indexé sur la personne. */
 async function sendMatch(mi, hi) {
-  const m = window._matchCache && window._matchCache.matches[mi];
+  const cache = window._matchCache;
+  const m = cache && cache.matches[mi];
   if (!m) return;
   const h = m.hits[hi];
   if (!h) return;
-  if (!m.client.phone) { UI.toast('Ce client n\'a pas de numéro.', 'error'); return; }
-  sendWhatsApp(m.client.phone, window.SLCM_MATCH.shareMessage(h.listing, m.client));
-  await window.SLCM_MATCH.markShared(m.client.id, h.listing);
-  UI.toast('Envoyé à ' + (m.client.name || 'ce client') + '.', 'success');
+  const client = cache.parClient.get(String(m.demand.client_id));
+  if (!client) { UI.toast('Client introuvable.', 'error'); return; }
+  if (!client.phone) { UI.toast('Ce client n\'a pas de numéro.', 'error'); return; }
+
+  sendWhatsApp(client.phone, window.SLCM_MATCH.shareMessage(h.listing, client));
+  await window.SLCM_MATCH.markShared(client.id, h.listing);
+  UI.toast('Envoyé à ' + (client.name || 'ce client') + '.', 'success');
   showMatching();
 }
 
@@ -1864,7 +2031,7 @@ function viewClientDetails(clientId) {
    table à chaque affichage, y compris les champs texte longs jamais utilisés
    dans les listes. Sur une connexion mobile, c'est du volume inutile. */
 const TABLE_COLS = {
-  clients:    'id,name,phone,email,type,status,source,source_detail,notes,created_at,budget,budget_min,rent_sale,wanted_types,wanted_districts,min_bedrooms,wants_furnished,matching_active',
+  clients:    'id,name,phone,email,type,status,source,source_detail,notes,created_at',
   properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at',
   activities: 'id,type,client_id,property_id,notes,date,created_at',
   tasks:      'id,title,description,due_date,status,created_at',
@@ -1874,7 +2041,8 @@ const TABLE_COLS = {
      tableau vide, et par ricochet : écran Paiements toujours vide, chiffre
      d'affaires à 0, alerte retards muette, relances jamais proposées.
      Le suivi acompte / solde reste à construire, base comprise. */
-  payments:   'id,client_id,property_id,amount,status,payment_date,notes,created_at'
+  payments:   'id,client_id,property_id,amount,status,payment_date,notes,created_at',
+  demands:    'id,client_id,label,rent_sale,wanted_types,wanted_districts,budget,budget_min,min_bedrooms,wants_furnished,active,notes,created_at'
 };
 
 async function getAll(table) {

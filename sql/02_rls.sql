@@ -14,7 +14,7 @@
 
 
 -- ────────────────────────────────────────────────────────────────────
---  1 · RLS actif sur les sept tables
+--  1 · RLS actif sur les huit tables
 --
 --  Une table sans RLS et lisible par la clé anon serait ouverte à tout
 --  visiteur qui ouvre le code source du CRM. Aucune ne l'est.
@@ -26,6 +26,7 @@ alter table public.activities      enable row level security;
 alter table public.tasks           enable row level security;
 alter table public.payments        enable row level security;
 alter table public.invoices        enable row level security;
+alter table public.demands         enable row level security;
 alter table public.shared_listings enable row level security;
 
 
@@ -109,6 +110,13 @@ create policy invoices_auth_select on public.invoices as permissive for select t
 create policy invoices_auth_insert on public.invoices as permissive for insert to authenticated with check (true);
 create policy invoices_auth_update on public.invoices as permissive for update to authenticated using (true) with check (true);
 create policy invoices_auth_delete on public.invoices as permissive for delete to authenticated using (true);
+
+-- ── demands ──
+create policy demands_auth_select on public.demands as permissive for select to authenticated using (true);
+create policy demands_auth_insert on public.demands as permissive for insert to authenticated with check (true);
+create policy demands_auth_update on public.demands as permissive for update to authenticated using (true) with check (true);
+create policy demands_auth_delete on public.demands as permissive for delete to authenticated using (true);
+create policy demands_owner_all   on public.demands as permissive for all    to authenticated using ((owner_id = auth.uid())) with check ((owner_id = auth.uid()));
 
 -- ── shared_listings ──
 -- Seule table réellement cloisonnée par agent : une seule politique,

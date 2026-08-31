@@ -35,6 +35,7 @@ function run() {
 
   const render = new Function([
     grab(/const ICON_EDIT = '[^']*';/, 'ICON_EDIT'),
+    grab(/const ICON_SEARCH = '[^']*';/, 'ICON_SEARCH'),
     grab(/const ICON_ACTIVITY = '[^']*';/, 'ICON_ACTIVITY'),
     grab(/const ICON_PAYMENT = '[^']*';/, 'ICON_PAYMENT'),
     grab(/const ICON_WHATSAPP = '[^']*';/, 'ICON_WHATSAPP'),
@@ -48,6 +49,8 @@ function run() {
     grab(/function clientRow[\s\S]*?\n}/, 'clientRow')
   ].join('\n') + '\nreturn clientRow;')();
 
+  /* clientRow lit le compteur de recherches posé par showClients. */
+  global.window = { _demandCount: {} };
   const html = render(HOSTILE);
 
   const opened = [...html.matchAll(/<\/?([a-zA-Z][\w-]*)/g)].map(m => m[1].toLowerCase());

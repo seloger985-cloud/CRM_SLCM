@@ -18,8 +18,12 @@
 --  1 · TABLES
 -- ────────────────────────────────────────────────────────────────────
 
--- Fiches clients. Les colonnes budget/wanted_*/min_bedrooms/wants_furnished
--- alimentent le rapprochement avec les annonces du site (assets/js/match.js).
+-- Fiches clients.
+-- ATTENTION : budget, budget_min, rent_sale, wanted_types, wanted_districts,
+-- min_bedrooms, wants_furnished et matching_active ne sont PLUS LUES depuis
+-- le 31/08/2026. Les critères de recherche vivent dans `demands`, parce qu'un
+-- client peut en porter plusieurs. Ces colonnes sont conservées le temps de
+-- valider la bascule ; leur suppression est en partie 3 de 03_demands.sql.
 -- address, district et niu sont renseignées par la page facture, pas par le
 -- formulaire client du CRM.
 create table public.clients (
@@ -90,9 +94,8 @@ create table public.tasks (
   owner_id uuid default auth.uid()
 );
 
--- ATTENTION : voir « Écarts entre le code et le schéma » plus bas.
--- Cette table n'a PAS de colonnes accompte / reste, contrairement à ce
--- que suppose TABLE_COLS dans assets/js/app.js.
+-- Cette table n'a pas de colonnes accompte / reste : le code les a réclamées
+-- un temps, ce qui rejetait toute lecture. Aligné le 31/08/2026.
 create table public.payments (
   id integer not null default nextval('payments_id_seq'::regclass),
   client_id integer,
@@ -151,6 +154,28 @@ create table public.shared_listings (
 );
 
 
+-- Recherches d'un client. Une ligne par recherche : un même client peut en
+-- porter plusieurs — un studio pour lui, un deux-chambres pour sa mère.
+-- Créée le 31/08/2026 par sql/03_demands.sql, qui a repris les critères
+-- jusque-là logés dans la fiche client.
+create table public.demands (
+  id               bigint not null default nextval('demands_id_seq'::regclass),
+  client_id        integer not null,
+  owner_id         uuid default auth.uid(),
+  label            text,
+  rent_sale        text,
+  wanted_types     text[],
+  wanted_districts text[],
+  budget           bigint,
+  budget_min       bigint,
+  min_bedrooms     integer,
+  wants_furnished  boolean,
+  active           boolean not null default true,
+  notes            text,
+  created_at       timestamp with time zone not null default now()
+);
+
+
 -- ────────────────────────────────────────────────────────────────────
 --  2 · CONTRAINTES
 --
@@ -189,6 +214,10 @@ alter table public.invoices add constraint invoices_invoice_number_key UNIQUE (i
 alter table public.invoices add constraint invoices_status_check CHECK ((status = ANY (ARRAY['emise'::text, 'payee'::text, 'annulee'::text])));
 alter table public.invoices add constraint invoices_invoice_number_source_check CHECK ((invoice_number_source = ANY (ARRAY['auto'::text, 'manual'::text])));
 
+alter table public.demands add constraint demands_pkey PRIMARY KEY (id);
+alter table public.demands add constraint demands_client_id_fkey FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE;
+alter table public.demands add constraint demands_rent_sale_check CHECK ((rent_sale IS NULL) OR (rent_sale = ANY (ARRAY['rent'::text, 'sale'::text])));
+
 alter table public.shared_listings add constraint shared_listings_pkey PRIMARY KEY (id);
 alter table public.shared_listings add constraint shared_listings_client_id_fkey FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE CASCADE;
 
@@ -226,6 +255,11 @@ create index invoices_status_idx        on public.invoices using btree (status);
 -- Suppression possible : drop index public.invoices_number_idx;
 create index invoices_number_idx        on public.invoices using btree (invoice_number);
 
+create index idx_demands_client on public.demands using btree (client_id);
+create index idx_demands_owner  on public.demands using btree (owner_id);
+-- Le rapprochement ne balaie que les recherches vivantes.
+create index idx_demands_active on public.demands using btree (active) where (active = true);
+
 create index idx_shared_client on public.shared_listings using btree (client_id);
 -- Condition technique du onConflict de markShared() dans match.js :
 -- PostgreSQL a besoin d'un index unique sur exactement ces trois colonnes.
@@ -235,18 +269,17 @@ create unique index uniq_shared on public.shared_listings using btree (owner_id,
 -- ════════════════════════════════════════════════════════════════════
 --  ÉCARTS CONNUS ENTRE LE CODE ET LE SCHÉMA — au 31/08/2026
 --
---  1. payments : accompte / reste
---     TABLE_COLS.payments dans assets/js/app.js demande les colonnes
---     `accompte` et `reste`, qui n'existent pas dans cette table.
---     PostgREST rejette donc TOUTE lecture de payments (erreur 42703),
---     getAll('payments') retourne un tableau vide, et par conséquent :
---       · l'écran Paiements est toujours vide ;
---       · le chiffre d'affaires du tableau de bord vaut toujours 0 ;
---       · aucune relance de paiement n'est jamais proposée.
---     Le formulaire propose en plus les statuts 'accompte' et 'reste',
---     que payments_status_check refuse.
---     À trancher : retirer ces deux notions du code, ou les ajouter ici
---     (colonnes + élargissement du CHECK).
+--  0. AVERTISSEMENT — la section `demands` de ce fichier a été écrite à la
+--     main d'après sql/03_demands.sql, pas relevée par introspection. Elle
+--     est juste sur les noms de colonnes mais peut différer sur des détails
+--     de forme. À remplacer au prochain passage de 00_introspection.sql.
+--
+--  1. payments : accompte / reste — RÉGLÉ le 31/08/2026
+--     TABLE_COLS.payments réclamait des colonnes `accompte` et `reste`
+--     inexistantes ; PostgREST rejetait donc toute lecture de la table.
+--     Le code a été aligné sur cette base. Le suivi acompte / solde reste
+--     à construire un jour — colonnes ET élargissement du CHECK.
+--     tests/check-columns.js empêche la rechute.
 --
 --  2. clients : address, district, niu
 --     Ces colonnes existent et sont renseignées par facture.html, mais

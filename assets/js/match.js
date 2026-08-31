@@ -21,19 +21,22 @@
 (function () {
   'use strict';
 
-  /* ─────────────── Correspondance d'un bien à une demande ─────────────── */
+  /* ─────────────── Correspondance d'un bien à une demande ───────────────
 
-  /* Transaction : explicite si renseignée, sinon déduite du type de client. */
-  function wantedTransaction(client) {
-    if (client.rent_sale) return client.rent_sale;
-    if (client.type === 'buyer') return 'sale';
-    if (client.type === 'renter') return 'rent';
-    return null; // vendeur ou non renseigné : pas de matching
+     Depuis le 31/08/2026, l'unité évaluée est une DEMANDE, plus un client.
+     Un client peut en porter plusieurs — un studio pour lui, un deux-chambres
+     pour sa mère — et c'est la recherche qui a un budget, pas la personne.
+     Voir sql/03_demands.sql. */
+
+  /* La transaction n'est plus déduite du type de client : elle est portée par
+     la demande, figée au moment de la migration. Une règle implicite en moins. */
+  function wantedTransaction(demand) {
+    return demand.rent_sale || null;
   }
 
   function norm(v) {
     return String(v == null ? '' : v).trim().toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      .normalize('NFD').replace(/[̀-ͯ]/g, '');
   }
 
   /**
@@ -43,17 +46,17 @@
    * Le score sert uniquement au tri : un match à 100 n'est pas « meilleur »
    * qu'un match à 70, il est simplement plus proche de ce qui a été demandé.
    */
-  function evaluate(listing, client) {
+  function evaluate(listing, demand) {
     if (listing.status !== 'active') return null;
 
-    const tx = wantedTransaction(client);
+    const tx = wantedTransaction(demand);
     if (!tx || listing.rent_sale !== tx) return null;
 
     const reasons = [];
     let score = 40; // socle : la transaction correspond
 
     /* Type de bien — bloquant si une liste est renseignée */
-    const types = (client.wanted_types || []).filter(Boolean);
+    const types = (demand.wanted_types || []).filter(Boolean);
     if (types.length) {
       if (types.indexOf(listing.type) === -1) return null;
       score += 20;
@@ -61,7 +64,7 @@
     }
 
     /* Quartier — bloquant si une liste est renseignée */
-    const districts = (client.wanted_districts || []).filter(Boolean);
+    const districts = (demand.wanted_districts || []).filter(Boolean);
     if (districts.length) {
       const d = norm(listing.district);
       if (!districts.some(x => norm(x) === d)) return null;
@@ -72,27 +75,27 @@
     /* Budget — bloquant. Une annonce sans prix reste proposée :
        « prix sur demande » est fréquent et ne doit pas exclure. */
     const price = Number(listing.price) || 0;
-    if (client.budget && price > 0) {
-      if (price > Number(client.budget)) return null;
+    if (demand.budget && price > 0) {
+      if (price > Number(demand.budget)) return null;
       score += 15;
       /* Bonus de proximité : un bien à 90 % du budget correspond mieux
          qu'un bien à 30 %, qui sera souvent en deçà des attentes. */
-      const ratio = price / Number(client.budget);
+      const ratio = price / Number(demand.budget);
       if (ratio >= 0.6) score += 5;
       reasons.push('dans le budget');
     }
-    if (client.budget_min && price > 0 && price < Number(client.budget_min)) return null;
+    if (demand.budget_min && price > 0 && price < Number(demand.budget_min)) return null;
 
     /* Chambres — bloquant */
-    if (client.min_bedrooms) {
+    if (demand.min_bedrooms) {
       const b = Number(listing.bedrooms) || 0;
-      if (b < Number(client.min_bedrooms)) return null;
+      if (b < Number(demand.min_bedrooms)) return null;
       score += 10;
       reasons.push(b + ' ch.');
     }
 
     /* Meublé — bloquant si exigé */
-    if (client.wants_furnished === true) {
+    if (demand.wants_furnished === true) {
       if (listing.furnished !== true) return null;
       score += 10;
       reasons.push('meublé');
@@ -105,64 +108,68 @@
     return { score: Math.min(score, 100), reasons };
   }
 
-  /** Vrai si la fiche client porte au moins un critère exploitable. */
-  function hasDemand(client) {
-    return client.matching_active !== false && !!(
-      client.budget || client.budget_min || client.min_bedrooms ||
-      client.wants_furnished === true ||
-      (client.wanted_types && client.wanted_types.length) ||
-      (client.wanted_districts && client.wanted_districts.length)
+  /** Vrai si la demande est vivante et porte au moins un critère exploitable. */
+  function isLive(demand) {
+    return demand.active !== false && !!(
+      demand.budget || demand.budget_min || demand.min_bedrooms ||
+      demand.wants_furnished === true ||
+      (demand.wanted_types && demand.wanted_types.length) ||
+      (demand.wanted_districts && demand.wanted_districts.length)
     );
   }
 
+  /* L'historique d'envoi reste indexé sur le CLIENT, pas sur la demande :
+     « ne pas envoyer deux fois la même annonce à la même personne » reste
+     vrai quel que soit le nombre de ses recherches. */
   function sent(alreadySent, clientId, listingId) {
     return !!(alreadySent && alreadySent.has(clientId + '|' + listingId));
   }
 
-  /** Les annonces qui répondent à la demande d'UN client, meilleures d'abord. */
-  function matchesForClient(client, listings, alreadySent) {
-    if (!hasDemand(client)) return [];
+  /** Les annonces qui répondent à UNE demande, meilleures d'abord. */
+  function matchesForDemand(demand, listings, alreadySent) {
+    if (!isLive(demand)) return [];
     const hits = [];
     listings.forEach(listing => {
-      if (sent(alreadySent, client.id, listing.id)) return;
-      const r = evaluate(listing, client);
+      if (sent(alreadySent, demand.client_id, listing.id)) return;
+      const r = evaluate(listing, demand);
       if (r) hits.push({ listing, score: r.score, reasons: r.reasons });
     });
     hits.sort((a, b) => b.score - a.score);
     return hits;
   }
 
-  /** L'inverse : les clients dont la demande répond à UNE annonce.
+  /** L'inverse : les demandes auxquelles répond UNE annonce.
       Même fonction d'évaluation, lue dans l'autre sens — c'est ce qui permet
       d'alerter aussi bien à l'arrivée d'un bien qu'à celle d'une demande. */
-  function clientsForListing(listing, clients, alreadySent) {
+  function demandsForListing(listing, demands, alreadySent) {
     const hits = [];
-    clients.filter(hasDemand).forEach(client => {
-      if (sent(alreadySent, client.id, listing.id)) return;
-      const r = evaluate(listing, client);
-      if (r) hits.push({ client, score: r.score, reasons: r.reasons });
+    demands.filter(isLive).forEach(demand => {
+      if (sent(alreadySent, demand.client_id, listing.id)) return;
+      const r = evaluate(listing, demand);
+      if (r) hits.push({ demand, score: r.score, reasons: r.reasons });
     });
     hits.sort((a, b) => b.score - a.score);
     return hits;
   }
 
   /**
-   * Calcule tous les rapprochements.
-   * @param {array} clients
+   * Calcule tous les rapprochements, une entrée par demande.
+   * @param {array} demands   les demandes, chacune portant son client_id
    * @param {array} listings
    * @param {Set}   alreadySent  clés "clientId|listingId" déjà partagées
    */
-  function computeMatches(clients, listings, alreadySent) {
+  function computeMatches(demands, listings, alreadySent) {
     const out = [];
-    clients.filter(hasDemand).forEach(client => {
-      const hits = matchesForClient(client, listings, alreadySent);
+    demands.filter(isLive).forEach(demand => {
+      const hits = matchesForDemand(demand, listings, alreadySent);
       if (!hits.length) return;
-      out.push({ client, hits: hits.slice(0, 8), total: hits.length });
+      out.push({ demand, hits: hits.slice(0, 8), total: hits.length });
     });
-    /* Les clients avec le meilleur match remontent en premier */
+    /* Les demandes avec le meilleur match remontent en premier */
     out.sort((a, b) => (b.hits[0].score - a.hits[0].score) || (b.total - a.total));
     return out;
   }
+
 
   /* ─────────────── Veille sur les nouvelles annonces ───────────────
 
@@ -192,9 +199,9 @@
   /**
    * Les annonces parues depuis le dernier passage QUI correspondent à une
    * demande en cours. Une nouveauté sans preneur n'est pas une alerte.
-   * @returns {array} [{ listing, clients: [{client, score, reasons}] }]
+   * @returns {array} [{ listing, demands: [{demand, score, reasons}] }]
    */
-  function freshMatches(clients, listings, alreadySent) {
+  function freshMatches(demands, listings, alreadySent) {
     const since = lastSeen();
 
     /* Première utilisation : on pose le repère sans rien signaler. Sinon
@@ -205,8 +212,8 @@
     listings
       .filter(l => l.created_at && l.created_at > since)
       .forEach(listing => {
-        const hits = clientsForListing(listing, clients, alreadySent);
-        if (hits.length) out.push({ listing, clients: hits });
+        const hits = demandsForListing(listing, demands, alreadySent);
+        if (hits.length) out.push({ listing, demands: hits });
       });
     return out;
   }
@@ -270,8 +277,8 @@
   }
 
   window.SLCM_MATCH = {
-    evaluate, hasDemand, computeMatches,
-    matchesForClient, clientsForListing,
+    evaluate, isLive, computeMatches,
+    matchesForDemand, demandsForListing,
     freshMatches, markSeen, lastSeen,
     shareMessage, listingUrl, markShared, loadShared,
     wantedTransaction

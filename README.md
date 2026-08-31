@@ -12,7 +12,7 @@ lit les annonces en direct — sans jamais les recopier.
 | Écran | Rôle |
 |---|---|
 | **Tableau de bord** | Ce qui attend, ce qui entre, ce qui est engagé, ce qui est encaissé. |
-| **Clients** | Fiches, statut dans le pipeline, critères de recherche, contact WhatsApp. |
+| **Clients** | Fiches, statut dans le pipeline, contact WhatsApp, et leurs **recherches**. |
 | **Biens** | Les annonces publiées sur le site *et* les saisies internes, fusionnées. |
 | **Activités** | Journal des appels, rendez-vous, e-mails et visites. |
 | **Paiements** | Encaissements rattachés à un client et à un bien. |
@@ -89,8 +89,19 @@ Le schéma, les contraintes, les index et les politiques RLS sont versionnés
 dans [`sql/`](sql/), avec la requête qui permet de les régénérer depuis le
 tableau de bord Supabase. **Ces fichiers font foi** — pas ce README.
 
-Sept tables : `clients`, `properties`, `activities`, `tasks`, `payments`,
-`invoices`, `shared_listings`. Le RLS est actif sur toutes.
+Huit tables : `clients`, `demands`, `properties`, `activities`, `tasks`,
+`payments`, `invoices`, `shared_listings`. Le RLS est actif sur toutes.
+
+**Un client peut porter plusieurs recherches.** Un studio pour lui, un
+deux-chambres pour sa mère : ce sont deux lignes de `demands`, avec chacune
+son budget, ses quartiers et son état. Jusqu'au 31/08/2026 la recherche vivait
+dans la fiche client — une fiche, une recherche — et le seul contournement
+était de créer deux fiches au même nom. Le rapprochement évalue désormais une
+**recherche** face à une annonce, ce qui est plus juste : c'est la recherche
+qui a un budget, pas la personne.
+
+Une recherche ne se supprime pas, elle se met en pause : elle sort alors du
+rapprochement sans que son historique disparaisse.
 
 ## Ce que le CRM ne fait pas
 

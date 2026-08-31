@@ -22,6 +22,7 @@ Tant que ces politiques ne vivent que dans le tableau de bord Supabase :
 | `00_introspection.sql` | Ne modifie rien. Lit la base et régénère les deux fichiers ci-dessous. |
 | `01_schema.sql` | Tables, colonnes, contraintes, index. |
 | `02_rls.sql` | Activation du RLS et politiques de sécurité. C'est le fichier que `config.js` cite en référence. |
+| `03_demands.sql` | **Migration** — sort les critères de recherche de la fiche client vers une table `demands`. Contrairement aux autres, ce fichier modifie la base. |
 
 ## Mettre à jour après un changement de schéma
 
@@ -41,6 +42,14 @@ Tant que ces politiques ne vivent que dans le tableau de bord Supabase :
 
 Ce dossier ne décrit **que** la base du CRM. Les annonces du site ne sont jamais
 copiées dans le CRM : elles sont lues en direct (voir l'en-tête de `site.js`).
+
+## Migrations
+
+Les fichiers numérotés à partir de `03_` **modifient** la base, contrairement
+à `00`–`02` qui la décrivent. Après en avoir joué un : relancer
+`00_introspection.sql`, remplacer `01_schema.sql` et `02_rls.sql`, puis
+`node tests/run.js` — sans quoi `check-columns` compare le code à un schéma
+périmé et dit le contraire de la réalité.
 
 ## Écarts entre le code et le schéma — au 31/08/2026
 
