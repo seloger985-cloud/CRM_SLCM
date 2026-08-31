@@ -633,6 +633,19 @@ function initCharts(statusData, statusLabels, sourceStats) {
      escHtml() pour du texte, escAttr() dans un attribut,
      Number() pour un identifiant passé à un onclick. */
 
+/* Ramène l'agent là d'où il venait après un enregistrement contextuel.
+   Sans ça, noter une visite depuis la fiche d'un client le catapultait dans
+   l'écran Activités, au milieu d'une liste qu'il n'était pas en train de lire. */
+function returnTo(back, fallback) {
+  if (back === 'clients') return showClients();
+  if (back === 'properties') return showProperties();
+  return fallback();
+}
+
+const ICON_ACTIVITY = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19a2 2 0 002 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>';
+
+const ICON_PAYMENT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/></svg>';
+
 const ICON_EDIT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>';
 
 const ICON_WHATSAPP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/></svg>';
@@ -652,7 +665,9 @@ function clientRow(c) {
     <div>
       <a href="${escAttr(getWhatsApp(c.phone, c, 'general'))}" target="_blank" rel="noopener" class="whatsapp-btn" title="WhatsApp général">${ICON_WHATSAPP}</a>
       <a href="${escAttr(getWhatsApp(c.phone, c, 'followup'))}" target="_blank" rel="noopener" class="relance whatsapp-btn" title="Relance WhatsApp">${ICON_RELANCE}</a>
-      <button onclick="editClient(${Number(c.id)})" class="edit-btn" title="Modifier">${ICON_EDIT}</button>
+      <button onclick="addActivityFor('client', ${Number(c.id)})" class="edit-btn" title="Noter une activité pour ce client">${ICON_ACTIVITY}</button>
+      <button onclick="addPaymentFor('client', ${Number(c.id)})" class="edit-btn" title="Enregistrer un paiement de ce client">${ICON_PAYMENT}</button>
+      <button onclick="editClient(${Number(c.id)})" class="edit-btn" title="Modifier la fiche">${ICON_EDIT}</button>
     </div>
   </div>`;
 }
@@ -819,6 +834,21 @@ async function saveClient(id) {
     matching_active: document.getElementById('client-matching').checked
   };
 
+  /* Doublon : on demande avant d'écrire, pas après. Une fois la fiche créée,
+     la corriger coûte plus cher que de renoncer — le CRM ne sait pas
+     supprimer (voir le README). L'agent garde le dernier mot : deux
+     homonymes existent, et un couple peut partager un numéro. */
+  const jumeaux = findDuplicates({ id, name: client.name, phone: client.phone },
+                                 await getAll('clients'));
+  if (jumeaux.length) {
+    const liste = jumeaux.slice(0, 3)
+      .map(d => (d.client.name || 'sans nom') + ' (' + d.raison + ')').join(', ');
+    const continuer = await UI.confirm(
+      'Une fiche existe déjà : ' + liste + '.\n\nCréer quand même une seconde fiche ?',
+      { title: 'Doublon possible', confirmLabel: 'Créer quand même', cancelLabel: 'Revenir à la saisie' });
+    if (!continuer) return;
+  }
+
   try {
     /* .select() renvoie la ligne telle qu'elle est en base — avec son id pour
        une création, et les valeurs réellement retenues. C'est cette ligne-là
@@ -973,7 +1003,8 @@ function renderPropsList() {
       ? `<button onclick="shareListing('${escAttr(sid)}')" class="ghost-btn share-btn" title="Partager à un client">Partager</button>`
       : '';
     const action = p.id
-      ? `<button onclick="editProperty(${Number(p.id)})" class="edit-btn" title="Modifier">${ICON_EDIT}</button>`
+      ? `<button onclick="addActivityFor('property', ${Number(p.id)})" class="edit-btn" title="Noter une activité sur ce bien">${ICON_ACTIVITY}</button>`
+        + `<button onclick="editProperty(${Number(p.id)})" class="edit-btn" title="Modifier la fiche">${ICON_EDIT}</button>`
       : `<button onclick="importListing('${escAttr(p._siteId)}')" class="edit-btn" title="Créer une fiche CRM pour ce bien">+ Fiche</button>`;
     return `<div class="list-item">
       <div><strong>${escHtml(p.title || 'Sans titre')}</strong> ${badge}</div>
@@ -1091,6 +1122,67 @@ function dismissFreshAlert() {
   window.SLCM_MATCH.markSeen(window._freshListings || []);
   const el = document.getElementById('fresh-alert');
   if (el) el.remove();
+}
+
+/* ═══════════════ DÉTECTION DE DOUBLONS ═══════════════
+
+   Sans aucune intelligence artificielle, délibérément : rapprocher deux
+   numéros ou deux noms se décide par des règles. C'est gratuit, instantané,
+   ça ne peut pas se tromper de façon imprévisible, et un modèle n'aurait
+   d'intérêt que là où une règle échoue vraiment — ce n'est pas le cas ici.
+
+   Rien n'est bloquant : on signale, l'agent tranche. Deux personnes peuvent
+   légitimement partager un numéro — un couple, une secrétaire — et deux
+   homonymes existent. */
+
+/* Nom comparable : sans accents, sans civilité, sans ponctuation.
+   « M. Dicka », « Dicka » et « M DICKA » se rejoignent. */
+/* Civilités retirées avant comparaison : « M. Dicka », « Dicka » et
+   « M DICKA » désignent la même personne. */
+const CIVILITES = /\b(m|mr|mme|mlle|dr|pr|monsieur|madame|mademoiselle)\b\.?/g;
+
+function normalizeName(name) {
+  return String(name || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')  // accents
+    .toLowerCase()
+    .replace(CIVILITES, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')                       // ponctuation, &, tirets
+    .trim();
+}
+
+/**
+ * Les fiches existantes qui ressemblent à celle qu'on s'apprête à créer.
+ * @param {object} candidate  { id?, name, phone }
+ * @param {array}  clients    le portefeuille
+ */
+function findDuplicates(candidate, clients) {
+  const name = normalizeName(candidate.name);
+  const phone = normalizePhone(candidate.phone);
+  if (!name && !phone) return [];
+
+  return clients.filter(c => {
+    if (candidate.id && c.id === candidate.id) return false;   // pas soi-même
+    /* Un numéro identique est le signal le plus fort : deux chaînes saisies
+       « 650 840 714 » et « +237650840714 » désignent le même abonné. */
+    if (phone && normalizePhone(c.phone) === phone) return true;
+    return name && normalizeName(c.name) === name;
+  }).map(c => ({
+    client: c,
+    raison: (phone && normalizePhone(c.phone) === phone) ? 'même numéro' : 'même nom'
+  }));
+}
+
+/* Raccourcis de saisie contextuelle. Le formulaire s'ouvre déjà rattaché à
+   la fiche d'où l'on vient, et l'annulation comme l'enregistrement y ramènent. */
+function addActivityFor(kind, id) {
+  const draft = kind === 'client' ? { client_id: id } : { property_id: id };
+  if (kind === 'property') draft.type = 'visit';
+  showActivityForm(null, draft, kind === 'client' ? 'clients' : 'properties');
+}
+
+function addPaymentFor(kind, id) {
+  showPaymentForm(null, kind === 'client' ? { client_id: id } : { property_id: id },
+                  kind === 'client' ? 'clients' : 'properties');
 }
 
 /* ═══════════════ ALERTES DE RAPPROCHEMENT ═══════════════
@@ -1355,17 +1447,34 @@ async function showActivities() {
   `;
 }
 
-function showActivityForm(activity = null) {
+/* ═══════════════ SAISIE CONTEXTUELLE ═══════════════
+
+   Les six formulaires du CRM étaient tous « globaux » : pour noter une visite
+   chez Marthe, il fallait aller dans Activités puis retrouver Marthe dans une
+   liste de vingt noms — alors qu'on venait de sa fiche, et que le CRM savait
+   donc déjà de qui on parlait. C'était la vraie répétition de la saisie, plus
+   que le fait de retaper des mots.
+
+   Les formulaires acceptent désormais un second argument :
+     · `draft`  les valeurs de départ d'un NOUVEL enregistrement
+     · `back`   l'écran où revenir après l'enregistrement, pour ne pas
+                éjecter l'agent de la liste qu'il était en train de parcourir
+
+   Le premier argument garde son rôle : un objet = modification, null = création. */
+
+function showActivityForm(activity = null, draft = null, back = null) {
+  const v = activity || draft || {};
+  const editing = !!activity;
   mainContent.innerHTML = `
-    <h2>${activity ? 'Modifier' : 'Ajouter'} Activité</h2>
+    <h2>${editing ? 'Modifier' : 'Ajouter'} une activité</h2>
     <form id="activity-form">
       <div class="form-group">
         <label>Type:</label>
         <select id="activity-type">
-          <option value="call" ${activity && activity.type === 'call' ? 'selected' : ''}>Appel</option>
-          <option value="meeting" ${activity && activity.type === 'meeting' ? 'selected' : ''}>Rendez-vous</option>
-          <option value="email" ${activity && activity.type === 'email' ? 'selected' : ''}>Email</option>
-          <option value="visit" ${activity && activity.type === 'visit' ? 'selected' : ''}>Visite</option>
+          <option value="call" ${v.type === 'call' ? 'selected' : ''}>Appel</option>
+          <option value="meeting" ${v.type === 'meeting' ? 'selected' : ''}>Rendez-vous</option>
+          <option value="email" ${v.type === 'email' ? 'selected' : ''}>Email</option>
+          <option value="visit" ${v.type === 'visit' ? 'selected' : ''}>Visite</option>
         </select>
       </div>
       <div class="form-group">
@@ -1384,28 +1493,28 @@ function showActivityForm(activity = null) {
       </div>
       <div class="form-group">
         <label>Notes:</label>
-        <textarea id="activity-notes" required>${escHtml((activity && activity.notes) || '')}</textarea>
+        <textarea id="activity-notes" required>${escHtml(v.notes || '')}</textarea>
       </div>
       <div class="form-group">
         <label>Date:</label>
-        <input type="date" id="activity-date" value="${escAttr((activity && activity.date) || new Date().toISOString().split('T')[0])}" required>
+        <input type="date" id="activity-date" value="${escAttr(v.date || new Date().toISOString().split('T')[0])}" required>
       </div>
-      <button type="submit" class="btn btn-primary">${activity ? 'Modifier' : 'Ajouter'}</button>
-      <button type="button" onclick="showActivities()" class="btn btn-outline">Annuler</button>
+      <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Ajouter'}</button>
+      <button type="button" onclick="${back === 'clients' ? 'showClients()' : back === 'properties' ? 'showProperties()' : 'showActivities()'}" class="btn btn-outline">Annuler</button>
     </form>
   `;
 
   // Options + sélection courante, posées ensemble une fois les données là
-  populateSelect('activity-client', 'clients', 'name', activity && activity.client_id);
-  populateSelect('activity-property', 'properties', 'title', activity && activity.property_id);
+  populateSelect('activity-client', 'clients', 'name', v.client_id);
+  populateSelect('activity-property', 'properties', 'title', v.property_id);
 
   document.getElementById('activity-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    saveActivity(activity ? activity.id : null);
+    saveActivity(editing ? activity.id : null, back);
   });
 }
 
-async function saveActivity(id) {
+async function saveActivity(id, back) {
   const activity = {
     type: document.getElementById('activity-type').value,
     client_id: document.getElementById('activity-client').value || null,
@@ -1422,7 +1531,7 @@ async function saveActivity(id) {
       const { error } = await supabaseClient.from('activities').insert([activity]);
       if (error) throw error;
     }
-    showActivities();
+    returnTo(back, showActivities);
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement de l\'activité:', error);
     UI.handleError(error);
@@ -1868,9 +1977,11 @@ async function showPayments() {
   `;
 }
 
-function showPaymentForm(payment = null) {
+function showPaymentForm(payment = null, draft = null, back = null) {
+  const v = payment || draft || {};
+  const editing = !!payment;
   mainContent.innerHTML = `
-    <h2>${payment ? 'Modifier' : 'Ajouter'} Paiement</h2>
+    <h2>${editing ? 'Modifier' : 'Ajouter'} un paiement</h2>
     <form id="payment-form">
       <div class="form-group">
         <label>Client:</label>
@@ -1886,38 +1997,38 @@ function showPaymentForm(payment = null) {
       </div>
       <div class="form-group">
         <label>Montant (FCFA):</label>
-        <input type="number" id="payment-amount" value="${escAttr((payment && payment.amount) || '')}" required>
+        <input type="number" id="payment-amount" value="${escAttr(v.amount || '')}" required>
       </div>
       <div class="form-group">
         <label>Statut:</label>
         <select id="payment-status">
-          <option value="pending" ${payment && payment.status === 'pending' ? 'selected' : ''}>En attente</option>
-          <option value="paid" ${payment && payment.status === 'paid' ? 'selected' : ''}>Payé</option>
+          <option value="pending" ${v.status === 'pending' ? 'selected' : ''}>En attente</option>
+          <option value="paid" ${v.status === 'paid' ? 'selected' : ''}>Payé</option>
         </select>
       </div>
       <div class="form-group">
         <label>Date de paiement:</label>
-        <input type="date" id="payment-date" value="${escAttr((payment && payment.payment_date) || new Date().toISOString().split('T')[0])}" required>
+        <input type="date" id="payment-date" value="${escAttr(v.payment_date || new Date().toISOString().split('T')[0])}" required>
       </div>
       <div class="form-group">
         <label>Notes:</label>
-        <textarea id="payment-notes">${escHtml((payment && payment.notes) || '')}</textarea>
+        <textarea id="payment-notes">${escHtml(v.notes || '')}</textarea>
       </div>
-      <button type="submit" class="btn btn-primary">${payment ? 'Modifier' : 'Ajouter'}</button>
-      <button type="button" onclick="showPayments()" class="btn btn-outline">Annuler</button>
+      <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Ajouter'}</button>
+      <button type="button" onclick="${back === 'clients' ? 'showClients()' : back === 'properties' ? 'showProperties()' : 'showPayments()'}" class="btn btn-outline">Annuler</button>
     </form>
   `;
 
-  populateSelect('payment-client', 'clients', 'name', payment && payment.client_id);
-  populateSelect('payment-property', 'properties', 'title', payment && payment.property_id);
+  populateSelect('payment-client', 'clients', 'name', v.client_id);
+  populateSelect('payment-property', 'properties', 'title', v.property_id);
 
   document.getElementById('payment-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    savePayment(payment ? payment.id : null);
+    savePayment(editing ? payment.id : null, back);
   });
 }
 
-async function savePayment(id) {
+async function savePayment(id, back) {
   const payment = {
     client_id: document.getElementById('payment-client').value || null,
     property_id: document.getElementById('payment-property').value || null,
@@ -1935,7 +2046,7 @@ async function savePayment(id) {
       const { error } = await supabaseClient.from('payments').insert([payment]);
       if (error) throw error;
     }
-    showPayments();
+    returnTo(back, showPayments);
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement du paiement:', error);
     UI.handleError(error);

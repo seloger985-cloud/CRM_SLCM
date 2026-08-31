@@ -48,12 +48,23 @@ assets/js/
   ui.js             toasts, modales, thème, autocomplétion
   app.js            les écrans
 sql/                le schéma et les politiques de sécurité, versionnés
+tests/              les contrôles — `node tests/run.js`
 ```
 
 L'ordre de chargement des scripts est impératif : `config` → `auth` → `site`
 → `match` → `ui` → `app`. `app.js` attend l'événement `slcm:auth-ready`
 avant d'interroger la base ; sans session, le RLS bloque tout et l'écran
 resterait vide sans explication.
+
+## Tests
+
+```bash
+node tests/run.js
+```
+
+Node seul, rien à installer. À lancer avant chaque commit. Les cinq contrôles
+ne sont pas génériques : chacun existe parce qu'un bug précis est passé au
+travers d'une relecture. Voir [`tests/`](tests/).
 
 ## Deux projets Supabase
 
@@ -111,7 +122,38 @@ Sept tables : `clients`, `properties`, `activities`, `tasks`, `payments`,
 
 ## Sur mobile
 
-La mise en page bascule à 768 px : la barre latérale devient une rangée
-horizontale et les grilles passent sur une colonne. Utilisable, mais la
-navigation à dix entrées occupe plusieurs rangées — c'est le prochain
-chantier d'ergonomie.
+La mise en page bascule à 768 px : les grilles passent sur une colonne et la
+barre latérale devient une rangée horizontale qui **défile**. Les dix entrées
+tiennent sur une seule ligne au lieu de s'enrouler sur quatre, et l'entrée
+active est ramenée dans le champ de vision.
+
+Rien n'est replié derrière un menu, délibérément : masquer trois écrans
+supposerait de savoir lesquels sont secondaires, et cela dépend de la façon
+dont l'agence travaille, pas du CSS.
+
+## Doublons
+
+À l'enregistrement d'un client, le CRM signale les fiches qui lui ressemblent —
+même numéro, ou même nom une fois les civilités et les accents retirés. **Sans
+intelligence artificielle, délibérément** : rapprocher deux numéros se décide
+par des règles, c'est gratuit, instantané, et ça ne se trompe pas de façon
+imprévisible.
+
+Rien n'est bloquant : on signale, l'agent tranche. Deux homonymes existent, et
+un couple peut partager un téléphone. Mais la question est posée **avant**
+l'écriture — une fois la fiche créée, la corriger coûte plus cher que d'y
+renoncer, puisque le CRM ne sait pas supprimer.
+
+## Saisie contextuelle
+
+Les formulaires d'activité et de paiement acceptent un pré-remplissage :
+
+```javascript
+showActivityForm(activity, draft, back)
+```
+
+`activity` distingue modification et création, `draft` porte les valeurs de
+départ, `back` indique l'écran de retour. C'est ce qui permet aux raccourcis
+des lignes client et bien d'ouvrir un formulaire déjà rattaché à la bonne
+fiche — et d'y ramener après l'enregistrement, plutôt que d'éjecter l'agent
+dans une liste qu'il n'était pas en train de lire.
