@@ -548,15 +548,15 @@ function showClientForm(client = null) {
     <form id="client-form">
       <div class="form-group">
         <label>Nom:</label>
-        <input type="text" id="client-name" value="${client ? client.name : ''}" required>
+        <input type="text" id="client-name" value="${(client && client.name) || ''}" required>
       </div>
       <div class="form-group">
         <label>Téléphone:</label>
-        <input type="tel" id="client-phone" value="${client ? client.phone : ''}">
+        <input type="tel" id="client-phone" value="${(client && client.phone) || ''}">
       </div>
       <div class="form-group">
         <label>Email:</label>
-        <input type="email" id="client-email" value="${client ? client.email : ''}">
+        <input type="email" id="client-email" value="${(client && client.email) || ''}">
       </div>
       <div class="form-group">
         <label>Source de contact:</label>
@@ -630,7 +630,7 @@ function showClientForm(client = null) {
 
       <div class="form-group">
         <label>Notes:</label>
-        <textarea id="client-notes">${client ? client.notes : ''}</textarea>
+        <textarea id="client-notes">${(client && client.notes) || ''}</textarea>
       </div>
       <button type="submit">${client ? 'Modifier' : 'Ajouter'}</button>
       <button type="button" onclick="showClients()">Annuler</button>
@@ -1043,11 +1043,11 @@ function showPropertyForm(property = null) {
     <form id="property-form">
       <div class="form-group">
         <label>Titre:</label>
-        <input type="text" id="property-title" value="${property ? property.title : ''}" required>
+        <input type="text" id="property-title" value="${(property && property.title) || ''}" required>
       </div>
       <div class="form-group">
         <label>Adresse:</label>
-        <input type="text" id="property-address" value="${property ? property.address : ''}" required>
+        <input type="text" id="property-address" value="${(property && property.address) || ''}" required>
       </div>
       <div class="form-group">
         <label>Type:</label>
@@ -1058,7 +1058,7 @@ function showPropertyForm(property = null) {
       </div>
       <div class="form-group">
         <label>Prix (FCFA):</label>
-        <input type="number" id="property-price" value="${property ? property.price : ''}">
+        <input type="number" id="property-price" value="${(property && property.price) || ''}">
       </div>
       <div class="form-group">
         <label>Statut:</label>
@@ -1070,7 +1070,7 @@ function showPropertyForm(property = null) {
       </div>
       <div class="form-group">
         <label>Description:</label>
-        <textarea id="property-description">${property ? property.description : ''}</textarea>
+        <textarea id="property-description">${(property && property.description) || ''}</textarea>
       </div>
       <button type="submit">${property ? 'Modifier' : 'Ajouter'}</button>
       <button type="button" onclick="showProperties()">Annuler</button>
@@ -1088,7 +1088,9 @@ async function saveProperty(id) {
     title: document.getElementById('property-title').value,
     address: document.getElementById('property-address').value,
     type: document.getElementById('property-type').value,
-    price: document.getElementById('property-price').value,
+    /* Même règle que due_date : le prix est facultatif, et '' est refusé
+       par une colonne numérique. numOrNull fait déjà exactement ça. */
+    price: numOrNull('property-price'),
     status: document.getElementById('property-status').value,
     description: document.getElementById('property-description').value
   };
@@ -1149,27 +1151,20 @@ function showActivityForm(activity = null) {
       </div>
       <div class="form-group">
         <label>Notes:</label>
-        <textarea id="activity-notes" required>${activity ? activity.notes : ''}</textarea>
+        <textarea id="activity-notes" required>${(activity && activity.notes) || ''}</textarea>
       </div>
       <div class="form-group">
         <label>Date:</label>
-        <input type="date" id="activity-date" value="${activity ? activity.date : new Date().toISOString().split('T')[0]}" required>
+        <input type="date" id="activity-date" value="${(activity && activity.date) || new Date().toISOString().split('T')[0]}" required>
       </div>
       <button type="submit">${activity ? 'Modifier' : 'Ajouter'}</button>
       <button type="button" onclick="showActivities()">Annuler</button>
     </form>
   `;
 
-  // Populate client and property options
-  populateSelect('activity-client', 'clients', 'name');
-  populateSelect('activity-property', 'properties', 'title');
-
-  if (activity && activity.client_id) {
-    document.getElementById('activity-client').value = activity.client_id;
-  }
-  if (activity && activity.property_id) {
-    document.getElementById('activity-property').value = activity.property_id;
-  }
+  // Options + sélection courante, posées ensemble une fois les données là
+  populateSelect('activity-client', 'clients', 'name', activity && activity.client_id);
+  populateSelect('activity-property', 'properties', 'title', activity && activity.property_id);
 
   document.getElementById('activity-form').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -1228,15 +1223,15 @@ function showTaskForm(task = null) {
     <form id="task-form">
       <div class="form-group">
         <label>Titre:</label>
-        <input type="text" id="task-title" value="${task ? task.title : ''}" required>
+        <input type="text" id="task-title" value="${(task && task.title) || ''}" required>
       </div>
       <div class="form-group">
         <label>Description:</label>
-        <textarea id="task-description">${task ? task.description : ''}</textarea>
+        <textarea id="task-description">${(task && task.description) || ''}</textarea>
       </div>
       <div class="form-group">
         <label>Date d'échéance:</label>
-        <input type="date" id="task-due-date" value="${task ? task.due_date : ''}">
+        <input type="date" id="task-due-date" value="${(task && task.due_date) || ''}">
       </div>
       <div class="form-group">
         <label>Statut:</label>
@@ -1260,7 +1255,9 @@ async function saveTask(id) {
   const task = {
     title: document.getElementById('task-title').value,
     description: document.getElementById('task-description').value,
-    due_date: document.getElementById('task-due-date').value,
+    /* La date est facultative. Envoyer '' à une colonne `date` fait échouer
+       tout l'enregistrement côté PostgreSQL ; c'est null qu'il attend. */
+    due_date: document.getElementById('task-due-date').value || null,
     status: document.getElementById('task-status').value
   };
 
@@ -1535,15 +1532,32 @@ function getWhatsApp(phone, client, messageType = 'general') {
   return `https://wa.me/${target}?text=${encodeURIComponent(msg)}`;
 }
 
-async function populateSelect(selectId, table, field) {
+/* Remplit une liste déroulante depuis une table, et pose la valeur courante.
+   Le 4e paramètre est indispensable : un <select> ignore SILENCIEUSEMENT
+   toute valeur qu'il ne connaît pas encore. Comme le chargement des options
+   passe par le réseau, poser la valeur depuis l'appelant, juste après
+   l'appel, arrivait toujours trop tôt — la liste retombait sur « Aucun »,
+   et l'enregistrement suivant écrasait le lien en base par null. */
+async function populateSelect(selectId, table, field, selectedValue) {
   const select = document.getElementById(selectId);
+  if (!select) return;
+
   const data = await getAll(table);
+
+  /* L'agent a pu quitter le formulaire pendant le chargement : ne rien
+     écrire dans un élément qui n'est plus dans la page. */
+  if (!select.isConnected) return;
+
   data.forEach(item => {
     const option = document.createElement('option');
     option.value = item.id;
     option.textContent = item[field];
     select.appendChild(option);
   });
+
+  if (selectedValue !== null && selectedValue !== undefined && selectedValue !== '') {
+    select.value = String(selectedValue);
+  }
 }
 
 async function getById(table, id) {
@@ -1619,7 +1633,7 @@ function showPaymentForm(payment = null) {
       </div>
       <div class="form-group">
         <label>Montant (FCFA):</label>
-        <input type="number" id="payment-amount" value="${payment ? payment.amount : ''}" required>
+        <input type="number" id="payment-amount" value="${(payment && payment.amount) || ''}" required>
       </div>
       <div class="form-group">
         <label>Statut:</label>
@@ -1632,19 +1646,19 @@ function showPaymentForm(payment = null) {
       </div>
       <div class="form-group">
         <label>Date de paiement:</label>
-        <input type="date" id="payment-date" value="${payment ? payment.payment_date : new Date().toISOString().split('T')[0]}" required>
+        <input type="date" id="payment-date" value="${(payment && payment.payment_date) || new Date().toISOString().split('T')[0]}" required>
       </div>
       <div class="form-group">
         <label>Notes:</label>
-        <textarea id="payment-notes">${payment ? payment.notes : ''}</textarea>
+        <textarea id="payment-notes">${(payment && payment.notes) || ''}</textarea>
       </div>
       <button type="submit">${payment ? 'Modifier' : 'Ajouter'}</button>
       <button type="button" onclick="showPayments()">Annuler</button>
     </form>
   `;
 
-  populateSelect('payment-client', 'clients', 'name');
-  populateSelect('payment-property', 'properties', 'title');
+  populateSelect('payment-client', 'clients', 'name', payment && payment.client_id);
+  populateSelect('payment-property', 'properties', 'title', payment && payment.property_id);
 
   document.getElementById('payment-form').addEventListener('submit', (e) => {
     e.preventDefault();
