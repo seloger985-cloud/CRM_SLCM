@@ -157,7 +157,9 @@ create table public.shared_listings (
 -- Recherches d'un client. Une ligne par recherche : un même client peut en
 -- porter plusieurs — un studio pour lui, un deux-chambres pour sa mère.
 -- Créée le 31/08/2026 par sql/03_demands.sql, qui a repris les critères
--- jusque-là logés dans la fiche client.
+-- jusque-là logés dans la fiche client (10 reprises sur 21 clients).
+-- Colonnes, types et valeurs par défaut confirmés par introspection le
+-- 31/08/2026 : les treize colonnes correspondent.
 create table public.demands (
   id               bigint not null default nextval('demands_id_seq'::regclass),
   client_id        integer not null,
@@ -268,11 +270,6 @@ create unique index uniq_shared on public.shared_listings using btree (owner_id,
 
 -- ════════════════════════════════════════════════════════════════════
 --  ÉCARTS CONNUS ENTRE LE CODE ET LE SCHÉMA — au 31/08/2026
---
---  0. AVERTISSEMENT — la section `demands` de ce fichier a été écrite à la
---     main d'après sql/03_demands.sql, pas relevée par introspection. Elle
---     est juste sur les noms de colonnes mais peut différer sur des détails
---     de forme. À remplacer au prochain passage de 00_introspection.sql.
 --
 --  1. payments : accompte / reste — RÉGLÉ le 31/08/2026
 --     TABLE_COLS.payments réclamait des colonnes `accompte` et `reste`

@@ -69,6 +69,10 @@ Relevés en comparant l'export à `assets/js/app.js`. Le détail est en fin de
 
 ## Points confirmés
 
+- La table `demands` (31/08/2026) : treize colonnes, types et valeurs par
+  défaut confirmés par introspection. `owner_id` a bien `auth.uid()` en
+  défaut, `active` est `not null default true`, `created_at` porte le fuseau.
+
 - `shared_listings` est correctement construite : `owner_id` par défaut à
   `auth.uid()`, index `uniq_shared` unique sur `(owner_id, client_id,
   listing_id)` — condition technique du `onConflict` de `match.js` — et une
