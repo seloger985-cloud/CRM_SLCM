@@ -687,6 +687,22 @@ input::placeholder, textarea::placeholder {
   font-size: var(--fs-md);
 }
 
+/* Un rapprochement n'est pas un problème à régler mais une occasion à saisir :
+   il porte l'accent de la marque, pas la teinte d'avertissement. */
+.alert-match {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--fg-0);
+}
+.alert-match strong { color: var(--accent-text); }
+
+.alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
 .alert-warning {
   background: var(--warning-soft);
   border-color: var(--warning-border);
@@ -1308,23 +1324,53 @@ input::placeholder, textarea::placeholder {
     padding-bottom: var(--space-3);
     margin-bottom: var(--space-2);
   }
+  /* Dix entrées de navigation, sur un écran de 375px.
+     En s'enroulant, elles occupaient quatre rangées : il fallait faire
+     défiler avant d'atteindre le contenu, sur l'écran qu'on ouvre le plus
+     souvent debout, entre deux visites.
+
+     Elles tiennent désormais sur UNE rangée qui défile horizontalement.
+     Rien n'est caché derrière un menu — c'est délibéré : masquer trois
+     écrans supposerait de savoir lesquels sont secondaires, et cela dépend
+     de la façon dont l'agence travaille, pas du CSS. Le défilement laisse
+     tout accessible et rend l'arbitrage inutile.
+     app.js ramène l'entrée active dans le champ de vision au chargement. */
   nav {
+    flex: 1 1 100%;
     flex-direction: row;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: var(--space-1);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
   }
+  nav::-webkit-scrollbar { display: none; }
+
   nav button {
     width: auto;
-    padding: 6px 10px;
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+    padding: 8px var(--space-3);
     font-size: var(--fs-sm);
+    white-space: nowrap;
   }
-  .theme-toggle {
+
+  /* Les deux boutons de bas de colonne repassent côte à côte sur une ligne.
+     La règle de bureau `.theme-toggle ~ .theme-toggle` est plus spécifique
+     que `.theme-toggle` : il faut la neutraliser explicitement ici, sinon
+     son padding-top: 0 écrase celui de ce bloc. */
+  .theme-toggle,
+  .theme-toggle ~ .theme-toggle {
     width: auto;
-    margin-top: 0;
-    margin-left: auto;
+    margin-top: var(--space-2);
+    margin-left: 0;
     border-top: none;
-    padding: 6px 10px;
+    padding: 8px var(--space-3);
   }
+  .theme-toggle { margin-left: auto; }
   main {
     grid-column: 1;
     grid-row: 2;

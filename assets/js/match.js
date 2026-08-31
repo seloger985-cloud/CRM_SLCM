@@ -115,6 +115,37 @@
     );
   }
 
+  function sent(alreadySent, clientId, listingId) {
+    return !!(alreadySent && alreadySent.has(clientId + '|' + listingId));
+  }
+
+  /** Les annonces qui répondent à la demande d'UN client, meilleures d'abord. */
+  function matchesForClient(client, listings, alreadySent) {
+    if (!hasDemand(client)) return [];
+    const hits = [];
+    listings.forEach(listing => {
+      if (sent(alreadySent, client.id, listing.id)) return;
+      const r = evaluate(listing, client);
+      if (r) hits.push({ listing, score: r.score, reasons: r.reasons });
+    });
+    hits.sort((a, b) => b.score - a.score);
+    return hits;
+  }
+
+  /** L'inverse : les clients dont la demande répond à UNE annonce.
+      Même fonction d'évaluation, lue dans l'autre sens — c'est ce qui permet
+      d'alerter aussi bien à l'arrivée d'un bien qu'à celle d'une demande. */
+  function clientsForListing(listing, clients, alreadySent) {
+    const hits = [];
+    clients.filter(hasDemand).forEach(client => {
+      if (sent(alreadySent, client.id, listing.id)) return;
+      const r = evaluate(listing, client);
+      if (r) hits.push({ client, score: r.score, reasons: r.reasons });
+    });
+    hits.sort((a, b) => b.score - a.score);
+    return hits;
+  }
+
   /**
    * Calcule tous les rapprochements.
    * @param {array} clients
@@ -124,18 +155,59 @@
   function computeMatches(clients, listings, alreadySent) {
     const out = [];
     clients.filter(hasDemand).forEach(client => {
-      const hits = [];
-      listings.forEach(listing => {
-        if (alreadySent && alreadySent.has(client.id + '|' + listing.id)) return;
-        const r = evaluate(listing, client);
-        if (r) hits.push({ listing, score: r.score, reasons: r.reasons });
-      });
+      const hits = matchesForClient(client, listings, alreadySent);
       if (!hits.length) return;
-      hits.sort((a, b) => b.score - a.score);
       out.push({ client, hits: hits.slice(0, 8), total: hits.length });
     });
     /* Les clients avec le meilleur match remontent en premier */
     out.sort((a, b) => (b.hits[0].score - a.hits[0].score) || (b.total - a.total));
+    return out;
+  }
+
+  /* ─────────────── Veille sur les nouvelles annonces ───────────────
+
+     Une annonce peut apparaître sur selogercm.com sans qu'on touche au CRM.
+     Sans repère, elle se noie dans les 24 autres et personne ne la relie à
+     la demande qu'elle satisfait. On garde donc la date de la plus récente
+     annonce déjà vue, et on signale ce qui est arrivé depuis.
+
+     Le repère vit dans le localStorage : il est propre à ce navigateur, ce
+     qui est exactement ce qu'on veut — c'est « ce que MOI j'ai déjà vu »,
+     pas un état partagé. */
+
+  const SEEN_KEY = 'slcm-listings-seen';
+
+  function lastSeen() {
+    try { return localStorage.getItem(SEEN_KEY) || null; } catch (e) { return null; }
+  }
+
+  /** Avance le repère jusqu'à l'annonce la plus récente du lot. */
+  function markSeen(listings) {
+    const newest = (listings || []).reduce(
+      (max, l) => (l.created_at && l.created_at > max ? l.created_at : max), '');
+    if (!newest) return;
+    try { localStorage.setItem(SEEN_KEY, newest); } catch (e) {}
+  }
+
+  /**
+   * Les annonces parues depuis le dernier passage QUI correspondent à une
+   * demande en cours. Une nouveauté sans preneur n'est pas une alerte.
+   * @returns {array} [{ listing, clients: [{client, score, reasons}] }]
+   */
+  function freshMatches(clients, listings, alreadySent) {
+    const since = lastSeen();
+
+    /* Première utilisation : on pose le repère sans rien signaler. Sinon
+       l'agent recevrait une alerte pour tout le stock existant. */
+    if (!since) { markSeen(listings); return []; }
+
+    const out = [];
+    listings
+      .filter(l => l.created_at && l.created_at > since)
+      .forEach(listing => {
+        const hits = clientsForListing(listing, clients, alreadySent);
+        if (hits.length) out.push({ listing, clients: hits });
+      });
     return out;
   }
 
@@ -199,6 +271,8 @@
 
   window.SLCM_MATCH = {
     evaluate, hasDemand, computeMatches,
+    matchesForClient, clientsForListing,
+    freshMatches, markSeen, lastSeen,
     shareMessage, listingUrl, markShared, loadShared,
     wantedTransaction
   };

@@ -18,7 +18,15 @@ const matchingBtn = document.getElementById('matching-btn');
 // Event listeners — wrappés pour marquer l'état actif dans la sidebar
 function setActiveNav(btn) {
   document.querySelectorAll('header nav button').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
+  if (!btn) return;
+  btn.classList.add('active');
+
+  /* Sur mobile la navigation est une rangée qui défile : sans ça, l'entrée
+     active peut se trouver hors du champ de vision et on croit l'avoir perdue.
+     Sans effet sur bureau, où la colonne n'a pas de débordement horizontal. */
+  if (typeof btn.scrollIntoView === 'function') {
+    btn.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
 }
 
 function navTo(btn, fn) {
@@ -344,12 +352,21 @@ async function createActivityFromSuggestion(index) {
    cinq redondantes — quatre comptages de statuts et un getRecent('clients')
    que getAll('clients') contenait déjà. Ramenées à quatre, en parallèle. */
 async function showDashboard() {
-  const [allClients, allPayments, allTasks, recentActivities] = await Promise.all([
+  const [allClients, allPayments, allTasks, recentActivities, siteListings, shared] = await Promise.all([
     getAll('clients'),
     getAll('payments'),
     getAll('tasks'),
-    getRecent('activities', 5)
+    getRecent('activities', 5),
+    /* Les annonces du site sont en cache 5 minutes côté site.js, et les deux
+       appels dégradent en silence : le tableau de bord reste utilisable même
+       si selogercm.com ne répond pas. */
+    window.SLCM_SITE.fetchListings(),
+    window.SLCM_MATCH.loadShared()
   ]);
+
+  /* Annonces parues depuis le dernier passage qui répondent à une demande. */
+  const fresh = window.SLCM_MATCH.freshMatches(allClients, siteListings, shared);
+  window._freshListings = siteListings;
 
   /* Comptages dérivés de la liste déjà en mémoire, plus par requête. */
   const byStatus = (s) => allClients.filter(c => (c.status || 'nouvelle demande') === s).length;
@@ -434,14 +451,27 @@ async function showDashboard() {
       </div>
     </div>
 
-    <!-- Alertes -->
-    ${overduePayments.length > 0 ? `
+    <!-- Alertes : une occasion à saisir avant un problème à régler -->
+    ${(fresh.length || overduePayments.length) ? `
     <div class="alerts">
       <h3>Alertes</h3>
+      ${fresh.length ? `
+      <div class="alert alert-match" id="fresh-alert">
+        <strong>${fresh.length} nouvelle${fresh.length > 1 ? 's' : ''} annonce${fresh.length > 1 ? 's' : ''} sur selogercm.com trouve${fresh.length > 1 ? 'nt' : ''} preneur</strong>
+        ${fresh.slice(0, 4).map(f => `<p>${escHtml(f.listing.title || 'Sans titre')} — ${
+          f.clients.slice(0, 3).map(h => escHtml(h.client.name || 'sans nom')).join(', ')
+        }${f.clients.length > 3 ? ' et ' + (f.clients.length - 3) + ' autre(s)' : ''}</p>`).join('')}
+        ${fresh.length > 4 ? `<p class="item-meta">et ${fresh.length - 4} autre(s).</p>` : ''}
+        <div class="alert-actions">
+          <button onclick="goToMatching()" class="btn btn-primary">Ouvrir les rapprochements</button>
+          <button onclick="dismissFreshAlert()" class="btn btn-outline">J'ai vu</button>
+        </div>
+      </div>` : ''}
+      ${overduePayments.length ? `
       <div class="alert alert-warning">
-        <strong>${overduePayments.length} paiement(s) en retard</strong>
-        <p>Vérifiez les paiements en attente depuis plus de 7 jours.</p>
-      </div>
+        <strong>${overduePayments.length} paiement${overduePayments.length > 1 ? 's' : ''} en retard</strong>
+        <p>En attente depuis plus de sept jours.</p>
+      </div>` : ''}
     </div>
     ` : ''}
 
@@ -790,14 +820,16 @@ async function saveClient(id) {
   };
 
   try {
-    if (id) {
-      const { error } = await supabaseClient.from('clients').update(client).eq('id', id);
-      if (error) throw error;
-    } else {
-      const { error } = await supabaseClient.from('clients').insert([client]);
-      if (error) throw error;
-    }
+    /* .select() renvoie la ligne telle qu'elle est en base — avec son id pour
+       une création, et les valeurs réellement retenues. C'est cette ligne-là
+       qu'on évalue ensuite, pas les champs du formulaire. */
+    const { data, error } = id
+      ? await supabaseClient.from('clients').update(client).eq('id', id).select()
+      : await supabaseClient.from('clients').insert([client]).select();
+    if (error) throw error;
+
     showClients();
+    if (data && data[0]) alertMatchesForClient(data[0]);
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement du client:', error);
     UI.handleError(error);
@@ -973,6 +1005,7 @@ async function importListing(siteId) {
   if (data && data[0]) propsView.crm.unshift(data[0]);
   UI.toast('Fiche CRM créée pour « ' + (l.title || 'ce bien') + ' »', 'success');
   renderPropsList();
+  alertClientsForListing(l);
 }
 
 /* ═══════════════ PARTAGE À UN CLIENT ═══════════════ */
@@ -1043,6 +1076,76 @@ async function shareListing(siteId) {
   });
 }
 
+
+/* Le repère « déjà vu » n'avance que sur action de l'agent : recharger deux
+   fois le tableau de bord ne doit pas faire disparaître l'alerte en silence. */
+function goToMatching() {
+  /* Pas `navTo(...)()` : navTo fabrique un gestionnaire, elle ne navigue pas.
+     C'est précisément la confusion qui rendait le bouton Rapprochements inerte
+     avant le 31/08 — on ne la réintroduit pas dans un onclick. */
+  setActiveNav(matchingBtn);
+  showMatching();
+}
+
+function dismissFreshAlert() {
+  window.SLCM_MATCH.markSeen(window._freshListings || []);
+  const el = document.getElementById('fresh-alert');
+  if (el) el.remove();
+}
+
+/* ═══════════════ ALERTES DE RAPPROCHEMENT ═══════════════
+
+   Le rapprochement existait déjà, mais il fallait aller le chercher : ouvrir
+   l'écran Rapprochements et regarder. Une correspondance qui apparaît pendant
+   qu'on est ailleurs n'existait pour personne.
+
+   Trois moments de déclenchement, tous immédiats et sans tâche de fond :
+     · une demande est enregistrée  → quelles annonces y répondent
+     · un bien entre au portefeuille → quels clients l'attendaient
+     · une annonce paraît sur le site → signalée au tableau de bord
+
+   Rien n'est envoyé automatiquement, conformément au principe du fichier
+   match.js : on signale, l'agent décide. */
+
+/* Charge de quoi évaluer un rapprochement. Dégrade en silence : une alerte
+   manquée ne doit jamais empêcher un enregistrement d'aboutir. */
+async function matchContext() {
+  try {
+    const [listings, shared] = await Promise.all([
+      window.SLCM_SITE.fetchListings(),
+      window.SLCM_MATCH.loadShared()
+    ]);
+    return { listings, shared };
+  } catch (e) {
+    console.error('[match] contexte indisponible :', e && e.message);
+    return { listings: [], shared: new Set() };
+  }
+}
+
+/** Après l'enregistrement d'une demande : ce qui y répond, s'il y a lieu. */
+async function alertMatchesForClient(client) {
+  if (!client || !window.SLCM_MATCH.hasDemand(client)) return;
+  const { listings, shared } = await matchContext();
+  const hits = window.SLCM_MATCH.matchesForClient(client, listings, shared);
+  if (!hits.length) return;
+  UI.toast(
+    hits.length + ' annonce' + (hits.length > 1 ? 's correspondent' : ' correspond')
+      + ' à la demande de ' + (client.name || 'ce client') + '.',
+    'success', 7000);
+}
+
+/** Après l'entrée d'un bien : les clients qui l'attendaient. */
+async function alertClientsForListing(listing) {
+  if (!listing) return;
+  const [{ shared }, clients] = await Promise.all([matchContext(), getAll('clients')]);
+  const hits = window.SLCM_MATCH.clientsForListing(listing, clients, shared);
+  if (!hits.length) return;
+  UI.toast(
+    hits.length + ' client' + (hits.length > 1 ? 's attendaient' : ' attendait')
+      + ' ce bien : ' + hits.slice(0, 3).map(h => h.client.name).join(', ')
+      + (hits.length > 3 ? '…' : ''),
+    'success', 8000);
+}
 
 /* ═══════════════ MATCHING ═══════════════ */
 
