@@ -20,10 +20,17 @@ précis est passé au travers d'une relecture humaine.
 | **test-escaping** | Les valeurs de la base étaient injectées brutes dans `innerHTML`. Un client nommé « Ets \<Nkolo\> & Fils » disparaissait de l'écran sans un mot. |
 | **test-matching** | `match.js` est le seul endroit où une décision métier est *calculée*. Une régression y est invisible : le CRM continue de fonctionner, il propose simplement moins bien — ou trop. |
 | **test-suggestions** | Les suggestions ne devinent rien, elles rappellent ce qui a déjà été saisi. Une variante — « Bonaprisso » pour « Bonapriso » — suffit à rendre un bien introuvable au rapprochement, sans erreur ni message. |
+| **test-screens** | Le bouton « Annuler » de la boîte de réception a été livré avec `${back === …}` dans un écran qui ne reçoit aucun `back` : ReferenceError en production, écran « Erreur », fonctionnalité inaccessible. `node --check` ne pouvait pas le voir — la syntaxe était valide — et les autres contrôles non plus, puisqu'ils testent des fonctions pures alors que le bug vivait dans un gabarit HTML. Il fallait **exécuter** le rendu. |
 | **test-followups** | « Echec : pas disponible », « en attente retour clt sur négo » — l'agent écrivait l'issue et la suite en prose dans les notes. Le CRM ne pouvait donc pas savoir qu'une visite avait échoué. Si ces contrôles cèdent, le tableau de bord ment sur ce qui reste à faire. |
 | **test-duplicates** | Le tableau de bord affichait « M. Dicka » deux fois, le même jour. Les biens sont protégés du double import par un index unique ; les clients ne l'étaient par rien. Et comme le CRM ne sait pas supprimer, une fiche en double reste — et fausse le total clients comme le taux de conversion. |
 
-## Deux principes
+## Trois principes
+
+**Exécuter vaut mieux que relire.** `test-screens` charge `app.js` entier dans
+un faux navigateur et construit chaque écran. Il ne vérifie pas que l'écran est
+joli : il vérifie qu'il se construit. C'est le contrôle le moins exigeant
+possible de toute la suite, et c'est celui qui a manqué le plus longtemps.
+
 
 **Le critère est l'effet, pas la forme.** `test-escaping` ne cherche pas la
 sous-chaîne « onerror= » : elle peut apparaître sans danger à l'intérieur d'un

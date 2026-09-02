@@ -27,7 +27,7 @@ for (const f of fs.readdirSync(path.join(ROOT, 'assets/js')).filter(f => f.endsW
 }
 
 /* ── Les modules de contrôle ── */
-for (const mod of ['check-columns', 'check-handlers', 'test-escaping', 'test-matching', 'test-duplicates', 'test-suggestions', 'test-followups']) {
+for (const mod of ['check-columns', 'check-handlers', 'test-escaping', 'test-matching', 'test-duplicates', 'test-suggestions', 'test-followups', 'test-screens']) {
   let result;
   try {
     result = require('./' + mod).run();

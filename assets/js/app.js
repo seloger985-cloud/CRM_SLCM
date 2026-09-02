@@ -1605,7 +1605,7 @@ function showInbox() {
       </div>
       <p class="item-meta">Seul ce message est envoyé pour analyse. Ton portefeuille ne sort pas du CRM.</p>
       <button type="submit" class="btn btn-primary" id="inbox-go">Analyser</button>
-      <button type="button" onclick="${back === 'inbox' ? 'showInbox()' : 'showProperties()'}" class="btn btn-outline">Annuler</button>
+      <button type="button" onclick="showProperties()" class="btn btn-outline">Annuler</button>
     </form>
     <div id="inbox-result"></div>
   `;
@@ -1982,7 +1982,7 @@ function showPropertyForm(property = null, draft = null, back = null) {
         <textarea id="property-description">${escHtml(v.description || '')}</textarea>
       </div>
       <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Ajouter'}</button>
-      <button type="button" onclick="showProperties()" class="btn btn-outline">Annuler</button>
+      <button type="button" onclick="${back === 'inbox' ? 'showInbox()' : 'showProperties()'}" class="btn btn-outline">Annuler</button>
     </form>
   `;
 

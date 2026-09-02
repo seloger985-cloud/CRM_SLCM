@@ -63,7 +63,7 @@ resterait vide sans explication.
 node tests/run.js
 ```
 
-Node seul, rien à installer. À lancer avant chaque commit. Les sept contrôles
+Node seul, rien à installer. À lancer avant chaque commit. Les huit contrôles
 ne sont pas génériques : chacun existe parce qu'un bug précis est passé au
 travers d'une relecture. Voir [`tests/`](tests/).
 
