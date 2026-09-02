@@ -95,7 +95,29 @@ function run() {
   ok('les annonces du site passent inchangées',
      stock[0].id === 'uuid-1' && stock[0]._crm === undefined);
 
-  return { title: 'Issue, suite, et biens du CRM', checks };
+  /* ── Boîte de réception ──
+     Un champ absent du message doit se VOIR. Laissé vide en silence, on
+     croit à une information vérifiée — et un bien sans transaction n'est
+     proposé à personne. */
+  const scope4 = new Function([
+    grab(/function escHtml[\s\S]*?\n}/, 'escHtml'),
+    grab(/const MANQUANT_FR = \{[\s\S]*?\n\};/, 'MANQUANT_FR'),
+    grab(/function manquantBanner[\s\S]*?\n}/, 'manquantBanner')
+  ].join('\n') + '\nreturn { manquantBanner };')();
+  const banner = scope4.manquantBanner;
+
+  ok('rien à signaler ne produit rien', banner([]) === '' && banner(null) === '');
+  ok('un champ manquant est nommé en français',
+     banner(['price']).includes('le prix'));
+  ok('plusieurs champs sont énumérés',
+     banner(['price', 'district']).includes('le prix, le quartier'));
+  ok('un champ inconnu passe sans casser', banner(['zzz']).includes('zzz'));
+  ok('la conséquence est rappelée',
+     banner(['rent_sale']).includes('proposé à personne'));
+  ok('le contenu est échappé',
+     !banner(['<script>']).includes('<script>'));
+
+  return { title: 'Suites, biens du CRM, boîte de réception', checks };
 }
 
 module.exports = { run };

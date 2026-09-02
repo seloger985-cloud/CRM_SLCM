@@ -967,6 +967,7 @@ async function showProperties(force) {
         <option value="crm"  ${propsView.src === 'crm'  ? 'selected' : ''}>Saisies CRM</option>
       </select>
       <button onclick="showPropertyForm()" class="btn btn-primary">Ajouter</button>
+      <button onclick="showInbox()" class="ghost-btn" title="Coller un message reçu d'un confrère">Depuis un message</button>
       <button onclick="exportCSV('properties')" class="ghost-btn" title="Exporter en CSV">Export CSV</button>
       <button onclick="showProperties(true)" class="ghost-btn" title="Recharger depuis selogercm.com">↻</button>
     </div>
@@ -1561,6 +1562,128 @@ async function toggleDemand(id, active) {
   }
 }
 
+/* ═══════════════ BOÎTE DE RÉCEPTION ═══════════════
+
+   Un confrère envoie un bien par WhatsApp, en prose. Le retaper prend cinq
+   minutes ; le coller en prend cinq secondes. C'est le seul endroit du CRM
+   où un modèle fait quelque chose qu'une règle ne sait pas faire : l'entrée
+   est du texte libre écrit par quelqu'un d'autre.
+
+   La fonction understand-inbox N'ÉCRIT RIEN. Elle propose une fiche, le
+   formulaire s'ouvre pré-rempli, l'agent corrige et valide. Voir
+   supabase/functions/README.md. */
+
+/** Appelle une Edge Function du projet CRM avec la session en cours. */
+async function callFunction(name, payload) {
+  const { data } = await supabaseClient.auth.getSession();
+  const token = data && data.session && data.session.access_token;
+  if (!token) throw new Error('Session expirée — recharge la page.');
+
+  const res = await fetch(window.SLCM_CONFIG.SUPABASE_URL + '/functions/v1/' + name, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify(payload)
+  });
+
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    /* Le message de l'API vaut mieux qu'un code : « message_too_long » se
+       comprend, « 413 » non. */
+    throw new Error(body.error || ('Erreur ' + res.status));
+  }
+  return body;
+}
+
+function showInbox() {
+  mainContent.innerHTML = `
+    <h2>Ajouter un bien depuis un message</h2>
+    <form id="inbox-form">
+      <div class="form-group">
+        <label>Le message reçu <span class="item-meta">— tel quel, sans le retoucher</span></label>
+        <textarea id="inbox-message" rows="8" required
+          placeholder="Bonjour, j'ai un appartement 3 chambres meublé à Bonapriso, 350k le mois. Libre immédiatement. Contact 699 12 45 78."></textarea>
+      </div>
+      <p class="item-meta">Seul ce message est envoyé pour analyse. Ton portefeuille ne sort pas du CRM.</p>
+      <button type="submit" class="btn btn-primary" id="inbox-go">Analyser</button>
+      <button type="button" onclick="${back === 'inbox' ? 'showInbox()' : 'showProperties()'}" class="btn btn-outline">Annuler</button>
+    </form>
+    <div id="inbox-result"></div>
+  `;
+
+  document.getElementById('inbox-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    analyzeInbox();
+  });
+}
+
+async function analyzeInbox() {
+  const champ = document.getElementById('inbox-message');
+  const bouton = document.getElementById('inbox-go');
+  const sortie = document.getElementById('inbox-result');
+  const message = champ.value.trim();
+  if (!message) return;
+
+  bouton.disabled = true;
+  bouton.textContent = 'Analyse…';
+  sortie.innerHTML = '';
+
+  try {
+    const { bien, explication } = await callFunction('understand-inbox', { message });
+
+    if (!bien) {
+      /* Le modèle a jugé que le message ne décrit pas un bien. C'est une
+         réponse valide, pas une panne : on la montre sans dramatiser. */
+      sortie.innerHTML = `<div class="empty-state">
+        <p><strong>Aucun bien reconnu dans ce message.</strong></p>
+        <p>${escHtml(explication || '')}</p>
+      </div>`;
+      return;
+    }
+
+    /* Le contact n'a pas de colonne dans `properties` : plutôt que de le
+       perdre, on le range dans la description, nommé. */
+    const description = [bien.description, bien.contact ? 'Contact : ' + bien.contact : '']
+      .filter(Boolean).join('\n\n');
+
+    showPropertyForm(null, {
+      title: bien.title, type: bien.type, price: bien.price,
+      address: bien.address, district: bien.district,
+      rent_sale: bien.rent_sale, bedrooms: bien.bedrooms,
+      furnished: bien.furnished, description,
+      _manquant: bien.manquant || []
+    }, 'inbox');
+  } catch (e) {
+    sortie.innerHTML = `<div class="alert alert-warning">
+      <strong>L'analyse n'a pas abouti.</strong>
+      <p>${escHtml(e.message)}</p>
+      <p class="item-meta">Le bien peut toujours être saisi à la main.</p>
+    </div>`;
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = 'Analyser';
+  }
+}
+
+/* Ce que le message ne disait pas. Affiché en tête du formulaire plutôt que
+   laissé vide en silence : un champ absent doit se voir, sinon on croit à
+   une information vérifiée. */
+const MANQUANT_FR = {
+  title: 'le titre', type: 'le type de bien', rent_sale: 'location ou vente',
+  price: 'le prix', address: "l'adresse", district: 'le quartier',
+  bedrooms: 'le nombre de chambres', furnished: 'meublé ou non',
+  description: 'la description', contact: 'le contact'
+};
+
+function manquantBanner(manquant) {
+  if (!manquant || !manquant.length) return '';
+  const noms = manquant.map(m => MANQUANT_FR[m] || m);
+  return `<div class="alert alert-match">
+    <strong>Le message ne disait pas tout</strong>
+    <p>À compléter : ${escHtml(noms.join(', '))}.</p>
+    <p class="item-meta">Sans transaction renseignée, ce bien ne sera proposé à personne.</p>
+  </div>`;
+}
+
 /* ═══════════════ UN BIEN DU CRM VU PAR LE RAPPROCHEMENT ═══════════════
 
    Le moteur ne connaît qu'une forme : celle des annonces du site. Une fiche
@@ -1792,8 +1915,8 @@ function escAttr(v) {
   return escHtml(v).replace(/"/g, '&quot;');
 }
 
-function showPropertyForm(property = null) {
-  const v = property || {};
+function showPropertyForm(property = null, draft = null, back = null) {
+  const v = property || draft || {};
   const editing = !!property;
   /* En création, on reprend le dernier choix de l'agent ; en modification,
      jamais — ce serait écraser une donnée existante par une habitude. */
@@ -1802,6 +1925,7 @@ function showPropertyForm(property = null) {
 
   mainContent.innerHTML = `
     <h2>${editing ? 'Modifier' : 'Ajouter'} un bien</h2>
+    ${manquantBanner(v._manquant)}
     <form id="property-form">
       <div class="form-group">
         <label>Titre:</label>

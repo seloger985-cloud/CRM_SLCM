@@ -13,7 +13,7 @@ lit les annonces en direct — sans jamais les recopier.
 |---|---|
 | **Tableau de bord** | Ce qui attend, ce qui entre, ce qui est engagé, ce qui est encaissé. |
 | **Clients** | Fiches, statut dans le pipeline, contact WhatsApp, et leurs **recherches**. |
-| **Biens** | Les annonces publiées sur le site *et* les saisies internes, fusionnées. |
+| **Biens** | Les annonces publiées sur le site *et* les saisies internes, fusionnées. Un message reçu d'un confrère devient une fiche en un collage. |
 | **Activités** | Journal des appels, rendez-vous, e-mails et visites. |
 | **Paiements** | Encaissements rattachés à un client et à un bien. |
 | **Factures** | Page dédiée (`facture.html`), numérotation automatique, export PDF. |
@@ -129,6 +129,22 @@ seule et renvoie vers l'écran dédié.
 Deux champs de texte libre, deux rôles à ne pas confondre : les **notes du
 client** décrivent la personne ; le **besoin en clair**, sur la recherche,
 garde ce que le client a dit avec ses mots, à côté des critères.
+
+## Depuis un message reçu
+
+Un confrère envoie un bien par WhatsApp, en prose. Le bouton **« Depuis un
+message »** de l'écran Biens ouvre une zone où le coller : l'Edge Function
+`understand-inbox` en extrait une proposition de fiche, le formulaire s'ouvre
+pré-rempli, et **ce que le message ne disait pas est signalé en tête** plutôt
+que laissé vide en silence.
+
+C'est le seul endroit du CRM où un modèle fait quelque chose qu'une règle ne
+sait pas faire : l'entrée est du texte libre écrit par quelqu'un d'autre.
+Partout ailleurs — doublons, suggestions, rapprochement — des règles suffisent,
+et elles sont gratuites, instantanées et incapables d'halluciner.
+
+La fonction n'écrit rien, et seul le message collé sort du CRM. Voir
+[`supabase/functions/`](supabase/functions/).
 
 ## Un bien du CRM peut être proposé
 
