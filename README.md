@@ -103,6 +103,17 @@ qui a un budget, pas la personne.
 Une recherche ne se supprime pas, elle se met en pause : elle sort alors du
 rapprochement sans que son historique disparaisse.
 
+**Enregistrer un client enchaîne sur sa recherche.** C'est au moment où le
+client appelle qu'on sait ce qu'il veut ; ne pas le lui demander là revient à
+ne jamais le noter. Le formulaire de recherche s'ouvre donc juste après la
+création, avec un bouton « Passer, sans recherche » pour les vendeurs et les
+apporteurs. En modification, non : la fiche rappelle ses recherches en lecture
+seule et renvoie vers l'écran dédié.
+
+Deux champs de texte libre, deux rôles à ne pas confondre : les **notes du
+client** décrivent la personne ; le **besoin en clair**, sur la recherche,
+garde ce que le client a dit avec ses mots, à côté des critères.
+
 ## Ce que le CRM ne fait pas
 
 À savoir avant de chercher le bouton :

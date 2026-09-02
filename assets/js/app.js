@@ -777,8 +777,9 @@ function showClientForm(client = null) {
            un client peut porter plusieurs recherches. Elles vivent désormais
            dans leur propre table et se gèrent depuis la liste des clients. -->
 
+      ${client ? '<div class="form-group" id="client-demands-summary"></div>' : ''}
       <div class="form-group">
-        <label>Notes:</label>
+        <label>Notes <span class="item-meta">— sur la personne. Ce qu'elle cherche se note dans ses recherches.</span></label>
         <textarea id="client-notes">${escHtml((client && client.notes) || '')}</textarea>
       </div>
       <button type="submit" class="btn btn-primary">${client ? 'Modifier' : 'Ajouter'}</button>
@@ -789,6 +790,7 @@ function showClientForm(client = null) {
   /* Le champ « Précisez » de la source « autres » se répète d'un client à
      l'autre : on rappelle ce qui a déjà été écrit. */
   wireSuggestions('client-source-detail', 'clients', 'source_detail');
+  if (client) fillDemandsSummary(client.id);
 
   document.getElementById('client-form').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -835,7 +837,16 @@ async function saveClient(id) {
       : await supabaseClient.from('clients').insert([client]).select();
     if (error) throw error;
 
-    showClients();
+    /* À la CRÉATION, on enchaîne sur la recherche : c'est au moment où le
+       client appelle qu'on sait ce qu'il veut, et ne pas le lui demander là
+       revient à ne jamais le noter. En modification, non : la fiche et ses
+       recherches se gèrent séparément. */
+    if (!id && data && data[0]) {
+      UI.toast('Client enregistré. Que cherche-t-il ?', 'success', 6000);
+      showDemandForm(null, { client_id: data[0].id }, 'clients');
+    } else {
+      showClients();
+    }
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement du client:', error);
     UI.handleError(error);
@@ -1256,6 +1267,30 @@ function demandLabel(d) {
   return bits.join(' · ') || 'critères à préciser';
 }
 
+/* Rappel en lecture seule, dans la fiche client : ce qu'il cherche est sur
+   un autre écran, et sans ce bloc on ouvre une fiche sans savoir pourquoi ce
+   client est là. Ne modifie rien — le bouton renvoie vers l'écran dédié. */
+async function fillDemandsSummary(clientId) {
+  const box = document.getElementById('client-demands-summary');
+  if (!box) return;
+  const siennes = (await getAll('demands'))
+    .filter(d => String(d.client_id) === String(clientId));
+  if (!box.isConnected) return;
+
+  box.innerHTML = `
+    <label>Ses recherches</label>
+    ${siennes.length
+      ? `<div class="list">${siennes.map(d => `
+          <div class="list-item">
+            <div>${escHtml(demandLabel(d))} ${d.active ? '' : '<span class="src-badge src-crm">EN PAUSE</span>'}</div>
+            <div class="item-meta">${escHtml(d.notes || '')}</div>
+          </div>`).join('')}</div>`
+      : "<p class=\"item-meta\">Aucune recherche enregistrée — ce client n'apparaîtra dans aucun rapprochement.</p>"}
+    <button type="button" onclick="showClientDemands(${Number(clientId)})" class="ghost-btn" style="margin-top:var(--space-2)">
+      ${siennes.length ? 'Gérer ses recherches' : 'Ajouter une recherche'}
+    </button>`;
+}
+
 async function showClientDemands(clientId) {
   UI.showLoading();
   const [client, demands] = await Promise.all([
@@ -1291,10 +1326,14 @@ async function showClientDemands(clientId) {
   `;
 }
 
-function showDemandForm(demand = null, draft = null) {
+function showDemandForm(demand = null, draft = null, back = null) {
   const v = demand || draft || {};
   const editing = !!demand;
   const clientId = v.client_id;
+  /* Arrivé depuis la création d'un client, « Passer » doit rendre la main à
+     la liste : un vendeur ou un apporteur n'a pas de recherche, et on ne le
+     coince pas sur un écran vide. */
+  const annuler = back === 'clients' ? 'showClients()' : 'showClientDemands(' + Number(clientId) + ')';
 
   mainContent.innerHTML = `
     <h2>${editing ? 'Modifier' : 'Ajouter'} une recherche</h2>
@@ -1344,14 +1383,14 @@ function showDemandForm(demand = null, draft = null) {
         </div>
       </fieldset>
       <div class="form-group">
-        <label>Notes:</label>
-        <textarea id="demand-notes">${escHtml(v.notes || '')}</textarea>
+        <label>Le besoin en clair <span class="item-meta">— ce que le client a dit, avec ses mots</span></label>
+        <textarea id="demand-notes" placeholder="« Cherche à emménager avant décembre, budget serré mais peut monter pour du meublé. »">${escHtml(v.notes || '')}</textarea>
       </div>
       <div class="form-group">
         <label><input type="checkbox" id="demand-active" ${v.active === false ? '' : 'checked'}> Active dans les rapprochements</label>
       </div>
       <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Ajouter'}</button>
-      <button type="button" onclick="showClientDemands(${Number(clientId)})" class="btn btn-outline">Annuler</button>
+      <button type="button" onclick="${annuler}" class="btn btn-outline">${back === 'clients' ? 'Passer, sans recherche' : 'Annuler'}</button>
     </form>
   `;
 
