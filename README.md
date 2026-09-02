@@ -92,6 +92,21 @@ tableau de bord Supabase. **Ces fichiers font foi** — pas ce README.
 Huit tables : `clients`, `demands`, `properties`, `activities`, `tasks`,
 `payments`, `invoices`, `shared_listings`. Le RLS est actif sur toutes.
 
+**Un seul vocabulaire de types de biens**, partagé par les annonces du site
+(`listings.type`, hors de notre main), les fiches biens du CRM
+(`properties.type`) et les critères d'une recherche (`demands.wanted_types`) :
+appartement, studio, villa, maison, duplex, immeuble, terrain, entrepôt,
+bureau, boutique, local commercial. Une divergence d'orthographe ne produit
+aucune erreur — elle rend simplement le rapprochement muet, ce qui est pire.
+`tests/check-columns.js` vérifie que le formulaire ne propose rien que la
+contrainte refuse.
+
+**Les quartiers de Douala sont proposés en liste, pas imposés.** Le formulaire
+de recherche accepte aussi des quartiers libres — Yaoundé, Kribi, Bafoussam —
+séparés par des virgules. Les deux se fondent dans la même colonne, sans
+doublonner : « bonapriso » saisi à la main ne s'ajoute pas à côté de
+« Bonapriso » coché.
+
 **Un client peut porter plusieurs recherches.** Un studio pour lui, un
 deux-chambres pour sa mère : ce sont deux lignes de `demands`, avec chacune
 son budget, ses quartiers et son état. Jusqu'au 31/08/2026 la recherche vivait

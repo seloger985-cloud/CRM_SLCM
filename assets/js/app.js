@@ -865,16 +865,49 @@ function toggleClientSourceDetail() {
    recherche n'oblige pas à re-télécharger les données à chaque frappe. */
 const propsView = { crm: [], site: [], q: '', src: 'all', loaded: false };
 
-/* Valeurs strictement alignées sur la base du site : une divergence
-   d'orthographe ne produit aucune erreur, elle rend simplement le
-   rapprochement muet. */
-const DEMAND_TYPE_FR = {
+/* Vocabulaire des types de biens, UNIQUE pour les trois endroits où il sert :
+   les annonces du site (listings.type, hors de notre main), les fiches biens
+   du CRM (properties.type, contrainte élargie par sql/04_property_types.sql)
+   et les critères d'une recherche (demands.wanted_types).
+
+   Les clés sont exactement celles de la base du site. Une divergence
+   d'orthographe ne produit aucune erreur : elle rend simplement le
+   rapprochement muet, ce qui est bien pire. */
+const TYPE_FR = {
   apartment: 'Appartement', studio: 'Studio', villa: 'Villa', house: 'Maison',
   duplex: 'Duplex', building: 'Immeuble', 'plots-of-land': 'Terrain',
   warehouse: 'Entrepôt', office: 'Bureau', shop: 'Boutique', commercial: 'Local commercial'
 };
+
+/* Les quartiers de Douala, proposés en liste parce qu'ils reviennent tous les
+   jours. La liste n'est pas fermée : le formulaire de recherche accepte aussi
+   des quartiers libres — Yaoundé, Kribi, Bafoussam — voir freeDistricts(). */
 const DEMAND_DISTRICTS = ['Bonapriso','Bali','Bonanjo','Bonamoussadi','Makepe','Logpom',
   'Logbessou','Akwa','Deido','Kotto','Bonabéri','Yassa','Bonadiwoto','Youpwe','Ndogbong'];
+
+/* Ce qui, dans une recherche, ne vient pas de la liste ci-dessus. */
+function freeDistricts(wanted) {
+  return (wanted || []).filter(d => DEMAND_DISTRICTS.indexOf(d) === -1);
+}
+
+/* Fusionne la sélection en liste et la saisie libre, sans doublon et sans
+   valeur vide. La comparaison ignore casse et accents : « bonapriso » saisi
+   à la main ne doit pas s'ajouter à côté de « Bonapriso » coché. */
+function mergeDistricts(selectId, freeInputId) {
+  const listes = multiVals(selectId) || [];
+  const brut = (document.getElementById(freeInputId) || {}).value || '';
+  const libres = brut.split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
+
+  const out = [];
+  const vus = new Set();
+  listes.concat(libres).forEach(d => {
+    const k = looseKey(d);
+    if (!k || vus.has(k)) return;
+    vus.add(k);
+    out.push(d);
+  });
+  return out.length ? out : null;
+}
 
 function multiVals(id) {
   const el = document.getElementById(id);
@@ -1256,7 +1289,7 @@ function demandLabel(d) {
   const bits = [];
   if (d.rent_sale) bits.push(d.rent_sale === 'rent' ? 'location' : 'achat');
   if (d.wanted_types && d.wanted_types.length) {
-    bits.push(d.wanted_types.map(t => DEMAND_TYPE_FR[t] || t).join(' / '));
+    bits.push(d.wanted_types.map(t => TYPE_FR[t] || t).join(' / '));
   }
   if (d.wanted_districts && d.wanted_districts.length) bits.push(d.wanted_districts.join(', '));
   if (d.min_bedrooms) bits.push(d.min_bedrooms + '+ ch.');
@@ -1357,7 +1390,7 @@ function showDemandForm(demand = null, draft = null, back = null) {
         <div class="form-group">
           <label>Types recherchés <span class="item-meta">(Ctrl / Cmd pour plusieurs)</span></label>
           <select id="demand-types" multiple size="5">
-            ${Object.keys(DEMAND_TYPE_FR).map(t => `<option value="${escAttr(t)}" ${(v.wanted_types || []).indexOf(t) !== -1 ? 'selected' : ''}>${DEMAND_TYPE_FR[t]}</option>`).join('')}
+            ${Object.keys(TYPE_FR).map(t => `<option value="${escAttr(t)}" ${(v.wanted_types || []).indexOf(t) !== -1 ? 'selected' : ''}>${TYPE_FR[t]}</option>`).join('')}
           </select>
         </div>
         <div class="form-group">
@@ -1365,6 +1398,12 @@ function showDemandForm(demand = null, draft = null, back = null) {
           <select id="demand-districts" multiple size="5">
             ${DEMAND_DISTRICTS.map(d => `<option value="${escAttr(d)}" ${(v.wanted_districts || []).indexOf(d) !== -1 ? 'selected' : ''}>${d}</option>`).join('')}
           </select>
+        </div>
+        <div class="form-group">
+          <label>Autres quartiers <span class="item-meta">— hors Douala, séparés par des virgules</span></label>
+          <input type="text" id="demand-districts-free"
+                 value="${escAttr(freeDistricts(v.wanted_districts).join(', '))}"
+                 placeholder="Yaoundé, Kribi, Bafoussam…" autocomplete="off">
         </div>
         <div class="form-group">
           <label>Budget maximum (FCFA):</label>
@@ -1408,7 +1447,7 @@ async function saveDemand(id, clientId) {
        comme « budget nul » et bloquerait tout rapprochement. */
     rent_sale: document.getElementById('demand-rentsale').value || null,
     wanted_types: multiVals('demand-types'),
-    wanted_districts: multiVals('demand-districts'),
+    wanted_districts: mergeDistricts('demand-districts', 'demand-districts-free'),
     budget: numOrNull('demand-budget'),
     budget_min: numOrNull('demand-budget-min'),
     min_bedrooms: numOrNull('demand-bedrooms'),
@@ -1653,8 +1692,7 @@ function showPropertyForm(property = null) {
       <div class="form-group">
         <label>Type:</label>
         <select id="property-type">
-          <option value="house" ${defType === 'house' ? 'selected' : ''}>Maison</option>
-          <option value="apartment" ${defType === 'apartment' ? 'selected' : ''}>Appartement</option>
+          ${Object.keys(TYPE_FR).map(t => `<option value="${escAttr(t)}" ${defType === t ? 'selected' : ''}>${TYPE_FR[t]}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">

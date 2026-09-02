@@ -53,6 +53,25 @@ function run() {
     ]);
   }
 
+  /* Même garde pour les types de biens : le formulaire ne doit proposer que
+     ce que properties_type_check accepte. Sans ça, choisir « Villa » échoue
+     à l'enregistrement avec une erreur 23514 que personne ne lit. */
+  const typeCheck = sql.match(/properties_type_check CHECK \(([\s\S]*?)\)\);/);
+  if (typeCheck) {
+    const allowed = [...typeCheck[1].matchAll(/'([^']+)'::text/g)].map(x => x[1]);
+    const vocab = app.match(/const TYPE_FR = \{([\s\S]*?)\n\};/);
+    const offered = vocab
+      ? [...vocab[1].matchAll(/(?:^|\s|')([a-z-]+)'?\s*:/g)].map(x => x[1])
+      : [];
+    const bad = offered.filter(t => !allowed.includes(t));
+    checks.push([
+      bad.length
+        ? `properties : type(s) ${bad.join(', ')} proposé(s) mais refusé(s) par le CHECK`
+        : `properties : les ${offered.length} types proposés sont tous autorisés`,
+      offered.length > 0 && bad.length === 0
+    ]);
+  }
+
   return { title: 'Colonnes du code vs schéma', checks };
 }
 
