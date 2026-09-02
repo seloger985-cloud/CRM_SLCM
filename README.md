@@ -49,6 +49,7 @@ assets/js/
   app.js            les écrans
 sql/                le schéma et les politiques de sécurité, versionnés
 tests/              les contrôles — `node tests/run.js`
+supabase/functions/ la seule chose qui ne tourne pas dans le navigateur
 ```
 
 L'ordre de chargement des scripts est impératif : `config` → `auth` → `site`
