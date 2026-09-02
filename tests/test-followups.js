@@ -62,7 +62,40 @@ function run() {
   ok('une issue vide ne casse rien', outcomeLabel(null) === '');
   ok('« failed » se lit en français', outcomeLabel('failed').length > 3);
 
-  return { title: 'Issue et suite d’une activité', checks };
+  /* ── Un bien du CRM vu par le rapprochement ──
+     Une fiche interne doit pouvoir être proposée : un bien reçu d'un
+     confrère n'est pas publié sur le site, et sans cette traduction il ne
+     trouvait preneur auprès de personne. */
+  const scope3 = new Function([
+    grab(/function asListing[\s\S]*?\n}/, 'asListing'),
+    grab(/function matchableStock[\s\S]*?\n}/, 'matchableStock')
+  ].join('\n') + '\nreturn { asListing, matchableStock };')();
+
+  const FICHE = { id: 12, title: 'Villa Logpom', status: 'available',
+    rent_sale: 'rent', type: 'villa', district: 'Logpom', price: 900000,
+    bedrooms: 5, furnished: false, created_at: '2026-08-20T10:00:00Z',
+    listing_id: null, listing_slug: null };
+  const l = scope3.asListing(FICHE);
+
+  ok('l’identifiant est préfixé pour ne pas heurter un uuid du site',
+     l.id === 'crm-12');
+  ok('« available » devient « active » pour le moteur', l.status === 'active');
+  ok('un bien vendu reste écarté',
+     scope3.asListing({ id: 1, status: 'sold' }).status === 'sold');
+  ok('les critères de rapprochement sont transmis',
+     l.rent_sale === 'rent' && l.bedrooms === 5 && l.district === 'Logpom');
+  ok('la fiche est reconnaissable à l’écran', l._crm === true);
+
+  const stock = scope3.matchableStock(
+    [{ id: 'uuid-1', title: 'Annonce du site' }],
+    [FICHE, { id: 13, title: 'Déjà publiée', listing_id: 'uuid-1' }]);
+  ok('le stock réunit annonces et fiches internes', stock.length === 2);
+  ok('une fiche rattachée à une annonce n’est pas comptée deux fois',
+     !stock.some(x => x.id === 'crm-13'));
+  ok('les annonces du site passent inchangées',
+     stock[0].id === 'uuid-1' && stock[0]._crm === undefined);
+
+  return { title: 'Issue, suite, et biens du CRM', checks };
 }
 
 module.exports = { run };

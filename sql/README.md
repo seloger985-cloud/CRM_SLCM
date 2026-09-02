@@ -23,6 +23,7 @@ Tant que ces politiques ne vivent que dans le tableau de bord Supabase :
 | `01_schema.sql` | Tables, colonnes, contraintes, index. |
 | `02_rls.sql` | Activation du RLS et politiques de sécurité. C'est le fichier que `config.js` cite en référence. |
 | `05_activity_outcome.sql` | **Migration** — donne à une activité son issue et sa suite. À jouer AVANT d'utiliser le bloc « Suite » du formulaire. |
+| `06_property_matching.sql` | **Migration** — rend une fiche bien du CRM rapprochable : `rent_sale`, `bedrooms`, `furnished`, et `shared_listings.listing_id` élargi en `text`. |
 | `03_demands.sql` | **Migration** — sort les critères de recherche de la fiche client vers une table `demands`. Contrairement aux autres, ce fichier modifie la base. |
 | `04_property_types.sql` | **Migration** — élargit `properties_type_check` aux onze types du site. À jouer AVANT d'enregistrer un bien d'un type autre que maison ou appartement. |
 

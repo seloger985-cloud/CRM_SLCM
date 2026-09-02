@@ -1561,6 +1561,52 @@ async function toggleDemand(id, active) {
   }
 }
 
+/* ═══════════════ UN BIEN DU CRM VU PAR LE RAPPROCHEMENT ═══════════════
+
+   Le moteur ne connaît qu'une forme : celle des annonces du site. Une fiche
+   du CRM en diffère sur deux points, et deux seulement — son identifiant est
+   un entier, et son état se dit « available » là où le moteur attend
+   « active ».
+
+   Plutôt que d'apprendre au moteur à connaître deux formes, on traduit ici.
+   match.js reste ignorant de l'existence du CRM, ce qui le garde testable
+   sans base de données.
+
+   L'identifiant est préfixé : « crm-12 » ne peut pas entrer en collision
+   avec un uuid du site dans l'historique d'envoi. */
+
+function asListing(p) {
+  return {
+    id: 'crm-' + p.id,
+    slug: p.listing_slug || null,
+    title: p.title,
+    /* Le moteur écarte tout ce qui n'est pas « active ». Un bien vendu ou
+       loué n'a effectivement plus à être proposé. */
+    status: p.status === 'available' ? 'active' : p.status,
+    rent_sale: p.rent_sale || null,
+    type: p.type || null,
+    district: p.district || null,
+    /* Pas de colonne `city` sur une fiche CRM : l'adresse en tient lieu
+       dans les messages de partage. */
+    city: null,
+    price: p.price,
+    bedrooms: p.bedrooms,
+    furnished: p.furnished,
+    created_at: p.created_at,
+    _crm: true
+  };
+}
+
+/* Le stock rapprochable : les annonces du site ET les fiches internes qui
+   ne viennent pas du site — celles-là sont déjà représentées par leur
+   annonce, les compter deux fois les proposerait en double. */
+function matchableStock(siteListings, crmProperties) {
+  const internes = (crmProperties || [])
+    .filter(p => !p.listing_id)
+    .map(asListing);
+  return (siteListings || []).concat(internes);
+}
+
 /* ═══════════════ ALERTES DE RAPPROCHEMENT ═══════════════
 
    Le rapprochement existait déjà, mais il fallait aller le chercher : ouvrir
@@ -1579,11 +1625,12 @@ async function toggleDemand(id, active) {
    manquée ne doit jamais empêcher un enregistrement d'aboutir. */
 async function matchContext() {
   try {
-    const [listings, shared] = await Promise.all([
+    const [listings, shared, props] = await Promise.all([
       window.SLCM_SITE.fetchListings(),
-      window.SLCM_MATCH.loadShared()
+      window.SLCM_MATCH.loadShared(),
+      getAll('properties')
     ]);
-    return { listings, shared };
+    return { listings: matchableStock(listings, props), shared };
   } catch (e) {
     console.error('[match] contexte indisponible :', e && e.message);
     return { listings: [], shared: new Set() };
@@ -1629,12 +1676,16 @@ async function alertClientsForListing(listing) {
 async function showMatching() {
   UI.showLoading();
 
-  const [clients, demands, listings, sent] = await Promise.all([
+  const [clients, demands, siteListings, sent, crmProps] = await Promise.all([
     getAll('clients'),
     getAll('demands'),
     window.SLCM_SITE.fetchListings(),
-    window.SLCM_MATCH.loadShared()
+    window.SLCM_MATCH.loadShared(),
+    getAll('properties')
   ]);
+  /* Les annonces du site ET les fiches internes : un bien reçu d'un confrère
+     n'est pas publié, il doit quand même trouver preneur. */
+  const listings = matchableStock(siteListings, crmProps);
 
   /* Le moteur ne connaît que des demandes ; l'écran doit nommer des gens.
      La jointure se fait ici, une fois, plutôt qu'à chaque affichage. */
@@ -1681,6 +1732,7 @@ async function showMatching() {
               <div class="item-meta">${escHtml([h.listing.district, h.listing.city].filter(Boolean).join(', '))} — ${Number(h.listing.price) > 0 ? formatMoney(h.listing.price) + ' FCFA' : 'prix sur demande'}</div>
               <div class="item-meta">${escHtml(h.reasons.join(' · '))}</div>
               <div>
+                ${h.listing._crm ? '<span class="src-badge src-crm">FICHE CRM</span>' : ''}
                 ${h.listing.slug ? `<a href="https://selogercm.com/annonce/${encodeURIComponent(h.listing.slug)}" target="_blank" rel="noopener" class="ghost-btn">Voir</a>` : ''}
                 <button onclick="sendMatch(${mi},${hi})" class="ghost-btn share-btn">Envoyer</button>
               </div>
@@ -1778,6 +1830,29 @@ function showPropertyForm(property = null) {
           <option value="rented" ${defStatus === 'rented' ? 'selected' : ''}>Loué</option>
         </select>
       </div>
+      <fieldset class="demand-block">
+        <legend>Pour le rapprochement <span class="item-meta">— sans transaction, ce bien n'est proposé à personne</span></legend>
+        <div class="form-group">
+          <label>Transaction:</label>
+          <select id="property-rentsale">
+            <option value="">À préciser</option>
+            <option value="rent" ${v.rent_sale === 'rent' ? 'selected' : ''}>Location</option>
+            <option value="sale" ${v.rent_sale === 'sale' ? 'selected' : ''}>Vente</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Quartier:</label>
+          <input type="text" id="property-district" value="${escAttr(v.district || '')}"
+                 placeholder="Bonapriso" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label>Chambres:</label>
+          <input type="number" id="property-bedrooms" min="0" value="${escAttr(v.bedrooms || '')}">
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" id="property-furnished" ${v.furnished ? 'checked' : ''}> Meublé</label>
+        </div>
+      </fieldset>
       <div class="form-group">
         <label>Description:</label>
         <textarea id="property-description">${escHtml(v.description || '')}</textarea>
@@ -1790,6 +1865,7 @@ function showPropertyForm(property = null) {
   /* Adresses déjà saisies + les quartiers connus du rapprochement : écrire
      « Bonaprisso » une fois suffit à rendre un bien introuvable. */
   wireSuggestions('property-address', 'properties', 'address', DEMAND_DISTRICTS);
+  wireSuggestions('property-district', 'properties', 'district', DEMAND_DISTRICTS);
 
   document.getElementById('property-form').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -1806,20 +1882,30 @@ async function saveProperty(id) {
        par une colonne numérique. numOrNull fait déjà exactement ça. */
     price: numOrNull('property-price'),
     status: document.getElementById('property-status').value,
-    description: document.getElementById('property-description').value
+    description: document.getElementById('property-description').value,
+
+    /* Ce que le rapprochement exige. Sans transaction, un bien reste
+       invisible aux recherches — c'est le premier critère bloquant. */
+    district: document.getElementById('property-district').value || null,
+    rent_sale: document.getElementById('property-rentsale').value || null,
+    bedrooms: numOrNull('property-bedrooms'),
+    furnished: document.getElementById('property-furnished').checked ? true : null
   };
 
   try {
-    if (id) {
-      const { error } = await supabaseClient.from('properties').update(property).eq('id', id);
-      if (error) throw error;
-    } else {
-      const { error } = await supabaseClient.from('properties').insert([property]);
-      if (error) throw error;
-    }
+    const { data, error } = id
+      ? await supabaseClient.from('properties').update(property).eq('id', id).select()
+      : await supabaseClient.from('properties').insert([property]).select();
+    if (error) throw error;
+
     rememberChoice('property-type', property.type);
     rememberChoice('property-status', property.status);
     showProperties();
+
+    /* Une fiche interne peut désormais trouver preneur : on le dit tout de
+       suite. Les fiches rattachées à une annonce sont déjà couvertes par
+       l'annonce elle-même, les alerter deux fois serait du bruit. */
+    if (data && data[0] && !data[0].listing_id) alertClientsForListing(asListing(data[0]));
   } catch (error) {
     console.error('Erreur lors de l\'enregistrement de la propriété:', error);
     UI.handleError(error);
@@ -2211,7 +2297,7 @@ function viewClientDetails(clientId) {
    dans les listes. Sur une connexion mobile, c'est du volume inutile. */
 const TABLE_COLS = {
   clients:    'id,name,phone,email,type,status,source,source_detail,notes,created_at',
-  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at',
+  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at,district,rent_sale,bedrooms,furnished',
   activities: 'id,type,client_id,property_id,notes,date,created_at,outcome,next_step,next_date,next_done_at',
   tasks:      'id,title,description,due_date,status,created_at',
   /* CORRECTIF 31/08/2026 — `accompte` et `reste` étaient demandés ici alors

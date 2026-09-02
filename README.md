@@ -129,6 +129,24 @@ Deux champs de texte libre, deux rôles à ne pas confondre : les **notes du
 client** décrivent la personne ; le **besoin en clair**, sur la recherche,
 garde ce que le client a dit avec ses mots, à côté des critères.
 
+## Un bien du CRM peut être proposé
+
+Le rapprochement ne travaillait que sur les annonces de selogercm.com : une
+fiche saisie dans le CRM n'était proposée à personne. C'était mécanique —
+`evaluate()` exige `rent_sale`, `bedrooms` et `furnished`, que `properties` ne
+portait pas.
+
+Depuis le 31/08/2026 elle les porte, et `asListing()` traduit une fiche vers
+la forme que le moteur connaît : identifiant préfixé `crm-12` pour ne pas
+heurter un uuid du site, et `available` lu comme `active`. `match.js` reste
+ignorant de l'existence du CRM, ce qui le garde testable sans base.
+
+Une fiche rattachée à une annonce n'entre pas dans ce stock : elle est déjà
+représentée par son annonce, la compter deux fois la proposerait en double.
+
+**Sans transaction renseignée, un bien n'est proposé à personne** — c'est le
+premier critère bloquant du moteur. Le formulaire le dit dans sa légende.
+
 ## Ce qu'une activité retient
 
 Une activité porte, en plus de son type et de ses notes, **son issue** —

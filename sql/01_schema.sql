@@ -70,7 +70,12 @@ create table public.properties (
   owner_id uuid default auth.uid(),
   listing_id uuid,
   listing_slug text,
-  source text default 'crm'::text
+  source text default 'crm'::text,
+  -- Ajoutées le 31/08/2026 par sql/06_property_matching.sql : sans elles, une
+  -- fiche saisie dans le CRM n'était proposée à personne. evaluate() les exige.
+  rent_sale text,
+  bedrooms integer,
+  furnished boolean
 );
 
 -- outcome / next_* ajoutées le 31/08/2026 par sql/05_activity_outcome.sql :
@@ -155,7 +160,9 @@ create table public.shared_listings (
   id bigint not null default nextval('shared_listings_id_seq'::regclass),
   owner_id uuid default auth.uid(),
   client_id bigint,
-  listing_id uuid not null,
+  -- text depuis le 31/08/2026 (sql/06) : accepte les uuid du site ET les
+  -- identifiants préfixés des fiches internes, « crm-12 ».
+  listing_id text not null,
   listing_slug text,
   channel text default 'whatsapp'::text,
   created_at timestamp with time zone default now()
@@ -205,6 +212,7 @@ alter table public.properties add constraint properties_pkey PRIMARY KEY (id);
 -- fiches biens et aux critères d'une recherche. Portefeuille au moment de
 -- la bascule : 3 appartements, 2 maisons — rien à reprendre, on élargissait.
 alter table public.properties add constraint properties_type_check CHECK ((type IS NULL) OR (type = ANY (ARRAY['apartment'::text, 'studio'::text, 'villa'::text, 'house'::text, 'duplex'::text, 'building'::text, 'plots-of-land'::text, 'warehouse'::text, 'office'::text, 'shop'::text, 'commercial'::text])));
+alter table public.properties add constraint properties_rent_sale_check CHECK ((rent_sale IS NULL) OR (rent_sale = ANY (ARRAY['rent'::text, 'sale'::text])));
 alter table public.properties add constraint properties_status_check CHECK ((status = ANY (ARRAY['available'::text, 'sold'::text, 'rented'::text])));
 
 alter table public.activities add constraint activities_pkey PRIMARY KEY (id);
