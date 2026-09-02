@@ -73,6 +73,10 @@ create table public.properties (
   source text default 'crm'::text
 );
 
+-- outcome / next_* ajoutées le 31/08/2026 par sql/05_activity_outcome.sql :
+-- « comment ça s'est terminé » et « ce qu'il reste à faire » étaient écrits
+-- en prose dans `notes`, donc illisibles par le CRM. Aucune tâche n'est
+-- créée à partir d'une suite : elle vit sur l'activité où elle a été écrite.
 create table public.activities (
   id integer not null default nextval('activities_id_seq'::regclass),
   type text not null,
@@ -81,7 +85,11 @@ create table public.activities (
   notes text not null,
   date date not null,
   created_at timestamp without time zone default now(),
-  owner_id uuid default auth.uid()
+  owner_id uuid default auth.uid(),
+  outcome text,
+  next_step text,
+  next_date date,
+  next_done_at timestamp with time zone
 );
 
 create table public.tasks (
@@ -203,6 +211,7 @@ alter table public.activities add constraint activities_pkey PRIMARY KEY (id);
 alter table public.activities add constraint activities_client_id_fkey FOREIGN KEY (client_id) REFERENCES clients(id);
 alter table public.activities add constraint activities_property_id_fkey FOREIGN KEY (property_id) REFERENCES properties(id);
 alter table public.activities add constraint activities_type_check CHECK ((type = ANY (ARRAY['call'::text, 'meeting'::text, 'email'::text, 'visit'::text])));
+alter table public.activities add constraint activities_outcome_check CHECK ((outcome IS NULL) OR (outcome = ANY (ARRAY['done'::text, 'pending'::text, 'failed'::text, 'no_show'::text])));
 
 alter table public.tasks add constraint tasks_pkey PRIMARY KEY (id);
 alter table public.tasks add constraint tasks_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'completed'::text])));
@@ -248,6 +257,9 @@ create unique index idx_properties_ref_unique on public.properties using btree (
 create unique index uniq_properties_listing on public.properties using btree (owner_id, listing_id) where (listing_id is not null);
 
 create index idx_activities_owner on public.activities using btree (owner_id);
+-- Partiel : ne porte que sur les suites encore ouvertes, pas sur l'historique.
+create index idx_activities_next on public.activities using btree (next_date)
+  where (next_step is not null and next_done_at is null);
 create index idx_tasks_owner      on public.tasks using btree (owner_id);
 create index idx_payments_owner   on public.payments using btree (owner_id);
 

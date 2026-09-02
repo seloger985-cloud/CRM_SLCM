@@ -62,7 +62,7 @@ resterait vide sans explication.
 node tests/run.js
 ```
 
-Node seul, rien à installer. À lancer avant chaque commit. Les six contrôles
+Node seul, rien à installer. À lancer avant chaque commit. Les sept contrôles
 ne sont pas génériques : chacun existe parce qu'un bug précis est passé au
 travers d'une relecture. Voir [`tests/`](tests/).
 
@@ -128,6 +128,21 @@ seule et renvoie vers l'écran dédié.
 Deux champs de texte libre, deux rôles à ne pas confondre : les **notes du
 client** décrivent la personne ; le **besoin en clair**, sur la recherche,
 garde ce que le client a dit avec ses mots, à côté des critères.
+
+## Ce qu'une activité retient
+
+Une activité porte, en plus de son type et de ses notes, **son issue** —
+abouti, en attente d'un retour, n'a pas abouti, ne s'est pas tenu — et
+**sa suite** : ce qu'il reste à faire, et pour quand.
+
+C'était jusqu'au 31/08/2026 écrit en prose dans les notes (« Echec : pas
+disponible », « en attente retour clt sur négo demandé »), donc illisible par
+le CRM. Le tableau de bord réunit désormais dans « À faire » les tâches
+ouvertes **et** les suites d'activité en attente, la plus urgente devant.
+
+Aucune tâche n'est créée à partir d'une suite : elle vit sur l'activité où
+elle a été écrite. La dupliquer dans `tasks` obligerait à synchroniser deux
+endroits, et l'un des deux finirait par mentir.
 
 ## Ce que le CRM ne fait pas
 

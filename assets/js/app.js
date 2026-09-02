@@ -352,11 +352,11 @@ async function createActivityFromSuggestion(index) {
    cinq redondantes — quatre comptages de statuts et un getRecent('clients')
    que getAll('clients') contenait déjà. Ramenées à quatre, en parallèle. */
 async function showDashboard() {
-  const [allClients, allPayments, allTasks, recentActivities, siteListings, shared, allDemands] = await Promise.all([
+  const [allClients, allPayments, allTasks, allActivities, siteListings, shared, allDemands] = await Promise.all([
     getAll('clients'),
     getAll('payments'),
     getAll('tasks'),
-    getRecent('activities', 5),
+    getAll('activities'),
     /* Les annonces du site sont en cache 5 minutes côté site.js, et les deux
        appels dégradent en silence : le tableau de bord reste utilisable même
        si selogercm.com ne répond pas. */
@@ -389,7 +389,25 @@ async function showDashboard() {
     .filter(t => t.status !== 'completed')
     .sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'));
   const today = new Date().toISOString().slice(0, 10);
-  const lateTasks = openTasks.filter(t => t.due_date && t.due_date < today).length;
+
+  /* getAll trie par created_at décroissant : les cinq premières sont les
+     plus récentes, et la même liste sert aux suites en attente. */
+  const recentActivities = allActivities.slice(0, 5);
+
+  /* « À faire » réunit deux natures : une tâche qu'on s'est fixée, et la
+     suite d'une activité — une visite qui a échoué, une négociation qui
+     attend un retour. La seconde n'existait pas avant le 31/08/2026 : elle
+     était écrite en prose dans les notes, donc invisible. */
+  const suites = openFollowUps(allActivities);
+  const aFaire = openTasks.map(t => ({
+      quoi: t.title, quand: t.due_date, id: t.id, kind: 'task'
+    })).concat(suites.map(a => ({
+      quoi: a.next_step, quand: a.next_date, id: a.id, kind: 'suite',
+      contexte: getActivityLabel(a.type)
+    })))
+    .sort((x, y) => (x.quand || '9999').localeCompare(y.quand || '9999'));
+
+  const enRetard = aFaire.filter(x => x.quand && x.quand < today).length;
 
   // Données pour graphiques
   const statusData = [newRequests, visits, negotiations, signed];
@@ -416,12 +434,14 @@ async function showDashboard() {
          « Prix moyen » a été retiré : une moyenne sur des biens hétérogènes —
          studio et immeuble dans le même calcul — n'oriente aucune décision. -->
     <div class="dashboard">
-      <div class="card${openTasks.length ? ' attention' : ''}">
+      <div class="card${aFaire.length ? ' attention' : ''}">
         <h3>À faire</h3>
-        <p class="metric">${openTasks.length}</p>
-        <small>${openTasks.length === 0
+        <p class="metric">${aFaire.length}</p>
+        <small>${aFaire.length === 0
           ? 'Rien en attente'
-          : 'tâche' + (openTasks.length > 1 ? 's' : '') + ' ouverte' + (openTasks.length > 1 ? 's' : '') + (lateTasks ? ' · ' + lateTasks + ' en retard' : '')}</small>
+          : openTasks.length + ' tâche' + (openTasks.length > 1 ? 's' : '')
+            + (suites.length ? ' · ' + suites.length + ' suite' + (suites.length > 1 ? 's' : '') + " d'activité" : '')
+            + (enRetard ? ' · ' + enRetard + ' en retard' : '')}</small>
       </div>
       <div class="card">
         <h3>Nouvelles demandes</h3>
@@ -499,12 +519,15 @@ async function showDashboard() {
       </div>
       <div class="list">
         <h3>À faire</h3>
-        ${openTasks.length
-          ? openTasks.slice(0, 6).map(t => `<div class="list-item"><span>${escHtml(t.title)}</span><span class="item-meta">${
-              t.due_date
-                ? (t.due_date < today ? '<strong style="color:var(--danger)">' + formatDate(t.due_date) + '</strong>' : formatDate(t.due_date))
-                : 'sans échéance'
-            }</span></div>`).join('')
+        ${aFaire.length
+          ? aFaire.slice(0, 6).map(x => `<div class="list-item">
+              <span>${escHtml(x.quoi)}${x.kind === 'suite' ? ` <span class="src-badge src-crm">${escHtml(x.contexte)}</span>` : ''}</span>
+              <span class="item-meta">${
+                x.quand
+                  ? (x.quand < today ? '<strong style="color:var(--danger)">' + formatDate(x.quand) + '</strong>' : formatDate(x.quand))
+                  : 'sans échéance'
+              }</span>
+            </div>`).join('')
           : '<p class="item-meta">Rien en attente.</p>'}
       </div>
     </div>
@@ -1276,6 +1299,54 @@ function addPaymentFor(kind, id) {
                   kind === 'client' ? 'clients' : 'properties');
 }
 
+/* ═══════════════ ISSUE ET SUITE D'UNE ACTIVITÉ ═══════════════
+
+   Une visite qui échoue, une négociation qui attend un retour : c'était
+   écrit en prose dans les notes, donc invisible pour le CRM. Depuis le
+   31/08/2026 (voir sql/05_activity_outcome.sql), l'activité porte son
+   issue et sa suite.
+
+   Aucune tâche n'est créée automatiquement : la suite vit sur l'activité
+   où elle a été écrite. La dupliquer dans `tasks` obligerait à
+   synchroniser deux endroits, et l'un des deux finirait par mentir. */
+
+const OUTCOME_FR = {
+  done:    'Abouti',
+  pending: 'En attente d’un retour',
+  failed:  'N’a pas abouti',
+  no_show: 'Ne s’est pas tenu'
+};
+
+function outcomeLabel(o) {
+  return OUTCOME_FR[o] || '';
+}
+
+/** Vrai si l'activité attend encore quelque chose de l'agent. */
+function hasOpenFollowUp(a) {
+  return !!(a && a.next_step && !a.next_done_at);
+}
+
+/** Les suites ouvertes, la plus urgente d'abord. Une suite sans date passe
+    après celles qui en ont une — comme pour les tâches. */
+function openFollowUps(activities) {
+  return (activities || [])
+    .filter(hasOpenFollowUp)
+    .sort((a, b) => (a.next_date || '9999').localeCompare(b.next_date || '9999'));
+}
+
+/** Marque une suite comme faite. Rien ne se supprime : on horodate. */
+async function closeFollowUp(id, back) {
+  try {
+    const { error } = await supabaseClient.from('activities')
+      .update({ next_done_at: new Date().toISOString() }).eq('id', id);
+    if (error) throw error;
+    UI.toast('Suite marquée comme faite.', 'success');
+    if (back === 'dashboard') showDashboard(); else showActivities();
+  } catch (error) {
+    UI.handleError(error);
+  }
+}
+
 /* ═══════════════ LES RECHERCHES D'UN CLIENT ═══════════════
 
    Un client peut chercher plusieurs choses à la fois — un studio pour lui,
@@ -1763,9 +1834,16 @@ async function showActivities() {
     <button onclick="showActivityForm()" class="btn btn-primary">Ajouter Activité</button>
     <div class="list">
       ${activities.length ? activities.map(a => `<div class="list-item">
-        <div><strong>${getActivityLabel(a.type)}</strong> — ${escHtml(a.notes)}</div>
+        <div><strong>${getActivityLabel(a.type)}</strong> — ${escHtml(a.notes)}
+          ${a.outcome ? `<span class="src-badge ${a.outcome === 'failed' || a.outcome === 'no_show' ? 'src-crm' : 'src-site'}">${escHtml(outcomeLabel(a.outcome))}</span>` : ''}</div>
         <div class="item-meta">${formatDate(a.date)}</div>
-        <div><button onclick="editActivity(${Number(a.id)})" class="edit-btn" title="Modifier">${ICON_EDIT}</button></div>
+        <div class="item-meta">${hasOpenFollowUp(a)
+          ? 'À faire : ' + escHtml(a.next_step) + (a.next_date ? ' — ' + formatDate(a.next_date) : '')
+          : (a.next_step ? 'Suite faite' : '')}</div>
+        <div>
+          ${hasOpenFollowUp(a) ? `<button onclick="closeFollowUp(${Number(a.id)})" class="ghost-btn">Fait</button>` : ''}
+          <button onclick="editActivity(${Number(a.id)})" class="edit-btn" title="Modifier">${ICON_EDIT}</button>
+        </div>
       </div>`).join('') : '<p class="item-meta">Aucune activité pour le moment.</p>'}
     </div>
   `;
@@ -1824,6 +1902,25 @@ function showActivityForm(activity = null, draft = null, back = null) {
         <label>Date:</label>
         <input type="date" id="activity-date" value="${escAttr(v.date || new Date().toISOString().split('T')[0])}" required>
       </div>
+      <fieldset class="demand-block">
+        <legend>Suite <span class="item-meta">— ce que le CRM doit retenir</span></legend>
+        <div class="form-group">
+          <label>Issue:</label>
+          <select id="activity-outcome">
+            <option value="">Non renseignée</option>
+            ${Object.keys(OUTCOME_FR).map(o => `<option value="${escAttr(o)}" ${v.outcome === o ? 'selected' : ''}>${OUTCOME_FR[o]}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>À faire ensuite <span class="item-meta">— laisser vide s'il n'y a rien</span></label>
+          <input type="text" id="activity-next-step" value="${escAttr(v.next_step || '')}"
+                 placeholder="Proposer Bonapriso à la place" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label>Pour quand:</label>
+          <input type="date" id="activity-next-date" value="${escAttr(v.next_date || '')}">
+        </div>
+      </fieldset>
       <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Ajouter'}</button>
       <button type="button" onclick="${back === 'clients' ? 'showClients()' : back === 'properties' ? 'showProperties()' : 'showActivities()'}" class="btn btn-outline">Annuler</button>
     </form>
@@ -1845,7 +1942,12 @@ async function saveActivity(id, back) {
     client_id: document.getElementById('activity-client').value || null,
     property_id: document.getElementById('activity-property').value || null,
     notes: document.getElementById('activity-notes').value,
-    date: document.getElementById('activity-date').value
+    date: document.getElementById('activity-date').value,
+    outcome: document.getElementById('activity-outcome').value || null,
+    next_step: document.getElementById('activity-next-step').value || null,
+    /* Une date sans rien à faire n'a pas de sens : on ne la garde pas. */
+    next_date: document.getElementById('activity-next-step').value
+      ? (document.getElementById('activity-next-date').value || null) : null
   };
 
   try {
@@ -2110,7 +2212,7 @@ function viewClientDetails(clientId) {
 const TABLE_COLS = {
   clients:    'id,name,phone,email,type,status,source,source_detail,notes,created_at',
   properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at',
-  activities: 'id,type,client_id,property_id,notes,date,created_at',
+  activities: 'id,type,client_id,property_id,notes,date,created_at,outcome,next_step,next_date,next_done_at',
   tasks:      'id,title,description,due_date,status,created_at',
   /* CORRECTIF 31/08/2026 — `accompte` et `reste` étaient demandés ici alors
      qu'ils n'existent pas dans la table (voir sql/01_schema.sql). PostgREST
