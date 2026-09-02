@@ -70,6 +70,11 @@ Relevés en comparant l'export à `assets/js/app.js`. Le détail est en fin de
 
 ## Points confirmés
 
+- `properties_type_check` élargie aux onze types du site (31/08/2026,
+  migration `04` jouée). Le portefeuille ne comptait alors que des
+  appartements et des maisons : aucune donnée à reprendre, la contrainte
+  ayant été élargie et non restreinte.
+
 - La table `demands` (31/08/2026) : treize colonnes, types et valeurs par
   défaut confirmés par introspection. `owner_id` a bien `auth.uid()` en
   défaut, `active` est `not null default true`, `created_at` porte le fuseau.

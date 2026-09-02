@@ -192,9 +192,10 @@ alter table public.clients add constraint clients_type_check CHECK ((type = ANY 
 alter table public.clients add constraint clients_rent_sale_check CHECK (((rent_sale IS NULL) OR (rent_sale = ANY (ARRAY['rent'::text, 'sale'::text]))));
 
 alter table public.properties add constraint properties_pkey PRIMARY KEY (id);
--- Élargie le 31/08/2026 par sql/04_property_types.sql : le même vocabulaire
--- de types sert aux annonces du site, aux fiches biens et aux critères d'une
--- recherche. À confirmer par introspection.
+-- Élargie le 31/08/2026 par sql/04_property_types.sql, migration jouée et
+-- vérifiée : le même vocabulaire de types sert aux annonces du site, aux
+-- fiches biens et aux critères d'une recherche. Portefeuille au moment de
+-- la bascule : 3 appartements, 2 maisons — rien à reprendre, on élargissait.
 alter table public.properties add constraint properties_type_check CHECK ((type IS NULL) OR (type = ANY (ARRAY['apartment'::text, 'studio'::text, 'villa'::text, 'house'::text, 'duplex'::text, 'building'::text, 'plots-of-land'::text, 'warehouse'::text, 'office'::text, 'shop'::text, 'commercial'::text])));
 alter table public.properties add constraint properties_status_check CHECK ((status = ANY (ARRAY['available'::text, 'sold'::text, 'rented'::text])));
 
