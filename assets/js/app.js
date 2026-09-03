@@ -994,21 +994,78 @@ async function showProperties(force) {
   renderPropsList();
 }
 
+/* ═══════════════ VIGNETTES ═══════════════
+
+   Deux titres se ressemblent souvent au point d'être indiscernables dans une
+   liste — « Appartement 02ch Bonapriso » revient cinq fois. La photo est ce
+   qui les sépare en un regard. */
+
+/* La première photo de l'annonce, ou null. Tolère un champ absent, vide, ou
+   contenant autre chose que des chaînes : la vignette est un confort, elle
+   ne doit jamais faire échouer un rendu. */
+function coverOf(listing) {
+  const images = listing && listing.images;
+  if (!Array.isArray(images)) return null;
+  const url = images.find(u => typeof u === 'string' && u.trim());
+  return url ? url.trim() : null;
+}
+
+/* Code court affiché quand il n'y a pas de photo. Écrit à la main plutôt que
+   tronqué de TYPE_FR : « Terrain » et « Local commercial » donneraient TER et
+   LOC par découpe, mais « Immeuble » donnerait IMM et « Maison » MAI — autant
+   fixer le vocabulaire une fois. */
+const TYPE_CODE = {
+  apartment: 'APP', studio: 'STU', villa: 'VIL', house: 'MAI',
+  duplex: 'DUP', building: 'IMM', 'plots-of-land': 'TER',
+  warehouse: 'ENT', office: 'BUR', shop: 'BOU', commercial: 'LOC'
+};
+
+/* Teinte stable dérivée de l'identifiant. Le but n'est pas d'être joli mais
+   de DISTINGUER : deux appartements du même quartier, sans photo ni l'un ni
+   l'autre, doivent quand même porter deux pastilles différentes. */
+function hueFrom(key) {
+  const s = String(key || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return h;
+}
+
+/* La vignette. La pastille colorée est TOUJOURS rendue, l'image se pose
+   par-dessus. Donc : une fiche sans photo garde un repère visuel, et une URL
+   cassée retire son <img> (onerror) en laissant la pastille — jamais l'icône
+   d'image brisée du navigateur, jamais de saut de mise en page.
+
+   `loading="lazy"` n'est pas un raffinement ici : la variante `public` de
+   Cloudflare pèse ~95 Ko et la liste peut afficher 200 biens. */
+function thumbHtml(cover, key, type) {
+  const code = TYPE_CODE[type] || '—';
+  const img = cover
+    ? `<img src="${escAttr(cover)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">`
+    : '';
+  return `<span class="thumb" style="--thumb-h:${hueFrom(key)}" data-code="${escAttr(code)}">${img}</span>`;
+}
+
 /* Fusionne les biens publiés sur selogercm.com et les saisies internes.
    Un bien du site déjà rattaché à une fiche CRM (listing_id) n'apparaît
    qu'une fois : la fiche CRM prime et porte le lien vers l'annonce. */
 function mergeProperties() {
   const linked = new Set(propsView.crm.map(p => p.listing_id).filter(Boolean));
+  /* Les annonces par identifiant : une fiche CRM rattachée ne porte que
+     `listing_id`, jamais les photos. Sa vignette vient donc de l'annonce —
+     qui reste dans propsView.site même quand on la retire de l'affichage. */
+  const parId = new Map(propsView.site.map(l => [String(l.id), l]));
   const crm = propsView.crm.map(p => Object.assign({}, p, {
     _src: p.listing_id ? 'site' : 'crm',
-    _linked: !!p.listing_id
+    _linked: !!p.listing_id,
+    _cover: p.listing_id ? coverOf(parId.get(String(p.listing_id))) : null
   }));
   const site = propsView.site
     .filter(l => !linked.has(l.id))
     .map(l => ({
       id: null, _siteId: l.id, _slug: l.slug, _src: 'site', _linked: false,
       title: l.title, address: [l.district, l.city].filter(Boolean).join(', '),
-      price: l.price, status: l.status, type: l.type, created_at: l.created_at
+      price: l.price, status: l.status, type: l.type, created_at: l.created_at,
+      _cover: coverOf(l)
     }));
   return crm.concat(site);
 }
@@ -1058,6 +1115,7 @@ function renderPropsList() {
         + `<button onclick="editProperty(${Number(p.id)})" class="edit-btn" title="Modifier la fiche">${ICON_EDIT}</button>`
       : `<button onclick="importListing('${escAttr(p._siteId)}')" class="edit-btn" title="Créer une fiche CRM pour ce bien">+ Fiche</button>`;
     return `<div class="list-item">
+      ${thumbHtml(p._cover, p.id || p._siteId || p.title, p.type)}
       <div><strong>${escHtml(p.title || 'Sans titre')}</strong> ${badge}</div>
       <div class="item-meta">${escHtml(p.address || '')} — ${price}</div>
       <div class="item-meta">${formatDate(p.created_at)}</div>
@@ -1877,6 +1935,7 @@ async function showMatching() {
         <div class="list">
           ${m.hits.map((h, hi) => `
             <div class="list-item">
+              ${thumbHtml(coverOf(h.listing), h.listing.id || h.listing.slug || h.listing.title, h.listing.type)}
               <div><strong>${escHtml(h.listing.title || 'Sans titre')}</strong>
                 <span class="src-badge src-site">${h.score}%</span></div>
               <div class="item-meta">${escHtml([h.listing.district, h.listing.city].filter(Boolean).join(', '))} — ${Number(h.listing.price) > 0 ? formatMoney(h.listing.price) + ' FCFA' : 'prix sur demande'}</div>

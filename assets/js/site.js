@@ -26,8 +26,17 @@
   const SITE_URL = 'https://hozlyddiqodvjguqywty.supabase.co';
   const SITE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhvemx5ZGRpcW9kdmpndXF5d3R5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxNzA1NzcsImV4cCI6MjA4OTc0NjU3N30.nRbbqF9SpwxztK0LI2BWWZwk39phGdCnO9MgIbmcG68';
 
-  /* Colonnes du site (rappel : district, rent_sale, plots-of-land) */
-  const COLS = 'id,slug,title,price,district,city,type,rent_sale,bedrooms,status,furnished,created_at';
+  /* Colonnes du site (rappel : district, rent_sale, plots-of-land)
+
+     `images` : tableau d'URLs completes, la premiere sert de vignette dans le
+     CRM. Verifie le 03/09/2026 sur 200 annonces actives — une seule sans
+     photo. Les URLs pointent sur Cloudflare Images (variante `public`, seule
+     existante) ou, pour 23 anciennes annonces, sur le Storage Supabase.
+
+     PIEGE : demander une colonne inexistante fait echouer TOUTE la lecture
+     (PostgREST 42703, sans erreur visible). Ne rien ajouter ici sans avoir
+     verifie que la colonne existe. */
+  const COLS = 'id,slug,title,price,district,city,type,rent_sale,bedrooms,status,furnished,created_at,images';
 
   const CACHE_MS = 5 * 60 * 1000;
   let _cache = null;

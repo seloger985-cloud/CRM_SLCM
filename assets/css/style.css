@@ -539,6 +539,64 @@ main button:not(.btn):not(.theme-toggle):not(.toast-close):not(.modal-close):hov
   flex-shrink: 0;
 }
 
+/* ─── Vignette d'identification ───────────────────────────────────────
+   Les titres d'annonces se ressemblent (« Appartement 02ch Bonapriso »
+   revient cinq fois) : la photo est ce qui les distingue en un regard.
+
+   C'est un <span> et non un <div>, volontairement : `.list-item > div:
+   first-child` ci-dessus donne `flex: 1` au bloc texte. Un <div> ici
+   capterait cette règle et deviendrait l'élément extensible. */
+.thumb {
+  flex: 0 0 56px;
+  width: 56px;
+  height: 56px;
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-1);
+  background: hsl(var(--thumb-h, 30) 40% 88%);
+}
+
+/* Le repli, toujours rendu SOUS l'image. Une fiche saisie dans le CRM n'a
+   pas de photo, et une URL cassée retire son <img> : dans les deux cas la
+   pastille reste. Sa teinte vient de l'identifiant du bien, donc deux
+   appartements sans photo ne se confondent pas non plus. */
+.thumb::after {
+  content: attr(data-code);
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: hsl(var(--thumb-h, 30) 45% 28%);
+}
+
+/* Au-dessus de la pastille. L'écart de clarté 88 % / 28 % tient quelle que
+   soit la teinte : le contraste du code ne dépend pas du bien affiché. */
+.thumb img {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+[data-theme="dark"] .thumb {
+  background: hsl(var(--thumb-h, 30) 22% 24%);
+}
+
+[data-theme="dark"] .thumb::after {
+  color: hsl(var(--thumb-h, 30) 30% 72%);
+}
+
+@media (max-width: 768px) {
+  .thumb { flex-basis: 44px; width: 44px; height: 44px; }
+}
+
 .item-meta {
   font-size: var(--fs-sm);
   color: var(--fg-2);
