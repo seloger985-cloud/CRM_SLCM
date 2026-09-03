@@ -27,6 +27,17 @@
 //  · Elle NE DEVINE PAS. Un champ absent du message revient à null et
 //    figure dans `manquant`, pour que l'interface le signale plutôt que
 //    de laisser croire à une information vérifiée.
+//  ── Au moment de deployer ──
+//
+//  Le contenu de index.ts doit etre REMPLACE EN ENTIER. Le gabarit par
+//  defaut de Supabase (`withSupabase({ auth: ["publishable","secret"] })`,
+//  avec sa ligne console.info("server started")) refuse un jeton de session
+//  utilisateur : il n'accepte qu'une cle publishable ou secrete. Laisse en
+//  place, il repond 401 sans rien journaliser — les journaux ne montrent
+//  alors qu'un demarrage sain, ce qui egare le diagnostic.
+//
+//  Reperer que le gabarit est encore la : chercher « server started » dans
+//  les journaux. Cette fonction-ci ne l'ecrit jamais.
 // ════════════════════════════════════════════════════════════════════
 
 /* Version épinglée et VÉRIFIÉE publiée (0.123.0, la dernière au 03/09/2026).
@@ -138,9 +149,21 @@ Deno.serve(async (req) => {
   }
 
   try {
+    /* Le projet tourne sur le nouveau runtime Supabase, qui nomme la cle
+       publique « publishable » et non plus « anon ». On accepte les deux
+       plutot que d'echouer sur un nom de variable. */
+    const cle = Deno.env.get('SUPABASE_ANON_KEY')
+      ?? Deno.env.get('SUPABASE_PUBLISHABLE_KEY');
+    if (!cle) {
+      console.error('[understand-inbox] aucune cle publique dans l environnement');
+      return json({
+        error: 'config_incomplete',
+        detail: 'ni SUPABASE_ANON_KEY ni SUPABASE_PUBLISHABLE_KEY'
+      }, 500);
+    }
     const asUser = createClient(
       Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
+      cle,
       { global: { headers: { Authorization: authHeader } } }
     );
     const { data, error } = await asUser.auth.getUser();
