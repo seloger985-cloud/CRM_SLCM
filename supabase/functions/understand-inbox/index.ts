@@ -114,17 +114,37 @@ Deno.serve(async (req) => {
   /* ── Le point d'entrée est public : on vérifie la session ──
      Sans cela, n'importe qui connaissant l'URL ferait tourner la note. */
   const authorization = req.headers.get('Authorization') || '';
-  if (!authorization.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401);
+  if (!authorization.startsWith('Bearer ')) {
+    return json({ error: 'jeton_absent', detail: "en-tête Authorization manquant" }, 401);
+  }
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+  /* Les projets récents nomment la clé publique autrement : on accepte les
+     deux plutôt que d'échouer en silence sur un nom de variable. */
+  const anonKey = Deno.env.get('SUPABASE_ANON_KEY')
+    ?? Deno.env.get('SUPABASE_PUBLISHABLE_KEY');
+
+  if (!supabaseUrl || !anonKey) {
+    /* Un défaut de configuration n'est PAS un refus d'accès : le dire
+       clairement évite de chercher du côté de la session. */
+    return json({
+      error: 'config_incomplete',
+      detail: 'SUPABASE_URL ou la clé publique du projet manque côté fonction'
+    }, 500);
+  }
+
   try {
     const who = await fetch(`${supabaseUrl}/auth/v1/user`, {
-      headers: { Authorization: authorization, apikey: anonKey ?? '' }
+      headers: { Authorization: authorization, apikey: anonKey }
     });
-    if (!who.ok) return json({ error: 'unauthorized' }, 401);
+    if (!who.ok) {
+      return json({
+        error: 'session_invalide',
+        detail: `auth/v1/user a répondu ${who.status}`
+      }, 401);
+    }
   } catch (_e) {
-    return json({ error: 'auth_unavailable' }, 503);
+    return json({ error: 'auth_indisponible' }, 503);
   }
 
   const apiKey = Deno.env.get('CRM_SLCM') ?? Deno.env.get('ANTHROPIC_API_KEY');

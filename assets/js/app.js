@@ -1573,25 +1573,33 @@ async function toggleDemand(id, active) {
    formulaire s'ouvre pré-rempli, l'agent corrige et valide. Voir
    supabase/functions/README.md. */
 
-/** Appelle une Edge Function du projet CRM avec la session en cours. */
+/** Appelle une Edge Function du projet CRM.
+ *
+ * Passe par supabase-js plutôt que par un fetch à la main : le client sait
+ * poser les DEUX en-têtes que la passerelle exige — `Authorization` avec le
+ * jeton de session, et `apikey`. Un fetch maison qui n'envoie que le premier
+ * se fait rejeter par la passerelle AVANT d'atteindre la fonction, avec un
+ * 401 impossible à distinguer d'un refus applicatif. C'est ce qui s'est
+ * passé le 03/09/2026.
+ */
 async function callFunction(name, payload) {
-  const { data } = await supabaseClient.auth.getSession();
-  const token = data && data.session && data.session.access_token;
-  if (!token) throw new Error('Session expirée — recharge la page.');
+  const { data, error } = await supabaseClient.functions.invoke(name, { body: payload });
 
-  const res = await fetch(window.SLCM_CONFIG.SUPABASE_URL + '/functions/v1/' + name, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-    body: JSON.stringify(payload)
-  });
-
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    /* Le message de l'API vaut mieux qu'un code : « message_too_long » se
-       comprend, « 413 » non. */
-    throw new Error(body.error || ('Erreur ' + res.status));
+  if (error) {
+    /* Le corps de la réponse porte le motif exact — « session_invalide »,
+       « message_too_long ». Le code HTTP seul n'apprend rien. */
+    let motif = error.message || 'appel impossible';
+    try {
+      if (error.context && typeof error.context.json === 'function') {
+        const corps = await error.context.json();
+        if (corps && (corps.error || corps.detail)) {
+          motif = [corps.error, corps.detail].filter(Boolean).join(' — ');
+        }
+      }
+    } catch (_e) { /* corps illisible : on garde le message d'origine */ }
+    throw new Error(motif);
   }
-  return body;
+  return data;
 }
 
 function showInbox() {

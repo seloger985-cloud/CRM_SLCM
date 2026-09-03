@@ -56,6 +56,23 @@ KWEKA utilise `claude-haiku-4-5` pour un travail comparable. Passer à Haiku
 ici est une ligne à changer — c'est un arbitrage coût / qualité qui
 t'appartient, pas une évidence technique.
 
+## Lire un 401
+
+Trois refus différents portent le même code HTTP. Le corps de la réponse les
+distingue — c'est lui qu'il faut regarder, pas le code :
+
+| `error` | Ce que ça veut dire |
+|---|---|
+| *(aucun JSON de la fonction)* | La **passerelle** a rejeté avant d'atteindre le code. L'appelant n'envoie pas l'en-tête `apikey`. |
+| `jeton_absent` | Pas d'en-tête `Authorization`. |
+| `session_invalide` | Le jeton a été refusé par `auth/v1/user` — `detail` donne son code. |
+| `config_incomplete` | `SUPABASE_URL` ou la clé publique manque **côté fonction**. Ce n'est pas un refus d'accès, c'est un défaut de configuration. |
+
+Côté CRM, `callFunction()` passe par `supabase.functions.invoke()` plutôt que
+par un `fetch` à la main : le client sait poser les deux en-têtes que la
+passerelle exige. Un `fetch` maison qui n'envoie que `Authorization` se fait
+rejeter avant d'arriver ici.
+
 ## Ce qui protège la note
 
 - La fonction exige une session Supabase valide : le point d'entrée est
