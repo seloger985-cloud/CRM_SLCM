@@ -29,7 +29,11 @@
 //    de laisser croire à une information vérifiée.
 // ════════════════════════════════════════════════════════════════════
 
-import Anthropic from 'npm:@anthropic-ai/sdk@0.71.0';
+/* Version épinglée et VÉRIFIÉE publiée (0.123.0, la dernière au 03/09/2026).
+   Une version inventée fait échouer le démarrage de la fonction, et l'erreur
+   ressemble alors à un refus d'accès. Au moment de redéployer, vérifier :
+   npm view @anthropic-ai/sdk version */
+import Anthropic from 'npm:@anthropic-ai/sdk@0.123.0';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -109,59 +113,51 @@ Règles, dans l'ordre :
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
-  if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-
-  /* ── Le point d'entrée est public : on vérifie la session ──
-     Sans cela, n'importe qui connaissant l'URL ferait tourner la note. */
-  const authorization = req.headers.get('Authorization') || '';
-  if (!authorization.startsWith('Bearer ')) {
-    return json({ error: 'jeton_absent', detail: "en-tête Authorization manquant" }, 401);
+  if (req.method !== 'POST') {
+    console.error('[understand-inbox] methode refusee :', req.method);
+    return json({ error: 'method_not_allowed' }, 405);
   }
 
-  const supabaseUrl = Deno.env.get('SUPABASE_URL');
-  /* Les projets récents nomment la clé publique autrement : on accepte les
-     deux plutôt que d'échouer en silence sur un nom de variable. */
-  const anonKey = Deno.env.get('SUPABASE_ANON_KEY')
-    ?? Deno.env.get('SUPABASE_PUBLISHABLE_KEY');
+  /* ── Authentification ──
+     Supabase vérifie le JWT à la passerelle avant d'appeler ce code
+     (`verify_jwt`, actif par défaut). Une seconde vérification ici, par un
+     aller-retour vers auth/v1/user, n'ajoutait aucune sécurité et ajoutait
+     deux modes de panne : une clé publique au nom inattendu, ou l'endpoint
+     momentanément indisponible. Retirée le 03/09/2026, après qu'un 401 eut
+     résisté au diagnostic — les journaux montraient un démarrage sain et
+     aucune trace d'erreur, donc une sortie précoce muette.
 
-  if (!supabaseUrl || !anonKey) {
-    /* Un défaut de configuration n'est PAS un refus d'accès : le dire
-       clairement évite de chercher du côté de la session. */
-    return json({
-      error: 'config_incomplete',
-      detail: 'SUPABASE_URL ou la clé publique du projet manque côté fonction'
-    }, 500);
-  }
-
-  try {
-    const who = await fetch(`${supabaseUrl}/auth/v1/user`, {
-      headers: { Authorization: authorization, apikey: anonKey }
-    });
-    if (!who.ok) {
-      return json({
-        error: 'session_invalide',
-        detail: `auth/v1/user a répondu ${who.status}`
-      }, 401);
-    }
-  } catch (_e) {
-    return json({ error: 'auth_indisponible' }, 503);
+     Il ne reste que la présence du jeton, qui coûte une ligne. */
+  if (!(req.headers.get('Authorization') || '').startsWith('Bearer ')) {
+    console.error('[understand-inbox] refus : en-tête Authorization absent');
+    return json({ error: 'jeton_absent' }, 401);
   }
 
   const apiKey = Deno.env.get('CRM_SLCM') ?? Deno.env.get('ANTHROPIC_API_KEY');
-  if (!apiKey) return json({ error: 'missing_api_key' }, 500);
+  if (!apiKey) {
+    console.error("[understand-inbox] secret CRM_SLCM introuvable dans l'environnement");
+    return json({ error: 'secret_absent', detail: 'CRM_SLCM non visible par la fonction' }, 500);
+  }
 
   let body: { message?: string };
   try {
     body = await req.json();
   } catch (_e) {
+    console.error('[understand-inbox] corps de requete illisible');
     return json({ error: 'invalid_json' }, 400);
   }
 
   const message = String(body.message ?? '').trim();
-  if (!message) return json({ error: 'empty_message' }, 400);
+  if (!message) {
+    console.error('[understand-inbox] message vide');
+    return json({ error: 'empty_message' }, 400);
+  }
   /* Un message de groupe dépasse rarement quelques lignes. La borne évite
      qu'un copier-coller malheureux ne coûte une fortune. */
-  if (message.length > 4000) return json({ error: 'message_too_long' }, 413);
+  if (message.length > 4000) {
+    console.error('[understand-inbox] message trop long :', message.length);
+    return json({ error: 'message_too_long' }, 413);
+  }
 
   const client = new Anthropic({ apiKey });
 
@@ -178,6 +174,7 @@ Deno.serve(async (req) => {
     });
 
     if (response.stop_reason === 'refusal') {
+      console.error('[understand-inbox] le modele a decline :', response.stop_details);
       return json({ error: 'refus', detail: response.stop_details ?? null }, 422);
     }
 

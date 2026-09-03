@@ -1586,18 +1586,30 @@ async function callFunction(name, payload) {
   const { data, error } = await supabaseClient.functions.invoke(name, { body: payload });
 
   if (error) {
-    /* Le corps de la réponse porte le motif exact — « session_invalide »,
-       « message_too_long ». Le code HTTP seul n'apprend rien. */
-    let motif = error.message || 'appel impossible';
+    /* « Edge Function returned a non-2xx status code » ne dit rien. Le motif
+       exact est dans le corps de la réponse — « session_invalide »,
+       « message_too_long », « extraction_impossible ». On va le chercher, et
+       à défaut on rend au moins le code HTTP, qui oriente déjà. */
+    const ctx = error.context;
+    const statut = ctx && typeof ctx.status === 'number' ? ctx.status : null;
+    let motif = '';
+
     try {
-      if (error.context && typeof error.context.json === 'function') {
-        const corps = await error.context.json();
-        if (corps && (corps.error || corps.detail)) {
-          motif = [corps.error, corps.detail].filter(Boolean).join(' — ');
-        }
+      if (ctx && typeof ctx.json === 'function') {
+        const corps = await ctx.clone().json();
+        if (corps) motif = [corps.error, corps.detail].filter(Boolean).join(' — ');
       }
-    } catch (_e) { /* corps illisible : on garde le message d'origine */ }
-    throw new Error(motif);
+    } catch (_e) {
+      /* Corps déjà lu, ou pas du JSON : on tente le texte brut. */
+      try {
+        if (ctx && typeof ctx.text === 'function') motif = (await ctx.clone().text()).slice(0, 200);
+      } catch (_e2) { /* tant pis */ }
+    }
+
+    /* La console garde tout, l'écran garde l'essentiel. */
+    console.error('[callFunction]', name, 'HTTP', statut, error);
+    if (!motif) motif = error.message || 'appel impossible';
+    throw new Error(statut ? motif + ' (HTTP ' + statut + ')' : motif);
   }
   return data;
 }

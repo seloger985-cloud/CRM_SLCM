@@ -56,6 +56,21 @@ KWEKA utilise `claude-haiku-4-5` pour un travail comparable. Passer à Haiku
 ici est une ligne à changer — c'est un arbitrage coût / qualité qui
 t'appartient, pas une évidence technique.
 
+## Quand ça échoue
+
+**D'abord les journaux Supabase** : Edge Functions → `understand-inbox` →
+onglet **Logs**. Ils donnent le statut réel, la sortie de `console.error`, et
+surtout les erreurs de **démarrage** — un import qui ne résout pas fait
+échouer la fonction avant toute exécution, et l'erreur ressemble alors à un
+refus d'accès.
+
+C'est ce qui s'est produit le 03/09/2026 : le SDK était épinglé sur une
+version ancienne, choisie sans vérification. Avant de redéployer :
+
+```bash
+npm view @anthropic-ai/sdk version
+```
+
 ## Lire un 401
 
 Trois refus différents portent le même code HTTP. Le corps de la réponse les
