@@ -10,6 +10,27 @@ D'où ce dossier. **Une seule fonction pour l'instant.**
 |---|---|
 | `understand-inbox` | Un message reçu d'un confrère devient une proposition de fiche bien. N'écrit rien. |
 
+## Vérifier QUELLE version tourne
+
+La fonction porte un marqueur `VERSION`, journalisé à chaque appel et renvoyé
+dans chaque réponse :
+
+```
+[understand-inbox] version 2026-09-03-c
+```
+
+**À incrémenter dès qu'on touche le fichier.** C'est la seule façon fiable de
+savoir si un déploiement a pris — et son absence a coûté trois diagnostics
+successifs le 03/09/2026, tous portant sur du code qui n'était pas déployé.
+
+Les signes qu'un déploiement n'a pas pris :
+
+- les journaux montrent `server started` → c'est encore le gabarit Supabase ;
+- le marqueur de version est absent des journaux ;
+- la trace d'erreur pointe toujours **la même ligne** alors que le fichier a
+  changé de longueur ;
+- le message affiché dans le CRM est celui d'avant la correction.
+
 ## Le réglage qui décide de tout
 
 **« Verify JWT » doit être DÉSACTIVÉ** sur la fonction (Edge Functions →

@@ -48,6 +48,15 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.123.0';
 /* Même version que celle qui tourne dans KWEKA : ce gabarit-là fonctionne. */
 import { createClient } from 'npm:@supabase/supabase-js@2.49.0';
 
+/* Marqueur de version, journalise a CHAQUE appel et renvoye dans la reponse.
+   A incrementer des qu'on touche ce fichier.
+
+   Raison d'etre : le 03/09/2026, trois diagnostics successifs ont porte sur du
+   code qui n'etait pas deploye. Les journaux montraient un demarrage sain, la
+   trace d'erreur pointait toujours la meme ligne, et rien ne permettait de
+   dire quelle version tournait. Une ligne de journal aurait suffi. */
+const VERSION = '2026-09-03-d';
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -142,6 +151,8 @@ Deno.serve(async (req) => {
      la main avec un fetch vers auth/v1/user, puis je l'ai supprimée en pariant
      sur la passerelle. Les deux ont échoué en 401. Le gabarit qui marche
      depuis des mois était à côté, dans l'autre projet. */
+  console.log('[understand-inbox] version', VERSION);
+
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) {
     console.error('[understand-inbox] refus : en-tête Authorization absent');
@@ -220,6 +231,15 @@ Deno.serve(async (req) => {
     ? { headers: { 'anthropic-workspace-id': workspaceId } }
     : undefined;
 
+  /* On journalise ce qu'on a LU, pas ce qu'on croit avoir configure. Tronque :
+     un identifiant d'espace n'est pas un secret, mais rien n'oblige a l'ecrire
+     en entier dans des journaux qu'on exporte et qu'on colle ailleurs.
+
+     Sans cette ligne, un secret absent et un secret errone produisent
+     exactement la meme erreur cote API, et on tourne en rond. */
+  console.log('[understand-inbox] workspace lu :',
+    workspaceId ? workspaceId.slice(0, 12) + '...' : 'ABSENT');
+
   try {
     const response = await client.messages.create({
       model: 'claude-opus-5',
@@ -283,7 +303,7 @@ Deno.serve(async (req) => {
       bien.manquant.push('rent_sale');
     }
 
-    return json({ bien, usage: response.usage });
+    return json({ bien, usage: response.usage, version: VERSION });
   } catch (e) {
     console.error('[understand-inbox]', e);
 
@@ -291,12 +311,14 @@ Deno.serve(async (req) => {
        autant le dire a l'ecran plutot que de renvoyer la trace brute. */
     if (String(e).includes('anthropic-workspace-id')) {
       return json({
+        version: VERSION,
         error: 'workspace_manquant',
+        workspace_lu: workspaceId ? workspaceId.slice(0, 12) + '...' : null,
         detail: "La cle API donne acces a plusieurs espaces de travail. "
           + "Ajouter le secret CRM_SLCM_WORKSPACE avec l'identifiant de "
           + "l'espace (Console Anthropic, Parametres, Workspaces)."
       }, 502);
     }
-    return json({ error: 'extraction_impossible', detail: String(e) }, 502);
+    return json({ error: 'extraction_impossible', detail: String(e), version: VERSION }, 502);
   }
 });
