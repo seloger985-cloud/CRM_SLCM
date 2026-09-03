@@ -59,7 +59,14 @@ document.addEventListener('slcm:theme-changed', () => {
 mainContent.innerHTML = '<div class="loading"><div class="spinner"></div><div>Chargement…</div></div>';
 setActiveNav(dashboardBtn);
 if (window.SLCM_SESSION) {
-  showDashboard();
+  /* Différé d'un tour de boucle, et ce n'est pas un détail : appelée ici
+     directement, showDashboard() s'exécute PENDANT le chargement du fichier
+     et touche TABLE_COLS, déclarée bien plus bas. Une const dans sa zone
+     morte lève « Cannot access before initialization », et l'écran affiche
+     « Erreur » — uniquement quand la session est déjà là au chargement,
+     c'est-à-dire au rechargement à chaud. La branche `else` n'avait pas le
+     problème : son événement arrive après la fin du fichier. */
+  queueMicrotask(() => showDashboard());
 } else {
   document.addEventListener('slcm:auth-ready', () => showDashboard(), { once: true });
 }

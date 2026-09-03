@@ -69,7 +69,7 @@ const ECRANS = [
   ['showDemandForm', [{ id: 5, client_id: 1, rent_sale: 'rent', active: true }]]
 ];
 
-function run() {
+async function run() {
   const src = fs.readFileSync(path.join(ROOT, 'assets/js/app.js'), 'utf8');
   const checks = [];
 
@@ -104,6 +104,56 @@ function run() {
     return { title: 'Construction des écrans', checks: [['app.js se charge', false]] };
   }
   checks.push(['app.js se charge sans erreur', true]);
+
+  /* Session DÉJÀ présente au chargement — le cas du rechargement à chaud.
+     app.js appelait alors showDashboard() pendant l'exécution du fichier,
+     donc avant l'initialisation de TABLE_COLS : « Cannot access before
+     initialization », écran « Erreur ». Le premier chargement ci-dessus ne
+     pouvait pas le voir, puisqu'il passe par la branche sans session. */
+  const win2 = fauxElement();
+  win2.SLCM_DB = { getClient: fauxSupabase };
+  win2.SLCM_CONFIG = { SUPABASE_URL: 'https://exemple.test' };
+  win2.SLCM_SITE = { fetchListings: () => Promise.resolve([]) };
+  win2.SLCM_MATCH = new Proxy({}, { get: () => () => [] });
+  win2.addEventListener = () => {};
+  win2.SLCM_SESSION = { user: { email: 'test@exemple.test' } };
+
+  /* Les écrans sont tous `async` : une erreur dedans devient une PROMESSE
+     REJETÉE, pas une exception. Un try/catch ne la voit pas — le navigateur,
+     lui, affiche « Uncaught (in promise) ». C'est ainsi que le bug de zone
+     morte sur TABLE_COLS avait échappé à la première version de ce test. */
+  const rejets = [];
+  const guetteur = (e) => rejets.push(e);
+  process.on('unhandledRejection', guetteur);
+
+  let demarrage = true;
+  const microtaches = [];
+  const ancien = globalThis.queueMicrotask;
+  globalThis.queueMicrotask = (f) => microtaches.push(f);
+  try {
+    new Function(
+      'window', 'document', 'localStorage', 'Chart', 'UI', 'fetch', 'getComputedStyle', 'queueMicrotask',
+      src
+    )(win2, doc, stockage, fauxElement(), fauxElement(), () => Promise.resolve({}),
+      () => ({ getPropertyValue: () => '' }), (f) => microtaches.push(f));
+    microtaches.forEach(f => f());
+  } catch (e) {
+    demarrage = false;
+    checks.push(['session déjà présente au chargement — ' + e.message, false]);
+  } finally {
+    globalThis.queueMicrotask = ancien;
+  }
+
+  /* Deux tours de boucle : le temps que Node signale les rejets. */
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  process.off('unhandledRejection', guetteur);
+
+  if (rejets.length) {
+    demarrage = false;
+    checks.push(['session déjà présente au chargement — ' + (rejets[0] && rejets[0].message), false]);
+  }
+  if (demarrage) checks.push(['session déjà présente au chargement (rechargement à chaud)', true]);
 
   for (const [nom, args] of ECRANS) {
     let fn;

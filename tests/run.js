@@ -26,11 +26,14 @@ for (const f of fs.readdirSync(path.join(ROOT, 'assets/js')).filter(f => f.endsW
   }
 }
 
-/* ── Les modules de contrôle ── */
+/* ── Les modules de contrôle ──
+   run() peut être asynchrone : certains contrôles doivent laisser passer un
+   tour de boucle pour voir les promesses rejetées. */
+(async () => {
 for (const mod of ['check-columns', 'check-handlers', 'test-escaping', 'test-matching', 'test-duplicates', 'test-suggestions', 'test-followups', 'test-screens']) {
   let result;
   try {
-    result = require('./' + mod).run();
+    result = await require('./' + mod).run();
   } catch (e) {
     console.log('\n' + DIM + mod + OFF + `\n  ${RED}ÉCHEC${OFF}  ${e.message}`);
     failed++;
@@ -47,3 +50,4 @@ console.log(failed
   ? `\n${RED}${failed} contrôle(s) en échec.${OFF}\n`
   : `\n${GREEN}Tout passe.${OFF}\n`);
 process.exit(failed ? 1 : 0);
+})();
