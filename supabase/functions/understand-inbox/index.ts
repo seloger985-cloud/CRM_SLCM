@@ -55,7 +55,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.49.0';
    code qui n'etait pas deploye. Les journaux montraient un demarrage sain, la
    trace d'erreur pointait toujours la meme ligne, et rien ne permettait de
    dire quelle version tournait. Une ligne de journal aurait suffi. */
-const VERSION = '2026-09-03-d';
+const VERSION = '2026-09-03-e';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -83,7 +83,21 @@ const OUTIL = {
   description:
     "Propose une fiche de bien à partir du message. N'appeler cet outil que " +
     "si le message décrit effectivement un bien immobilier à louer ou à vendre.",
-  strict: true,
+  /* `strict: true` est DESACTIVE volontairement.
+
+     Le mode strict refuse les types-union de ce schema : il valide chaque
+     valeur d'enum contre le type declare et rejette 'apartment' contre
+     ['string', 'null'] — une chaine contre une union qui contient 'string'.
+     Or la nullabilite est ici structurelle : un message de confrere omet
+     souvent le prix ou le quartier, et un champ absent DOIT revenir null
+     pour atterrir dans `manquant`. Reecrire le schema sans union reviendrait
+     a rendre tous les champs obligatoires, donc a inviter le modele a
+     inventer ce qu'il ne sait pas — exactement ce que la fonction s'interdit.
+
+     Ce que strict garantissait, la validation de sortie le fait deja, et
+     mieux : elle verifie le CONTENU (type dans le vocabulaire, prix entier
+     positif) et pas seulement la FORME. Voir plus bas, « ceinture et
+     bretelles ». */
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -270,10 +284,10 @@ Deno.serve(async (req) => {
 
     const brut = appel.type === 'tool_use' ? (appel.input as Record<string, unknown>) : {};
 
-    /* Ceinture et bretelles. `strict: true` garantit la FORME, pas le
-       contenu : on revalide ce qui doit l'être avant de le proposer à
-       l'agent — un type hors vocabulaire ou un prix négatif rendrait la
-       fiche irrapprochable, sans erreur visible. */
+    /* La seule barriere, depuis que le mode strict est desactive (voir OUTIL).
+       Elle valide le CONTENU et pas seulement la forme : un type hors
+       vocabulaire ou un prix negatif rendrait la fiche irrapprochable, sans
+       jamais lever d'erreur visible. Rien de ce qui suit n'est superflu. */
     const entier = (v: unknown) => {
       const n = Number(v);
       return Number.isInteger(n) && n >= 0 ? n : null;
