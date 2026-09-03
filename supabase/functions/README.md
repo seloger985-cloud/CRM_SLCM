@@ -10,6 +10,22 @@ D'où ce dossier. **Une seule fonction pour l'instant.**
 |---|---|
 | `understand-inbox` | Un message reçu d'un confrère devient une proposition de fiche bien. N'écrit rien. |
 
+## Le réglage qui décide de tout
+
+**« Verify JWT » doit être DÉSACTIVÉ** sur la fonction (Edge Functions →
+`understand-inbox` → paramètres).
+
+La fonction vérifie le jeton elle-même, avec le client Supabase agissant « en
+tant que » l'appelant — c'est le gabarit de KWEKA, qui tourne depuis des mois.
+Laisser en plus la passerelle vérifier ajoute un point de défaillance qu'on ne
+voit pas : elle répond 401 **avant** d'appeler le code, donc les journaux de la
+fonction ne montrent rien d'autre qu'un démarrage sain.
+
+C'est exactement ce qui a coûté trois allers-retours le 03/09/2026 : des
+journaux propres, `booted (time: 61ms)`, aucun `console.error` — et un 401 dans
+le navigateur. Quand les journaux d'une fonction sont muets alors qu'elle
+démarre, c'est la passerelle qui a répondu.
+
 ## Déployer
 
 Par le dashboard, pas par le CLI :

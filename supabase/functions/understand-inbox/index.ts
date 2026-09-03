@@ -34,6 +34,8 @@
    ressemble alors à un refus d'accès. Au moment de redéployer, vérifier :
    npm view @anthropic-ai/sdk version */
 import Anthropic from 'npm:@anthropic-ai/sdk@0.123.0';
+/* Même version que celle qui tourne dans KWEKA : ce gabarit-là fonctionne. */
+import { createClient } from 'npm:@supabase/supabase-js@2.49.0';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -118,19 +120,38 @@ Deno.serve(async (req) => {
     return json({ error: 'method_not_allowed' }, 405);
   }
 
-  /* ── Authentification ──
-     Supabase vérifie le JWT à la passerelle avant d'appeler ce code
-     (`verify_jwt`, actif par défaut). Une seconde vérification ici, par un
-     aller-retour vers auth/v1/user, n'ajoutait aucune sécurité et ajoutait
-     deux modes de panne : une clé publique au nom inattendu, ou l'endpoint
-     momentanément indisponible. Retirée le 03/09/2026, après qu'un 401 eut
-     résisté au diagnostic — les journaux montraient un démarrage sain et
-     aucune trace d'erreur, donc une sortie précoce muette.
+  /* ── Authentification, reprise de KWEKA (_shared/auth.ts) ──
 
-     Il ne reste que la présence du jeton, qui coûte une ligne. */
-  if (!(req.headers.get('Authorization') || '').startsWith('Bearer ')) {
+     La fonction vérifie le jeton ELLE-MÊME, avec le client Supabase agissant
+     « en tant que » l'appelant. Cela suppose que la vérification de la
+     passerelle soit DÉSACTIVÉE pour cette fonction (« Verify JWT », dans ses
+     paramètres) — c'est ainsi que KWEKA déploie les siennes.
+
+     Historique, pour qui relira : j'avais d'abord écrit cette vérification à
+     la main avec un fetch vers auth/v1/user, puis je l'ai supprimée en pariant
+     sur la passerelle. Les deux ont échoué en 401. Le gabarit qui marche
+     depuis des mois était à côté, dans l'autre projet. */
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader) {
     console.error('[understand-inbox] refus : en-tête Authorization absent');
     return json({ error: 'jeton_absent' }, 401);
+  }
+
+  try {
+    const asUser = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_ANON_KEY')!,
+      { global: { headers: { Authorization: authHeader } } }
+    );
+    const { data, error } = await asUser.auth.getUser();
+    if (error || !data?.user) {
+      console.error('[understand-inbox] jeton refuse :', error?.message ?? 'aucun utilisateur');
+      return json({ error: 'session_invalide', detail: error?.message ?? null }, 401);
+    }
+    console.log('[understand-inbox] appel de', data.user.email);
+  } catch (e) {
+    console.error('[understand-inbox] verification impossible :', String(e));
+    return json({ error: 'auth_indisponible', detail: String(e) }, 503);
   }
 
   const apiKey = Deno.env.get('CRM_SLCM') ?? Deno.env.get('ANTHROPIC_API_KEY');
