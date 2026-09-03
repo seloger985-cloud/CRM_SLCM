@@ -39,10 +39,22 @@ Un seul fichier, aucun import local : le dashboard ne sait pas résoudre
 `../_shared/…`. C'est la raison pour laquelle la fonction se répète un peu
 plutôt que de partager du code.
 
-## Le secret
+## Les secrets
 
-La clé API Anthropic est attendue sous le nom **`CRM_SLCM`**
-(Edge Functions → Secrets). `ANTHROPIC_API_KEY` fonctionne aussi, en repli.
+| Nom | Rôle |
+|---|---|
+| **`CRM_SLCM`** | La clé API Anthropic. `ANTHROPIC_API_KEY` fonctionne en repli. |
+| **`CRM_SLCM_WORKSPACE`** | L'identifiant de l'espace de travail Anthropic. **Obligatoire si la clé est personnelle ou de compte de service**, facultatif sinon. `ANTHROPIC_WORKSPACE_ID` en repli. |
+
+Une clé personnelle donne accès à plusieurs espaces de travail : l'API exige
+alors de savoir dans lequel la requête agit, et répond sinon
+`anthropic-workspace-id is required when authenticating with an
+identity-linked API key`. L'identifiant se trouve dans la Console Anthropic,
+Paramètres → Workspaces.
+
+La fonction reconnaît ce message et répond `workspace_manquant` avec la marche
+à suivre — un défaut qui se corrige en ajoutant un secret ne doit pas obliger
+à relire le code.
 
 `SUPABASE_URL` et `SUPABASE_ANON_KEY` sont injectées automatiquement — rien
 à faire.

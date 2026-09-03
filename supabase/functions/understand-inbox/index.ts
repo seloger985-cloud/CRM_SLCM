@@ -205,6 +205,21 @@ Deno.serve(async (req) => {
 
   const client = new Anthropic({ apiKey });
 
+  /* Une cle personnelle ou de compte de service donne acces a PLUSIEURS
+     espaces de travail : l'API exige alors de savoir dans lequel la requete
+     agit, via l'en-tete anthropic-workspace-id. Sans lui, elle repond 400
+     « anthropic-workspace-id is required when authenticating with an
+     identity-linked API key ».
+
+     La syntaxe est celle du SECOND argument de messages.create — pas une
+     option du constructeur. Une cle liee a un seul espace n'en a pas besoin :
+     le secret reste facultatif. */
+  const workspaceId = Deno.env.get('CRM_SLCM_WORKSPACE')
+    ?? Deno.env.get('ANTHROPIC_WORKSPACE_ID');
+  const options = workspaceId
+    ? { headers: { 'anthropic-workspace-id': workspaceId } }
+    : undefined;
+
   try {
     const response = await client.messages.create({
       model: 'claude-opus-5',
@@ -215,7 +230,7 @@ Deno.serve(async (req) => {
       system: CONSIGNE,
       tools: [OUTIL],
       messages: [{ role: 'user', content: message }]
-    });
+    }, options);
 
     if (response.stop_reason === 'refusal') {
       console.error('[understand-inbox] le modele a decline :', response.stop_details);
@@ -271,6 +286,17 @@ Deno.serve(async (req) => {
     return json({ bien, usage: response.usage });
   } catch (e) {
     console.error('[understand-inbox]', e);
+
+    /* Ce defaut-la se corrige en ajoutant un secret, pas en relisant le code :
+       autant le dire a l'ecran plutot que de renvoyer la trace brute. */
+    if (String(e).includes('anthropic-workspace-id')) {
+      return json({
+        error: 'workspace_manquant',
+        detail: "La cle API donne acces a plusieurs espaces de travail. "
+          + "Ajouter le secret CRM_SLCM_WORKSPACE avec l'identifiant de "
+          + "l'espace (Console Anthropic, Parametres, Workspaces)."
+      }, 502);
+    }
     return json({ error: 'extraction_impossible', detail: String(e) }, 502);
   }
 });
