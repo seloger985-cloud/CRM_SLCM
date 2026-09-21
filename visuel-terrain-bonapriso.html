@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Visuel terrain — SE LOGER CM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --orange:#ff7a00;
+    --ink:#15161b;
+    --paper:#ffffff;
+    --muted:#6b6f76;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:'Poppins',system-ui,-apple-system,'Segoe UI',sans-serif;
+    background:#e9eaee;
+    padding:16px;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---------- panneau de contrôle ---------- */
+  .panel{
+    max-width:680px;margin:0 auto 20px;background:#fff;border-radius:14px;
+    padding:16px;box-shadow:0 2px 14px rgba(0,0,0,.08)
+  }
+  .panel h1{font-size:15px;font-weight:700;color:var(--ink);margin-bottom:12px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .grid label{display:flex;flex-direction:column;gap:4px;font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .grid input,.grid select{
+    font-family:inherit;font-size:14px;padding:8px 10px;border:1px solid #d8dade;border-radius:8px;color:var(--ink);background:#fff
+  }
+  .grid .wide{grid-column:1/-1}
+  .actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+  .btn{
+    font-family:inherit;font-size:14px;font-weight:600;padding:10px 18px;border:0;border-radius:8px;
+    background:var(--orange);color:#fff;cursor:pointer
+  }
+  .btn.ghost{background:#f1f2f4;color:var(--ink)}
+  .hint{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5}
+
+  /* ---------- zone d'aperçu ---------- */
+  .stage{display:flex;justify-content:center}
+  .scaler{transform-origin:top left}
+
+  /* ---------- le visuel : 1350 x 1150 ---------- */
+  .card{
+    position:relative;width:1350px;height:1150px;background:#fff;
+    border-radius:26px;overflow:hidden;box-shadow:0 6px 30px rgba(0,0,0,.15)
+  }
+
+  /* photo à droite */
+  .photo{position:absolute;top:0;right:0;width:770px;height:950px;overflow:hidden;background:#c9cdd2}
+  .photo img{width:100%;height:100%;object-fit:cover;display:block}
+  .photo .ph{
+    display:flex;align-items:center;justify-content:center;height:100%;
+    color:#7c8288;font-size:26px;font-weight:600;text-align:center;padding:0 40px;line-height:1.5
+  }
+
+  /* diagonale : rectangle blanc pivoté + liseré orange */
+  .diag-white{
+    position:absolute;width:900px;height:1600px;background:#fff;
+    left:-267px;top:-325px;transform-origin:100% 50%;transform:rotate(7.8deg)
+  }
+  .diag-orange{
+    position:absolute;width:17px;height:1600px;background:var(--orange);
+    left:632px;top:-325px;transform-origin:100% 50%;transform:rotate(7.8deg)
+  }
+
+  /* colonne gauche */
+  .left{position:absolute;left:0;top:0;width:600px;height:950px;padding:46px 0 0 46px}
+
+  .brand{display:flex;align-items:center;gap:18px}
+  .seal{
+    width:100px;height:100px;border-radius:50%;background:var(--ink);color:#fff;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;flex:0 0 auto
+  }
+  .seal b{font-size:17px;font-weight:700;line-height:1.05;letter-spacing:.02em;text-align:center}
+  .seal .dashes{display:flex;gap:4px;margin-top:3px}
+  .seal .dashes i{width:8px;height:5px;background:var(--orange);display:block;border-radius:1px}
+  .seal .dashes i:last-child{background:#fff;width:4px}
+  .brand-name{font-size:44px;font-weight:700;color:var(--ink);letter-spacing:-.01em;line-height:1}
+  .brand-name span{color:var(--orange)}
+  .tagline{font-size:19px;color:#4a4f56;font-weight:400;margin-top:8px}
+
+  .badge{
+    margin-top:38px;width:96px;height:96px;border-radius:20px;background:var(--ink);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-size:56px;font-weight:700
+  }
+
+  .label{margin-top:30px;font-size:38px;font-weight:600;color:var(--ink)}
+  .area{display:flex;align-items:flex-end;gap:8px;margin-top:-6px}
+  .area b{font-size:172px;font-weight:800;color:var(--ink);letter-spacing:-.045em;line-height:1}
+  .area span{font-size:56px;font-weight:700;color:var(--ink);padding-bottom:26px}
+
+  .flag{
+    position:relative;margin-top:22px;height:88px;width:510px;background:var(--orange);
+    display:flex;align-items:center;padding-left:34px;color:#fff;font-size:52px;font-weight:700;letter-spacing:.01em
+  }
+  .flag::after{
+    content:"";position:absolute;left:510px;top:0;width:0;height:0;
+    border-top:44px solid transparent;border-bottom:44px solid transparent;border-left:52px solid var(--orange)
+  }
+
+  .rows{margin-top:40px;display:flex;flex-direction:column;gap:26px}
+  .row{display:flex;align-items:flex-start;gap:20px;max-width:520px}
+  .row svg{flex:0 0 auto;margin-top:2px}
+  .row p{font-size:31px;font-weight:600;color:var(--ink);line-height:1.32}
+  .row p em{font-style:normal;font-weight:500;color:#4a4f56}
+
+  /* barre basse */
+  .bar{
+    position:absolute;left:0;bottom:0;width:100%;height:200px;background:var(--ink);
+    display:flex;align-items:center;padding:0 46px;gap:38px
+  }
+  .emblem{
+    width:126px;height:126px;border-radius:50%;border:5px dashed var(--orange);
+    display:flex;align-items:center;justify-content:center;flex:0 0 auto
+  }
+  .sep{width:2px;height:104px;background:#3a3d44;flex:0 0 auto}
+  .price{flex:1 1 auto;padding-left:6px}
+  .price .k{font-size:33px;font-weight:600;color:#fff;margin-bottom:2px}
+  .price .v{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+  .price .v b{font-size:76px;font-weight:800;color:var(--orange);line-height:1;letter-spacing:-.02em}
+  .price .v span{font-size:34px;font-weight:600;color:#fff}
+  .price .v i{font-style:normal;font-size:24px;font-weight:500;color:#b8bcc3}
+
+  .contact{display:flex;flex-direction:column;gap:18px;flex:0 0 auto}
+  .contact div{display:flex;align-items:center;gap:18px}
+  .contact .ic{
+    width:46px;height:46px;border-radius:50%;border:3px solid var(--orange);
+    display:flex;align-items:center;justify-content:center;flex:0 0 auto
+  }
+  .contact p{font-size:35px;font-weight:600;color:#fff;letter-spacing:.01em}
+
+  @media print{.panel{display:none}}
+  .result{position:fixed;inset:0;background:rgba(10,10,14,.88);display:none;flex-direction:column;align-items:center;justify-content:center;padding:20px;z-index:99;gap:14px}
+  .result.on{display:flex}
+  .result img{max-width:100%;max-height:78vh;border-radius:10px;box-shadow:0 8px 40px rgba(0,0,0,.5)}
+  .result p{color:#fff;font-size:15px;text-align:center;line-height:1.5;max-width:520px}
+</style>
+</head>
+<body>
+
+<div class="panel">
+  <h1>Visuel terrain — SE LOGER CM</h1>
+  <div class="grid">
+    <label>Numéro<input id="f-num" value="4"></label>
+    <label>Statut<select id="f-statut"><option>À VENDRE</option><option>À LOUER</option></select></label>
+    <label>Superficie<input id="f-sup" value="591"></label>
+    <label>Unité<input id="f-unit" value="m²"></label>
+    <label class="wide">Lieu<input id="f-lieu" value="Logpom, environs Hôpital des Sœurs"></label>
+    <label class="wide">Ligne 2<input id="f-l2" value="Terrain en bordure de route"></label>
+    <label class="wide">Ligne 3<input id="f-l3" value="Dossier technique"></label>
+    <label>Prix<input id="f-prix" value="140 mille"></label>
+    <label>Unité prix<input id="f-punit" value="frs/m²"></label>
+    <label class="wide">Mention<input id="f-mention" value="(non négociable)"></label>
+    <label class="wide">Photo du terrain<input id="f-photo" type="file" accept="image/*"></label>
+  </div>
+  <div class="actions">
+    <button class="btn" id="dl">Télécharger le PNG</button>
+    <button class="btn ghost" id="zoomout">−</button>
+    <button class="btn ghost" id="zoomin">+</button>
+  </div>
+  <p class="hint">Charge la photo, ajuste les champs, puis télécharge. Le PNG sort en 1350 × 1150 px (format carré-ish, bon pour WhatsApp Status, Facebook et Instagram feed).</p>
+</div>
+
+<div class="stage">
+  <div class="scaler" id="scaler">
+    <div class="card" id="card">
+
+      <div class="photo">
+        <img id="photo-img" style="display:none" alt="">
+        <div class="ph" id="photo-ph">Charge la photo<br>du terrain</div>
+      </div>
+      <div class="diag-white"></div>
+      <div class="diag-orange"></div>
+
+      <div class="left">
+        <div class="brand">
+          <div class="seal">
+            <b>SE<br>LOGER</b>
+            <div class="dashes"><i></i><i></i><i></i><i></i><i></i></div>
+          </div>
+          <div>
+            <div class="brand-name">SE LOGER <span>CM</span></div>
+            <div class="tagline">Unique solutions, smart living.</div>
+          </div>
+        </div>
+
+        <div class="badge" id="o-num">4</div>
+
+        <div class="label">Superficie :</div>
+        <div class="area"><b id="o-sup">591</b><span id="o-unit">m²</span></div>
+
+        <div class="flag" id="o-statut">À VENDRE</div>
+
+        <div class="rows">
+          <div class="row">
+            <svg width="34" height="42" viewBox="0 0 24 30" fill="none"><path d="M12 0C5.4 0 0 5.4 0 12c0 9 12 18 12 18s12-9 12-18c0-6.6-5.4-12-12-12z" fill="#ff7a00"/><circle cx="12" cy="12" r="4.4" fill="#fff"/></svg>
+            <p>Lieu : <em id="o-lieu">Logpom, environs Hôpital des Sœurs</em></p>
+          </div>
+          <div class="row">
+            <svg width="34" height="38" viewBox="0 0 24 26" fill="none"><rect width="24" height="26" rx="4" fill="#ff7a00"/><rect x="10.7" y="3" width="2.6" height="5" fill="#fff"/><rect x="10.7" y="10.5" width="2.6" height="5" fill="#fff"/><rect x="10.7" y="18" width="2.6" height="5" fill="#fff"/></svg>
+            <p id="o-l2">Terrain en bordure de route</p>
+          </div>
+          <div class="row">
+            <svg width="34" height="38" viewBox="0 0 24 26" fill="none"><rect width="24" height="26" rx="4" fill="#ff7a00"/><rect x="5" y="6" width="14" height="2.6" fill="#fff"/><rect x="5" y="11.7" width="14" height="2.6" fill="#fff"/><rect x="5" y="17.4" width="9" height="2.6" fill="#fff"/></svg>
+            <p id="o-l3">Dossier technique</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="bar">
+        <div class="emblem">
+          <svg width="62" height="72" viewBox="0 0 30 34" fill="none"><path d="M15 1L28 6v11c0 8-6 13.5-13 16C8 30.5 2 25 2 17V6L15 1z" stroke="#fff" stroke-width="2.4" fill="none"/><path d="M15 8.5v10M10.5 13.5h9" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></svg>
+        </div>
+        <div class="sep"></div>
+        <div class="price">
+          <div class="k">Prix :</div>
+          <div class="v">
+            <b id="o-prix">140 mille</b>
+            <span id="o-punit">frs/m²</span>
+            <i id="o-mention">(non négociable)</i>
+          </div>
+        </div>
+        <div class="sep"></div>
+        <div class="contact">
+          <div>
+            <span class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#fff" stroke-width="2"/><path d="M2 12h20M12 2c3 3.5 3 16.5 0 20M12 2c-3 3.5-3 16.5 0 20" stroke="#fff" stroke-width="1.8"/></svg></span>
+            <p>selogercm.com</p>
+          </div>
+          <div>
+            <span class="ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6 3h3l2 5-2.5 1.5a12 12 0 006 6L16 13l5 2v3c0 1.5-1.2 2.6-2.7 2.4C9.6 19.3 4.7 14.4 3.6 5.7 3.4 4.2 4.5 3 6 3z" fill="#fff"/></svg></span>
+            <p>650 840 714</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div class="result" id="result">
+  <p>Si le téléchargement n'a pas démarré : <b>clic droit → Enregistrer l'image sous</b> (ordinateur) ou <b>appui long → Enregistrer l'image</b> (téléphone).</p>
+  <img id="result-img" alt="Visuel généré">
+  <button class="btn" onclick="document.getElementById('result').classList.remove('on')">Fermer</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script>
+  const bind = [
+    ['f-num','o-num'],['f-sup','o-sup'],['f-unit','o-unit'],['f-statut','o-statut'],
+    ['f-lieu','o-lieu'],['f-l2','o-l2'],['f-l3','o-l3'],
+    ['f-prix','o-prix'],['f-punit','o-punit'],['f-mention','o-mention']
+  ];
+  bind.forEach(([f,o])=>{
+    const inp=document.getElementById(f), out=document.getElementById(o);
+    const sync=()=>{ out.textContent = inp.value; };
+    inp.addEventListener('input',sync); inp.addEventListener('change',sync);
+  });
+
+  document.getElementById('f-photo').addEventListener('change', e=>{
+    const file=e.target.files[0]; if(!file) return;
+    const r=new FileReader();
+    r.onload=()=>{
+      const img=document.getElementById('photo-img');
+      img.src=r.result; img.style.display='block';
+      document.getElementById('photo-ph').style.display='none';
+    };
+    r.readAsDataURL(file);
+  });
+
+  // zoom d'aperçu
+  const scaler=document.getElementById('scaler'), stage=document.querySelector('.stage');
+  let zoom=null;
+  function fit(){
+    const s = zoom ?? Math.min(1,(stage.clientWidth-4)/1350);
+    scaler.style.transform='scale('+s+')';
+    stage.style.height=(1150*s)+'px';
+  }
+  window.addEventListener('resize',()=>{ if(zoom===null) fit(); });
+  document.getElementById('zoomin').onclick=()=>{ zoom=Math.min(1,(zoom??Math.min(1,(stage.clientWidth-4)/1350))+0.1); fit(); };
+  document.getElementById('zoomout').onclick=()=>{ zoom=Math.max(0.1,(zoom??Math.min(1,(stage.clientWidth-4)/1350))-0.1); fit(); };
+  fit();
+
+  function showResult(url){
+    document.getElementById('result-img').src=url;
+    document.getElementById('result').classList.add('on');
+  }
+
+  document.getElementById('dl').onclick=async ()=>{
+    const prev=scaler.style.transform;
+    scaler.style.transform='scale(1)';
+    try{
+      const canvas=await html2canvas(document.getElementById('card'),{scale:1,backgroundColor:'#ffffff',useCORS:true,logging:false});
+      const a=document.createElement('a');
+      a.download='slcm-terrain-'+document.getElementById('f-sup').value+'m2.png';
+      const url=canvas.toDataURL('image/png');
+      a.href=url;
+      a.click();
+      showResult(url);
+    }catch(err){
+      alert("Export impossible : "+err.message+"\nSolution de repli : capture d'écran de l'aperçu.");
+    }finally{
+      scaler.style.transform=prev; fit();
+    }
+  };
+</script>
+</body>
+</html>
