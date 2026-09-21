@@ -10,6 +10,7 @@ const propertiesBtn = document.getElementById('properties-btn');
 const activitiesBtn = document.getElementById('activities-btn');
 const paymentsBtn = document.getElementById('payments-btn');
 const invoicesBtn = document.getElementById('invoices-btn');
+const visualBtn = document.getElementById('visual-btn');
 const tasksBtn = document.getElementById('tasks-btn');
 const automationBtn = document.getElementById('automation-btn');
 const pipelineBtn = document.getElementById('pipeline-btn');
@@ -42,6 +43,9 @@ propertiesBtn.addEventListener('click', navTo(propertiesBtn, showProperties));
 activitiesBtn.addEventListener('click', navTo(activitiesBtn, showActivities));
 paymentsBtn.addEventListener('click', navTo(paymentsBtn, showPayments));
 invoicesBtn.addEventListener('click', () => { window.location.href = 'facture.html'; });
+/* Pages autonomes : on quitte l'application, donc pas de navTo — il poserait
+   l'etat actif sur un bouton qu'on ne reverra pas. */
+visualBtn.addEventListener('click', () => { window.location.href = 'visuel-terrain-bonapriso.html'; });
 tasksBtn.addEventListener('click', navTo(tasksBtn, showTasks));
 automationBtn.addEventListener('click', navTo(automationBtn, showAutomation));
 pipelineBtn.addEventListener('click', navTo(pipelineBtn, showPipeline));

@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Visuel terrain — SE LOGER CM</title>
+<!-- Outil interne : ne doit jamais etre indexe, comme le reste du CRM. -->
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="googlebot" content="noindex, nofollow">
+<meta name="referrer" content="same-origin">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -20,6 +24,10 @@
     background:#e9eaee;
     padding:16px;
     -webkit-font-smoothing:antialiased;
+    /* Masque jusqu'a validation de la session par auth.js, comme index.html
+       et facture.html : sans cela la page s'affiche une fraction de seconde
+       avant la redirection vers login.html. */
+    visibility:hidden;
   }
 
   /* ---------- panneau de contrôle ---------- */
@@ -161,6 +169,9 @@
     <label class="wide">Photo du terrain<input id="f-photo" type="file" accept="image/*"></label>
   </div>
   <div class="actions">
+    <!-- Sans ce retour la page est une impasse : elle n'a pas la navigation
+         du CRM, et le seul recours serait le bouton « precedent ». -->
+    <button class="btn ghost" type="button" onclick="window.location.href='index.html'">← Retour CRM</button>
     <button class="btn" id="dl">Télécharger le PNG</button>
     <button class="btn ghost" id="zoomout">−</button>
     <button class="btn ghost" id="zoomin">+</button>
@@ -250,6 +261,13 @@
   <button class="btn" onclick="document.getElementById('result').classList.remove('on')">Fermer</button>
 </div>
 
+<!-- Garde de session. Meme trio que les autres pages du CRM, et dans cet
+     ordre : auth.js appelle SLCM_DB.getClient(), pose par config.js, qui a
+     besoin du client Supabase. auth.js redirige avec ?next=, donc apres
+     connexion on revient ICI et non au tableau de bord. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/auth.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
   const bind = [

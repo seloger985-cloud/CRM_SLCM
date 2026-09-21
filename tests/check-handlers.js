@@ -27,14 +27,45 @@ function run() {
   const called = [...new Set([...(js + '\n' + html).matchAll(/onclick="(\w+)\(/g)].map(m => m[1]))];
   const missing = called.filter(f => !declared.has(f) && !BUILTIN.has(f));
 
+  /* Tout getElementById('…-btn') doit trouver son id dans le balisage.
+   *
+   * Raison d'être : app.js range ces éléments dans des `const` au CHARGEMENT,
+   * puis appelle addEventListener dessus. Un id mal orthographié donne null,
+   * donc « Cannot read properties of null » pendant l'exécution du fichier —
+   * et c'est le CRM ENTIER qui ne démarre plus, pas seulement le bouton.
+   *
+   * Aucun autre contrôle ne peut le voir : le faux navigateur de test-screens
+   * renvoie un élément pour n'importe quel id, par construction. Il fallait
+   * confronter le JS au balisage réel.
+   */
+  const ids = [...new Set([...js.matchAll(/getElementById\('([\w-]+-btn)'\)/g)].map(m => m[1]))];
+  const orphelins = ids.filter(id => html.indexOf('id="' + id + '"') === -1);
+
+  /* Et l'inverse : une entrée de navigation que personne ne branche est un
+     bouton mort à l'écran — le défaut d'origine de « Rapprochements ».
+     On cherche dans le JS *et* dans le HTML : `logout-btn` est branché par un
+     <script> en ligne d'index.html, et ne pas l'admettre ferait crier ce
+     contrôle sur un bouton parfaitement fonctionnel. */
+  const nav = [...new Set([...html.matchAll(/<button id="([\w-]+-btn)"/g)].map(m => m[1]))];
+  const tout = js + '\n' + html;
+  const inertes = nav.filter(id => tout.indexOf("getElementById('" + id + "')") === -1);
+
   return {
-    title: 'Gestionnaires onclick',
-    checks: [[
-      missing.length
+    title: 'Gestionnaires onclick et boutons',
+    checks: [
+      [missing.length
         ? `introuvable(s) : ${missing.join(', ')}`
         : `${called.length} fonction(s) appelée(s), toutes déclarées`,
-      missing.length === 0
-    ]]
+       missing.length === 0],
+      [orphelins.length
+        ? `id demandé par app.js mais absent du HTML : ${orphelins.join(', ')}`
+        : `${ids.length} bouton(s) cherché(s) par le JS, tous présents dans le balisage`,
+       orphelins.length === 0],
+      [inertes.length
+        ? `bouton affiché mais jamais branché : ${inertes.join(', ')}`
+        : `${nav.length} bouton(s) du balisage, tous branchés côté JS`,
+       inertes.length === 0]
+    ]
   };
 }
 
