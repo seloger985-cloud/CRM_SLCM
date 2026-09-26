@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Studio Réels — SE LOGER CM</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<style>
+  /* Page autonome, pensée pour le téléphone : c'est là qu'on repère.
+     Elle reprend les variables de thème du CRM, rien de plus. */
+  .rs-wrap{max-width:720px;margin:0 auto;padding:12px 14px 96px}
+  .rs-top{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .rs-top h1{font-size:1.05rem;margin:0;flex:1}
+  .rs-retour{background:none;border:1px solid var(--border);border-radius:9px;
+             padding:7px 11px;cursor:pointer;color:inherit;font-size:.85rem}
+
+  .rs-onglets{display:flex;gap:6px;margin-bottom:12px}
+  .rs-onglets button{flex:1;padding:9px;border:1px solid var(--border);
+      background:var(--bg-input);border-radius:9px;cursor:pointer;font-size:.82rem;
+      color:inherit}
+  .rs-onglets button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+  .rs-bien{display:flex;gap:11px;align-items:center;padding:9px;border:1px solid var(--border);
+           border-radius:11px;margin-bottom:8px;cursor:pointer;background:var(--bg-input)}
+  .rs-bien img{width:64px;height:48px;object-fit:cover;border-radius:7px;flex:none;background:#ddd}
+  .rs-bien .t{font-size:.86rem;font-weight:600;line-height:1.25}
+  .rs-bien .s{font-size:.76rem;color:var(--text-2, #777);margin-top:2px}
+  .rs-etat{font-size:.68rem;padding:2px 7px;border-radius:999px;white-space:nowrap}
+  .rs-etat.fait{background:var(--success-soft);color:var(--success)}
+  .rs-etat.todo{background:var(--accent-soft);color:var(--accent-text)}
+
+  video{width:100%;border-radius:12px;background:#000;display:block}
+  .rs-temps{text-align:center;font-variant-numeric:tabular-nums;font-size:1.5rem;
+            font-weight:700;margin:8px 0}
+  .rs-pieces{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+  .rs-pieces button{padding:15px 8px;border:1.5px solid var(--border);border-radius:11px;
+      background:var(--bg-input);cursor:pointer;font-size:.88rem;font-weight:600;color:inherit}
+  .rs-pieces button:active{transform:scale(.97)}
+  .rs-pieces button .marques{display:block;font-size:.72rem;font-weight:400;
+      color:var(--accent-text);margin-top:3px;min-height:1em}
+
+  .rs-photos{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px}
+  .rs-photos img{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:8px;
+      border:2px solid transparent;cursor:pointer}
+  .rs-photos img.on{border-color:var(--accent)}
+
+  .rs-champ{margin-bottom:8px}
+  .rs-champ label{display:block;font-size:.74rem;color:var(--text-2, #777);margin-bottom:3px}
+  .rs-champ input,.rs-champ select{width:100%;padding:9px 10px;border:1px solid var(--border);
+      border-radius:9px;background:var(--bg-input);color:inherit;font-size:.9rem}
+
+  .rs-barre{position:fixed;left:0;right:0;bottom:0;padding:11px 14px calc(11px + env(safe-area-inset-bottom));
+      background:var(--bg-0, #fff);border-top:1px solid var(--border);display:flex;gap:9px}
+  .rs-barre button{flex:1;padding:13px;border:0;border-radius:11px;font-weight:700;
+      font-size:.94rem;cursor:pointer}
+  .rs-go{background:var(--accent);color:#fff}
+  .rs-go:disabled{opacity:.45}
+  .rs-sec{background:var(--bg-input);color:inherit;border:1px solid var(--border)!important;flex:0 0 auto}
+
+  .rs-vide{text-align:center;padding:34px 12px;color:var(--text-2, #777);font-size:.88rem}
+  .rs-note{font-size:.76rem;color:var(--text-2, #777);line-height:1.45;margin:10px 0}
+  .rs-travail{border:1px solid var(--border);border-radius:11px;padding:10px;margin-bottom:8px;
+      background:var(--bg-input);font-size:.83rem}
+  .rs-travail b{display:block;margin-bottom:3px}
+</style>
+</head>
+<body>
+<div class="rs-wrap">
+  <div class="rs-top">
+    <button class="rs-retour" id="rsRetour" style="display:none">‹ Retour</button>
+    <h1 id="rsTitre">Studio Réels</h1>
+    <button class="rs-retour" onclick="location.href='index.html'">CRM</button>
+  </div>
+  <div id="rsVue"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+<script src="assets/js/config.js"></script>
+<script src="assets/js/auth.js"></script>
+<script src="assets/js/site.js"></script>
+<script src="assets/js/ui.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   Studio Réels — le repérage, depuis le téléphone.
+
+   La seule étape que la machine ne peut pas faire : dire quelle seconde
+   montre quelle pièce. Vérifié le 22/09/2026 — les visites sont une prise
+   continue, la détection de plans n'y trouve rien, et neuf biens sur dix
+   sont vides, donc un modèle de vision se tromperait plus souvent qu'à
+   son tour.
+
+   Cette page ne monte rien. Elle écrit une ligne dans `reel_jobs`, et
+   l'ouvrier `reel.py file` fait le reste : télécharge, monte, téléverse
+   vers R2, puis écrit `reel_url` sur l'annonce via `reel-set-url`.
+
+   Elle lit les annonces par le pont site.js (lecture seule, base du
+   site) et écrit dans la base du CRM avec la session authentifiée.
+   ═══════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  var vue = document.getElementById('rsVue');
+  var titre = document.getElementById('rsTitre');
+  var retour = document.getElementById('rsRetour');
+  var PIECES = [
+    { cle: 'ext', nom: 'Extérieur' },
+    { cle: 'sejour', nom: 'Séjour' },
+    { cle: 'cuisine', nom: 'Cuisine' },
+    { cle: 'chambre', nom: 'Chambre' }
+  ];
+  var biens = [], filtre = 'todo', courant = null, marques = {}, facade = null, hls = null;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function db() { return window.SLCM_DB.getClient(); }
+  function mmss(t) {
+    t = Math.max(0, Math.floor(t || 0));
+    return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+  }
+  function sousTitre(b) {
+    var p = b.price ? Number(b.price).toLocaleString('fr-FR') + ' F' : '';
+    return [b.district, p].filter(Boolean).join(' · ');
+  }
+
+  /* ── Liste ──────────────────────────────────────────────────── */
+  async function montrerListe() {
+    courant = null;
+    retour.style.display = 'none';
+    titre.textContent = 'Studio Réels';
+    vue.innerHTML = '<div class="rs-vide">Chargement…</div>';
+    if (!biens.length) {
+      var tout = await window.SLCM_SITE.fetchListings({ force: true });
+      biens = (tout || []).filter(function (b) { return b.video_url; });
+    }
+    dessinerListe();
+  }
+
+  function dessinerListe() {
+    var liste = biens.filter(function (b) {
+      return filtre === 'todo' ? !b.reel_url : !!b.reel_url;
+    });
+    var h = '<div class="rs-onglets">'
+      + '<button data-f="todo" class="' + (filtre === 'todo' ? 'on' : '') + '">À monter ('
+      + biens.filter(function (b) { return !b.reel_url; }).length + ')</button>'
+      + '<button data-f="fait" class="' + (filtre === 'fait' ? 'on' : '') + '">Déjà montés ('
+      + biens.filter(function (b) { return !!b.reel_url; }).length + ')</button>'
+      + '</div>';
+    if (!liste.length) {
+      h += '<div class="rs-vide">Rien ici.</div>';
+    } else {
+      h += liste.map(function (b) {
+        var img = (b.images || [])[0] || '';
+        return '<div class="rs-bien" data-slug="' + esc(b.slug) + '">'
+          + (img ? '<img src="' + esc(img) + '" alt="" loading="lazy">' : '<img alt="">')
+          + '<div style="flex:1;min-width:0"><div class="t">' + esc(b.title || b.slug) + '</div>'
+          + '<div class="s">' + esc(sousTitre(b)) + '</div></div>'
+          + '<span class="rs-etat ' + (b.reel_url ? 'fait' : 'todo') + '">'
+          + (b.reel_url ? 'monté' : 'à faire') + '</span></div>';
+      }).join('');
+    }
+    vue.innerHTML = h;
+    vue.querySelectorAll('.rs-onglets button').forEach(function (x) {
+      x.onclick = function () { filtre = x.dataset.f; dessinerListe(); };
+    });
+    vue.querySelectorAll('.rs-bien').forEach(function (x) {
+      x.onclick = function () { ouvrir(x.dataset.slug); };
+    });
+  }
+
+  /* ── Repérage ───────────────────────────────────────────────── */
+  function ouvrir(slug) {
+    courant = biens.find(function (b) { return b.slug === slug; });
+    if (!courant) return;
+    marques = {}; facade = null;
+    retour.style.display = '';
+    titre.textContent = 'Repérage';
+    dessinerReperage();
+  }
+
+  function accrocheAuto(b) {
+    var TYPES = { apartment: 'APPARTEMENT', studio: 'STUDIO', villa: 'VILLA',
+      duplex: 'DUPLEX', house: 'MAISON', warehouse: 'ENTREPÔT', office: 'BUREAU',
+      commercial: 'ESPACE COMMERCIAL', shop: 'LOCAL COMMERCIAL', building: 'IMMEUBLE',
+      'plots-of-land': 'TERRAIN' };
+    /* L'accroche se compose des champs structurés, pas du titre : deux fois
+       cette semaine un titre a contredit sa fiche — « à Bali » sur un bien de
+       Bonapriso, « meublé » sur un studio vide. Le titre est libre et rarement
+       relu ; le type et les chambres passent par des listes déroulantes. */
+    var base = TYPES[b.type] || 'BIEN';
+    var ch = parseInt(b.bedrooms, 10) || 0;
+    if (ch && /^(APPARTEMENT|VILLA|DUPLEX|MAISON)$/.test(base)) {
+      base += ' ' + ch + ' CHAMBRE' + (ch > 1 ? 'S' : '');
+    }
+    if (b.furnished && /^(APPARTEMENT|STUDIO|VILLA|DUPLEX)/.test(base)) base += ' MEUBLÉ';
+    var prix = b.price ? Number(b.price).toLocaleString('fr-FR').replace(/ | /g, ' ') : '';
+    var l3 = b.rent_sale === 'sale'
+      ? (b.price > 1000 ? prix + ' FCFA' : 'À VENDRE')
+      : (prix ? prix + ' F/mois' : 'PRIX SUR DEMANDE');
+    return [base, String(b.district || 'DOUALA').toUpperCase(), l3];
+  }
+
+  function dessinerReperage() {
+    var b = courant;
+    var a = accrocheAuto(b);
+    var photos = (b.images || []).slice(0, 12);
+    vue.innerHTML =
+        '<video id="rsVideo" playsinline controls preload="metadata"></video>'
+      + '<div class="rs-temps" id="rsTemps">0:00</div>'
+      + '<div class="rs-pieces">' + PIECES.map(function (p) {
+          return '<button data-p="' + p.cle + '">' + p.nom
+            + '<span class="marques" id="m-' + p.cle + '"></span></button>';
+        }).join('') + '</div>'
+      + '<div class="rs-note">Touchez une pièce au moment où elle apparaît. '
+      + 'Touchez-la à nouveau pour ajouter un second angle — le temps se partage, '
+      + 'le Réel ne s\'allonge pas. Appui long pour effacer.</div>'
+      + (photos.length ? '<div class="rs-champ"><label>Photo de fin (téléphone et site s\'y affichent)</label></div>'
+          + '<div class="rs-photos">' + photos.map(function (u, i) {
+              return '<img src="' + esc(u) + '" data-n="' + (i + 1) + '" alt="" loading="lazy">';
+            }).join('') + '</div>' : '')
+      + '<div class="rs-champ"><label>Mode</label><select id="rsMode">'
+      + '<option value="plans">Quatre plans (repérage ci-dessus)</option>'
+      + '<option value="entier">Visite entière (moins de 50 s)</option>'
+      + '<option value="sequence">Les 40 premières secondes</option>'
+      + '</select></div>'
+      + '<div class="rs-champ"><label>Ligne 1</label><input id="rsL1" value="' + esc(a[0]) + '"></div>'
+      + '<div class="rs-champ"><label>Ligne 2</label><input id="rsL2" value="' + esc(a[1]) + '"></div>'
+      + '<div class="rs-champ"><label>Ligne 3</label><input id="rsL3" value="' + esc(a[2]) + '"></div>'
+      + '<div class="rs-barre"><button class="rs-sec" id="rsFile">File</button>'
+      + '<button class="rs-go" id="rsGo">Monter</button></div>';
+
+    var v = document.getElementById('rsVideo');
+    lire(v, b.video_url);
+    v.addEventListener('timeupdate', function () {
+      document.getElementById('rsTemps').textContent = mmss(v.currentTime);
+    });
+
+    vue.querySelectorAll('.rs-pieces button').forEach(function (bt) {
+      var cle = bt.dataset.p, minuterie = null;
+      bt.addEventListener('pointerdown', function () {
+        minuterie = setTimeout(function () {
+          minuterie = null; marques[cle] = []; rafraichirMarques();
+        }, 550);
+      });
+      bt.addEventListener('pointerup', function () {
+        if (minuterie === null) return;
+        clearTimeout(minuterie); minuterie = null;
+        (marques[cle] = marques[cle] || []).push(Math.floor(v.currentTime));
+        rafraichirMarques();
+      });
+    });
+
+    vue.querySelectorAll('.rs-photos img').forEach(function (im) {
+      im.onclick = function () {
+        vue.querySelectorAll('.rs-photos img').forEach(function (x) { x.classList.remove('on'); });
+        im.classList.add('on'); facade = parseInt(im.dataset.n, 10);
+      };
+    });
+
+    document.getElementById('rsMode').onchange = majBouton;
+    document.getElementById('rsGo').onclick = envoyer;
+    document.getElementById('rsFile').onclick = montrerFile;
+    rafraichirMarques();
+  }
+
+  function rafraichirMarques() {
+    PIECES.forEach(function (p) {
+      var el = document.getElementById('m-' + p.cle);
+      if (el) el.textContent = (marques[p.cle] || []).map(mmss).join(' · ');
+    });
+    majBouton();
+  }
+
+  function majBouton() {
+    var mode = (document.getElementById('rsMode') || {}).value || 'plans';
+    var pret = mode !== 'plans' || Object.keys(marques).some(function (k) {
+      return (marques[k] || []).length;
+    });
+    var go = document.getElementById('rsGo');
+    if (go) go.disabled = !pret;
+  }
+
+  /* Cloudflare Stream sert du HLS. Safari le lit nativement ; ailleurs il faut
+     hls.js. On teste hls.js EN PREMIER : Chromium répond « maybe » à
+     canPlayType pour ce type MIME sans savoir le lire, et prendre la branche
+     native donne alors une vidéo muette et un spinner sans fin. */
+  function lire(v, url) {
+    if (hls) { hls.destroy(); hls = null; }
+    if (window.Hls && window.Hls.isSupported()) {
+      hls = new window.Hls({ maxBufferLength: 20 });
+      hls.loadSource(url); hls.attachMedia(v);
+    } else {
+      v.src = url;
+    }
+  }
+
+  /* ── Envoi ──────────────────────────────────────────────────── */
+  async function envoyer() {
+    var mode = document.getElementById('rsMode').value;
+    var reperes = {};
+    if (mode === 'plans') {
+      PIECES.forEach(function (p) {
+        if ((marques[p.cle] || []).length) reperes[p.cle] = marques[p.cle];
+      });
+    } else if (mode === 'sequence') {
+      reperes.tranches = ['0-40'];
+    }
+    var go = document.getElementById('rsGo');
+    go.disabled = true; go.textContent = 'Envoi…';
+    try {
+      var { error } = await db().from('reel_jobs').insert({
+        listing_slug: courant.slug,
+        listing_titre: courant.title || courant.slug,
+        mode: mode,
+        reperes: reperes,
+        facade: facade,
+        l1: document.getElementById('rsL1').value.trim() || null,
+        l2: document.getElementById('rsL2').value.trim() || null,
+        l3: document.getElementById('rsL3').value.trim() || null
+      });
+      if (error) throw error;
+      window.UI.toast('Dans la file. L\'ouvrier s\'en occupe.', 'success');
+      montrerFile();
+    } catch (e) {
+      go.disabled = false; go.textContent = 'Monter';
+      /* 23505 = l'index unique : ce bien est déjà dans la file. Le dire en
+         clair vaut mieux qu'un code d'erreur Postgres. */
+      window.UI.toast(e && e.code === '23505'
+        ? 'Ce bien est déjà dans la file.'
+        : 'Échec : ' + ((e && e.message) || e), 'error');
+    }
+  }
+
+  /* ── La file ────────────────────────────────────────────────── */
+  var minuterieFile = null;
+  async function montrerFile() {
+    courant = null;
+    retour.style.display = '';
+    titre.textContent = 'File';
+    var { data } = await db().from('reel_jobs')
+      .select('*').order('cree_le', { ascending: false }).limit(30);
+    var ETAT = { en_attente: 'en attente', en_cours: 'en cours…', fait: 'fait', echec: 'échec' };
+    vue.innerHTML = (data && data.length)
+      ? data.map(function (j) {
+          return '<div class="rs-travail"><b>' + esc(j.listing_titre || j.listing_slug) + '</b>'
+            + '<span class="rs-etat ' + (j.statut === 'fait' ? 'fait' : 'todo') + '">'
+            + (ETAT[j.statut] || j.statut) + '</span> · ' + esc(j.mode)
+            + (j.message ? '<div style="margin-top:5px;color:var(--text-2,#777)">'
+                + esc(String(j.message).slice(0, 220)) + '</div>' : '')
+            + '</div>';
+        }).join('')
+      : '<div class="rs-vide">La file est vide.</div>';
+    clearTimeout(minuterieFile);
+    if (data && data.some(function (j) { return j.statut === 'en_cours' || j.statut === 'en_attente'; })) {
+      minuterieFile = setTimeout(montrerFile, 8000);
+    }
+  }
+
+  retour.onclick = function () { clearTimeout(minuterieFile); biens = []; montrerListe(); };
+  document.addEventListener('slcm:auth-ready', montrerListe);
+  if (window.SLCM_SESSION) montrerListe();
+})();
+</script>
+</body>
+</html>

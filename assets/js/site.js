@@ -33,10 +33,13 @@
      photo. Les URLs pointent sur Cloudflare Images (variante `public`, seule
      existante) ou, pour 23 anciennes annonces, sur le Storage Supabase.
 
+     `video_url` / `reel_url` : ajoutes le 26/09/2026 pour le studio Reels.
+     Verifies presents sur la base du site (48 annonces les portent).
+
      PIEGE : demander une colonne inexistante fait echouer TOUTE la lecture
      (PostgREST 42703, sans erreur visible). Ne rien ajouter ici sans avoir
      verifie que la colonne existe. */
-  const COLS = 'id,slug,title,price,district,city,type,rent_sale,bedrooms,status,furnished,created_at,images';
+  const COLS = 'id,slug,title,price,district,city,type,rent_sale,bedrooms,status,furnished,created_at,images,video_url,reel_url';
 
   const CACHE_MS = 5 * 60 * 1000;
   let _cache = null;
