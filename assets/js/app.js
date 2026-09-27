@@ -12,6 +12,7 @@ const paymentsBtn = document.getElementById('payments-btn');
 const invoicesBtn = document.getElementById('invoices-btn');
 const visualBtn = document.getElementById('visual-btn');
 const reelsBtn = document.getElementById('reels-btn');
+const reperesBtn = document.getElementById('reperes-btn');
 const tasksBtn = document.getElementById('tasks-btn');
 const automationBtn = document.getElementById('automation-btn');
 const pipelineBtn = document.getElementById('pipeline-btn');
@@ -48,6 +49,7 @@ invoicesBtn.addEventListener('click', () => { window.location.href = 'facture.ht
    l'etat actif sur un bouton qu'on ne reverra pas. */
 visualBtn.addEventListener('click', () => { window.location.href = 'visuel-terrain-bonapriso.html'; });
 reelsBtn.addEventListener('click', () => { window.location.href = 'reels.html'; });
+reperesBtn.addEventListener('click', () => { window.location.href = 'reperes.html'; });
 tasksBtn.addEventListener('click', navTo(tasksBtn, showTasks));
 automationBtn.addEventListener('click', navTo(automationBtn, showAutomation));
 pipelineBtn.addEventListener('click', navTo(pipelineBtn, showPipeline));
