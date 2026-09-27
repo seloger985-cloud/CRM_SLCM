@@ -6,7 +6,7 @@
 <title>Repères — SE LOGER CM</title>
 <link rel="stylesheet" href="assets/css/style.css">
 <style>
-  .rp-wrap{max-width:680px;margin:0 auto;padding:12px 14px 120px}
+  .rp-wrap{max-width:680px;margin:0 auto;padding:12px 14px 132px}
   .rp-top{display:flex;align-items:center;gap:10px;margin-bottom:12px}
   .rp-top h1{font-size:1.02rem;margin:0;flex:1}
   .rp-btn{background:none;border:1px solid var(--border);border-radius:9px;
@@ -14,7 +14,7 @@
 
   .rp-prog{height:5px;background:var(--border);border-radius:99px;overflow:hidden;margin-bottom:6px}
   .rp-prog i{display:block;height:100%;background:var(--accent);transition:width .3s}
-  .rp-compte{font-size:.78rem;color:var(--text-2,#777);margin-bottom:14px}
+  .rp-compte{font-size:.78rem;color:var(--text-2,#777);margin-bottom:12px}
 
   .rp-q{display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;margin-bottom:12px}
   .rp-q button{white-space:nowrap;padding:7px 12px;border:1px solid var(--border);
@@ -22,23 +22,31 @@
   .rp-q button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 
   .rp-bien{border:1px solid var(--border);border-radius:14px;overflow:hidden;
-           background:var(--bg-input);margin-bottom:14px}
-  .rp-bien img{width:100%;height:190px;object-fit:cover;display:block;background:#ddd}
-  .rp-bien .c{padding:12px 14px}
-  .rp-bien h2{font-size:.98rem;margin:0 0 3px;line-height:1.3}
-  .rp-bien .m{font-size:.8rem;color:var(--text-2,#777)}
-  .rp-bien .px{color:var(--accent);font-weight:700;font-size:.92rem;margin-top:4px}
-  .rp-actuel{margin-top:8px;font-size:.82rem;font-style:italic;color:var(--text-2,#777);
+           background:var(--bg-input);margin-bottom:6px}
+  .rp-bien img{width:100%;height:180px;object-fit:cover;display:block;background:#ddd}
+  .rp-bien .c{padding:11px 13px}
+  .rp-bien h2{font-size:.96rem;margin:0 0 3px;line-height:1.3}
+  .rp-bien .m{font-size:.79rem;color:var(--text-2,#777)}
+  .rp-bien .px{color:var(--accent);font-weight:700;font-size:.9rem;margin-top:3px}
+  .rp-actuel{margin-top:7px;font-size:.81rem;font-style:italic;color:var(--text-2,#777);
              border-left:2px solid var(--accent);padding-left:8px}
 
-  .rp-lbl{font-size:.75rem;color:var(--text-2,#777);margin:14px 0 6px}
+  .rp-etage{margin-top:14px}
+  .rp-lbl{font-size:.73rem;letter-spacing:.06em;text-transform:uppercase;font-weight:700;
+          color:var(--text-2,#777);margin-bottom:7px}
+  .rp-lbl b{color:var(--accent)}
   .rp-chips{display:flex;flex-wrap:wrap;gap:6px}
   .rp-chips button{padding:7px 11px;border:1px solid var(--border);background:var(--bg-input);
-      border-radius:999px;cursor:pointer;font-size:.8rem;color:inherit;text-align:left}
+      border-radius:999px;cursor:pointer;font-size:.81rem;color:inherit;text-align:left}
+  .rp-chips button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
   .rp-chips button:active{transform:scale(.97)}
-  #rpTexte{width:100%;padding:12px;border:1px solid var(--border);border-radius:11px;
-      background:var(--bg-input);color:inherit;font-size:.95rem;margin-top:10px}
-  .rp-aide{font-size:.76rem;color:var(--text-2,#777);line-height:1.45;margin-top:8px}
+  .rp-in{width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:11px;
+      background:var(--bg-input);color:inherit;font-size:.93rem;margin-top:8px}
+
+  .rp-apercu{margin-top:16px;padding:12px 14px;border:1px dashed var(--accent);
+      border-radius:11px;background:var(--accent-soft,#fff8f0);font-size:.95rem;font-weight:600}
+  .rp-apercu span{color:var(--text-2,#777);font-weight:400;font-size:.76rem;display:block;
+      margin-bottom:3px;text-transform:uppercase;letter-spacing:.06em}
 
   .rp-barre{position:fixed;left:0;right:0;bottom:0;padding:11px 14px calc(11px + env(safe-area-inset-bottom));
       background:var(--bg-0,#fff);border-top:1px solid var(--border);display:flex;gap:9px}
@@ -46,13 +54,14 @@
   .rp-go{flex:1;background:var(--accent);color:#fff}
   .rp-go:disabled{opacity:.45}
   .rp-skip{background:var(--bg-input);color:inherit;border:1px solid var(--border)!important}
-  .rp-vide{text-align:center;padding:40px 12px;color:var(--text-2,#777);font-size:.9rem}
+  .rp-vide{text-align:center;padding:36px 12px;color:var(--text-2,#777);font-size:.9rem;line-height:1.6}
 </style>
 </head>
 <body>
 <div class="rp-wrap">
   <div class="rp-top">
     <h1 id="rpTitre">Repères</h1>
+    <button class="rp-btn" id="rpReprise" style="display:none">Passés</button>
     <button class="rp-btn" onclick="location.href='index.html'">CRM</button>
   </div>
   <div id="rpVue"><div class="rp-vide">Chargement…</div></div>
@@ -65,29 +74,40 @@
 <script src="assets/js/ui.js"></script>
 <script>
 /* ═══════════════════════════════════════════════════════════════════
-   Saisie des repères — une annonce à la fois.
+   Saisie des repères — deux niveaux, pas un.
 
-   Le repère situe un bien comme on le dit ici : « à une moto du carrefour »,
-   « près de la Clinique de l'aéroport ». Il s'affiche déjà sur les cartes et
-   les fiches, il alimentera les pages de quartier.
+        Près la Croissanterie  -  Centre
+        └─ le point                └─ la zone
 
-   Pourquoi cette page plutôt que le dashboard : 148 annonces à traiter, et
-   la qualité de la saisie compte autant que le fait de saisir. Un champ
-   libre a produit « H », « Denver », « Tradex » — des noms de lieux qui
-   n'indiquent rien. Ici, les repères DÉJÀ employés dans le quartier sont
-   proposés en pastilles : on touche, c'est écrit, c'est cohérent.
+   La ZONE est le découpage que les habitants emploient pour délimiter une
+   recherche : « je cherche dans le Centre ». Le POINT situe précisément à
+   l'intérieur. Ensemble, ils disent à un client où se trouve un bien sans
+   qu'il ait besoin d'une carte — et personne d'autre ne le fait à Douala.
 
-   L'écriture passe par listing-set-repere, qui valide la session CRM côté
-   serveur. Aucun secret ne descend dans le navigateur.
+   Les deux listes s'apprennent toutes seules : ce qui a déjà été saisi dans
+   un quartier est proposé au bien suivant. Le vocabulaire se resserre au
+   lieu de s'éparpiller, et c'est ce qui rend le découpage exploitable.
+
+   L'état (quartier, zone, biens passés) survit à un rafraîchissement.
    ═══════════════════════════════════════════════════════════════════ */
 (function () {
   'use strict';
 
   var SITE = 'https://selogercm.com';
-  var MINI = 14;                     /* en dessous, le repère n'indique rien */
+  var SEP = ' - ';
+  var CLE = 'slcm_reperes_v2';
+  /* Amorce du découpage de Bonapriso, donnée par l'agence. Les autres
+     quartiers partent de zéro et se construisent à la saisie. */
+  var ZONES = {
+    'Bonapriso': ['Centre', 'Météo', 'Hôtel de l\'air', 'Avenue De Gaulle',
+                  'Rue Njoh Njoh', 'Avenue de l\'indépendance', 'Rue Koloko',
+                  'Armée de l\'air', 'Hydrocarbures']
+  };
+
   var vue = document.getElementById('rpVue');
-  var titre = document.getElementById('rpTitre');
-  var biens = [], parQuartier = {}, connus = {}, quartier = null, i = 0, faits = 0;
+  var btnReprise = document.getElementById('rpReprise');
+  var biens = [], parQuartier = {}, pointsConnus = {}, zonesConnues = {};
+  var quartier = null, zone = null, i = 0, passes = {}, faits = 0;
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -100,62 +120,105 @@
     var p = (b.slug || '').split('-');
     return p.length > 2 ? p[1].charAt(0).toUpperCase() + p[1].slice(1) : 'Autre';
   }
+  /* « Près la Croissanterie - Centre » → { point, zone } */
+  function decouper(r) {
+    r = (r || '').trim();
+    var k = r.lastIndexOf(SEP);
+    if (k > 0) return { point: r.slice(0, k).trim(), zone: r.slice(k + SEP.length).trim() };
+    return { point: r, zone: '' };
+  }
+  function etat() {
+    try { return JSON.parse(localStorage.getItem(CLE) || '{}'); } catch (e) { return {}; }
+  }
+  function garder() {
+    try {
+      localStorage.setItem(CLE, JSON.stringify({ quartier: quartier, zone: zone, passes: passes }));
+    } catch (e) { /* navigation privée : on continue sans mémoire */ }
+  }
 
   async function charger() {
-    var tout = await window.SLCM_SITE.fetchListings({ force: true });
-    tout = tout || [];
-    /* Les repères déjà valides d'un quartier deviennent les propositions de
-       ce quartier : la carte se construit toute seule, et se resserre. */
-    connus = {};
+    var e = etat();
+    passes = e.passes || {};
+    var tout = (await window.SLCM_SITE.fetchListings({ force: true })) || [];
+
+    pointsConnus = {}; zonesConnues = {};
     tout.forEach(function (b) {
-      var r = (b.repere || '').trim();
-      if (r.length >= MINI) {
-        (connus[q(b)] = connus[q(b)] || {})[r] = (connus[q(b)][r] || 0) + 1;
+      var d = decouper(b.repere);
+      if (!d.point) return;
+      var k = q(b);
+      if (d.zone) {
+        (zonesConnues[k] = zonesConnues[k] || {})[d.zone] = (zonesConnues[k][d.zone] || 0) + 1;
+        var ck = k + '|' + d.zone;
+        (pointsConnus[ck] = pointsConnus[ck] || {})[d.point] = (pointsConnus[ck][d.point] || 0) + 1;
       }
     });
-    biens = tout.filter(function (b) { return (b.repere || '').trim().length < MINI; });
+
+    /* À traiter : pas de repère, ou un repère sans zone — l'ancien format. */
+    biens = tout.filter(function (b) { return !decouper(b.repere).zone; });
     parQuartier = {};
     biens.forEach(function (b) { (parQuartier[q(b)] = parQuartier[q(b)] || []).push(b); });
-    quartier = Object.keys(parQuartier).sort(function (a, c) {
-      return parQuartier[c].length - parQuartier[a].length;
-    })[0] || null;
+
+    var dispo = Object.keys(parQuartier);
+    quartier = (e.quartier && parQuartier[e.quartier]) ? e.quartier
+      : dispo.sort(function (a, c) { return parQuartier[c].length - parQuartier[a].length; })[0] || null;
+    zone = e.zone || null;
     i = 0;
     dessiner();
   }
 
+  function aTraiter() {
+    return (parQuartier[quartier] || []).filter(function (b) { return !passes[b.slug]; });
+  }
+
+  function zonesDe(k) {
+    var vues = Object.keys(zonesConnues[k] || {});
+    var amorce = ZONES[k] || [];
+    var sortie = amorce.slice();
+    vues.sort(function (a, c) { return zonesConnues[k][c] - zonesConnues[k][a]; })
+        .forEach(function (z) { if (sortie.indexOf(z) === -1) sortie.push(z); });
+    return sortie;
+  }
+
   function dessiner() {
+    garder();
+    var nbPasses = Object.keys(passes).filter(function (s) { return passes[s] === 1; }).length;
+    btnReprise.style.display = nbPasses ? '' : 'none';
+    btnReprise.textContent = 'Passés (' + nbPasses + ')';
+
     if (!quartier) {
-      vue.innerHTML = '<div class="rp-vide">Tout est renseigné. Rien à faire ici.</div>';
+      vue.innerHTML = '<div class="rp-vide">Tout est renseigné.</div>';
       return;
     }
-    var liste = parQuartier[quartier] || [];
+    var liste = aTraiter();
     var onglets = Object.keys(parQuartier).sort(function (a, c) {
       return parQuartier[c].length - parQuartier[a].length;
     }).map(function (k) {
       return '<button data-q="' + esc(k) + '" class="' + (k === quartier ? 'on' : '') + '">'
-        + esc(k) + ' <b>' + parQuartier[k].length + '</b></button>';
+        + esc(k) + ' <b>' + parQuartier[k].filter(function (b) { return !passes[b.slug]; }).length
+        + '</b></button>';
     }).join('');
 
-    if (i >= liste.length) {
+    if (!liste.length) {
       vue.innerHTML = '<div class="rp-q">' + onglets + '</div>'
         + '<div class="rp-vide">' + esc(quartier) + ' est terminé.<br>'
         + 'Choisissez un autre quartier ci-dessus.</div>';
       brancherOnglets();
       return;
     }
+    if (i >= liste.length) i = 0;
 
     var b = liste[i];
     var img = (b.images || [])[0] || '';
     var actuel = (b.repere || '').trim();
-    var props = Object.keys(connus[quartier] || {})
-      .sort(function (a, c) { return connus[quartier][c] - connus[quartier][a]; })
-      .slice(0, 10);
-    var reste = biens.length - faits;
+    var zs = zonesDe(quartier);
+    var pts = zone ? Object.keys(pointsConnus[quartier + '|' + zone] || {})
+        .sort(function (a, c) {
+          return pointsConnus[quartier + '|' + zone][c] - pointsConnus[quartier + '|' + zone][a];
+        }).slice(0, 12) : [];
 
     vue.innerHTML = '<div class="rp-q">' + onglets + '</div>'
       + '<div class="rp-prog"><i style="width:' + Math.round(100 * i / liste.length) + '%"></i></div>'
-      + '<p class="rp-compte">' + esc(quartier) + ' — ' + (i + 1) + ' sur ' + liste.length
-      + ' &middot; ' + reste + ' au total</p>'
+      + '<p class="rp-compte">' + esc(quartier) + ' — ' + (i + 1) + ' sur ' + liste.length + '</p>'
       + '<div class="rp-bien">'
       + (img ? '<img src="' + esc(img) + '" alt="">' : '')
       + '<div class="c"><h2>' + esc(b.title || b.slug) + '</h2>'
@@ -163,38 +226,73 @@
       + (b.price ? '<p class="px">' + Number(b.price).toLocaleString('fr-FR') + ' F</p>' : '')
       + (actuel ? '<p class="rp-actuel">Actuel : ' + esc(actuel) + '</p>' : '')
       + '</div></div>'
-      + (props.length ? '<p class="rp-lbl">Repères déjà employés à ' + esc(quartier) + '</p>'
-          + '<div class="rp-chips">' + props.map(function (p) {
-              return '<button data-p="' + esc(p) + '">' + esc(p) + '</button>';
-            }).join('') + '</div>' : '')
-      + '<input id="rpTexte" placeholder="Près de… / À 1 moto de… / En bordure de…" '
-      + 'value="' + esc(actuel) + '">'
-      + '<p class="rp-aide">Écrivez une <b>indication</b>, pas un nom seul. '
-      + '« Tradex » ne dit rien ; « Près de Tradex » situe. '
-      + 'Au moins ' + MINI + ' caractères.</p>'
+
+      + '<div class="rp-etage"><p class="rp-lbl">1 &middot; La <b>zone</b> de recherche</p>'
+      + '<div class="rp-chips" id="rpZones">' + zs.map(function (z) {
+          return '<button data-z="' + esc(z) + '" class="' + (z === zone ? 'on' : '') + '">'
+            + esc(z) + '</button>';
+        }).join('') + '</div>'
+      + '<input class="rp-in" id="rpZoneLibre" placeholder="Autre zone…" value=""></div>'
+
+      + '<div class="rp-etage"><p class="rp-lbl">2 &middot; Le <b>point</b> de repère</p>'
+      + (pts.length ? '<div class="rp-chips" id="rpPts">' + pts.map(function (p) {
+            return '<button data-p="' + esc(p) + '">' + esc(p) + '</button>';
+          }).join('') + '</div>' : '')
+      + '<input class="rp-in" id="rpPoint" placeholder="Près de la Croissanterie…"></div>'
+
+      + '<div class="rp-apercu" id="rpApercu"><span>Ce qui sera enregistré</span>—</div>'
       + '<div class="rp-barre"><button class="rp-skip" id="rpSkip">Passer</button>'
       + '<button class="rp-go" id="rpGo">Enregistrer</button></div>';
 
-    var champ = document.getElementById('rpTexte');
+    var champPoint = document.getElementById('rpPoint');
+    var champZone = document.getElementById('rpZoneLibre');
+    var apercu = document.getElementById('rpApercu');
     var go = document.getElementById('rpGo');
-    function maj() { go.disabled = champ.value.trim().length < MINI; }
-    champ.addEventListener('input', maj); maj();
-    champ.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !go.disabled) enregistrer(b, champ.value);
+
+    function zoneActive() { return (champZone.value.trim() || zone || ''); }
+    function compose() {
+      var p = champPoint.value.trim(), z = zoneActive();
+      return p && z ? p + SEP + z : (z || p || '');
+    }
+    function maj() {
+      var v = compose();
+      apercu.innerHTML = '<span>Ce qui sera enregistré</span>' + (esc(v) || '—');
+      go.disabled = !(champPoint.value.trim() && zoneActive());
+    }
+    champPoint.addEventListener('input', maj);
+    champZone.addEventListener('input', maj);
+    champPoint.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter' && !go.disabled) enregistrer(b, compose());
     });
-    vue.querySelectorAll('.rp-chips button').forEach(function (x) {
-      x.onclick = function () { champ.value = x.dataset.p; maj(); champ.focus(); };
+    vue.querySelectorAll('#rpZones button').forEach(function (x) {
+      x.onclick = function () {
+        zone = x.dataset.z; champZone.value = ''; garder(); dessiner();
+      };
     });
-    go.onclick = function () { enregistrer(b, champ.value); };
-    document.getElementById('rpSkip').onclick = function () { i++; dessiner(); };
+    vue.querySelectorAll('#rpPts button').forEach(function (x) {
+      x.onclick = function () { champPoint.value = x.dataset.p; maj(); champPoint.focus(); };
+    });
+    go.onclick = function () { enregistrer(b, compose()); };
+    document.getElementById('rpSkip').onclick = function () {
+      passes[b.slug] = 1; garder(); dessiner();
+    };
     brancherOnglets();
+    maj();
   }
 
   function brancherOnglets() {
     vue.querySelectorAll('.rp-q button').forEach(function (x) {
-      x.onclick = function () { quartier = x.dataset.q; i = 0; dessiner(); };
+      x.onclick = function () { quartier = x.dataset.q; zone = null; i = 0; garder(); dessiner(); };
     });
   }
+
+  btnReprise.onclick = function () {
+    /* On ne rend que les biens PASSÉS (1). Ceux qui sont enregistrés (2)
+       restent de côté : ils ont leur repère, les reproposer ferait perdre
+       du temps et risquerait de l'écraser. */
+    Object.keys(passes).forEach(function (s) { if (passes[s] === 1) delete passes[s]; });
+    i = 0; garder(); dessiner();
+  };
 
   async function enregistrer(b, valeur) {
     var go = document.getElementById('rpGo');
@@ -207,19 +305,25 @@
           'Content-Type': 'application/json',
           Authorization: 'Bearer ' + (sess && sess.access_token)
         },
-        body: JSON.stringify({ slug: b.slug, repere: valeur.trim() })
+        body: JSON.stringify({ slug: b.slug, repere: valeur })
       });
       var j = await r.json();
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      /* On enrichit la liste des propositions au fil de l'eau : le repère
-         qu'on vient d'écrire est proposé au bien suivant du même quartier. */
-      var k = q(b);
-      connus[k] = connus[k] || {};
-      connus[k][valeur.trim()] = (connus[k][valeur.trim()] || 0) + 1;
-      b.repere = valeur.trim();
-      faits++; i++;
-      window.UI.toast('Enregistré', 'success');
-      dessiner();
+
+      var d = decouper(valeur), k = q(b);
+      if (d.zone) {
+        (zonesConnues[k] = zonesConnues[k] || {})[d.zone] = (zonesConnues[k][d.zone] || 0) + 1;
+        var ck = k + '|' + d.zone;
+        (pointsConnus[ck] = pointsConnus[ck] || {})[d.point] = (pointsConnus[ck][d.point] || 0) + 1;
+        zone = d.zone;
+      }
+      b.repere = valeur;
+      /* Le bien traité sort de la liste : on ne le retire pas de parQuartier
+         a la main, on le marque, et aTraiter() n'en veut plus. */
+      passes[b.slug] = 2;
+      faits++;
+      window.UI.toast('Enregistré — ' + valeur, 'success');
+      garder(); dessiner();
     } catch (e) {
       go.disabled = false; go.textContent = 'Enregistrer';
       window.UI.toast('Échec : ' + ((e && e.message) || e), 'error');
