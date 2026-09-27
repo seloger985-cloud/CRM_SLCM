@@ -14,7 +14,12 @@
 
   .rp-prog{height:5px;background:var(--border);border-radius:99px;overflow:hidden;margin-bottom:6px}
   .rp-prog i{display:block;height:100%;background:var(--accent);transition:width .3s}
-  .rp-compte{font-size:.78rem;color:var(--text-2,#777);margin-bottom:12px}
+  .rp-compte{font-size:.78rem;color:var(--text-2,#777)}
+  .rp-nav{display:flex;align-items:center;justify-content:space-between;gap:10px;
+      margin-bottom:12px}
+  .rp-nav button{padding:7px 13px;border-radius:99px;cursor:pointer;font-size:.8rem;
+      font-weight:600;background:var(--bg-input);color:inherit;border:1px solid var(--border)}
+  .rp-nav button:disabled{opacity:.35;cursor:default}
 
   .rp-q{display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;margin-bottom:12px}
   .rp-q button{white-space:nowrap;padding:7px 12px;border:1px solid var(--border);
@@ -222,7 +227,11 @@
 
     vue.innerHTML = '<div class="rp-q">' + onglets + '</div>'
       + '<div class="rp-prog"><i style="width:' + Math.round(100 * i / liste.length) + '%"></i></div>'
-      + '<p class="rp-compte">' + esc(quartier) + ' — ' + (i + 1) + ' sur ' + liste.length + '</p>'
+      + '<div class="rp-nav">'
+      +   '<button id="rpPrev"' + (liste.length > 1 ? '' : ' disabled') + '>‹ Arrière</button>'
+      +   '<span class="rp-compte">' + esc(quartier) + ' — ' + (i + 1) + ' sur ' + liste.length + '</span>'
+      +   '<button id="rpNext"' + (liste.length > 1 ? '' : ' disabled') + '>Suivant ›</button>'
+      + '</div>'
       + '<div class="rp-bien">'
       + (img ? '<img src="' + esc(img) + '" alt="">' : '')
       + '<div class="c"><h2>' + esc(b.title || b.slug) + '</h2>'
@@ -281,6 +290,14 @@
       x.onclick = function () { champPoint.value = x.dataset.p; maj(); champPoint.focus(); };
     });
     go.onclick = function () { enregistrer(b, compose()); };
+    /* Navigation pure : l'index bouge, rien n'est ecrit ni marque. Le bien
+       reste dans la file, on le retrouvera en faisant le tour. */
+    document.getElementById('rpPrev').onclick = function () {
+      i = (i - 1 + liste.length) % liste.length; dessiner();
+    };
+    document.getElementById('rpNext').onclick = function () {
+      i = (i + 1) % liste.length; dessiner();
+    };
     document.getElementById('rpSkip').onclick = function () {
       passes[b.slug] = 1; garder(); dessiner();
     };
