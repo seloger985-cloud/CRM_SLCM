@@ -54,6 +54,10 @@
   .rp-go{flex:1;background:var(--accent);color:#fff}
   .rp-go:disabled{opacity:.45}
   .rp-skip{background:var(--bg-input);color:inherit;border:1px solid var(--border)!important}
+  .rp-autres{display:flex;gap:8px;margin-top:14px}
+  .rp-autres button{flex:1;padding:11px;border-radius:11px;cursor:pointer;font-size:.84rem;
+      font-weight:600;background:var(--bg-input);color:inherit;border:1px solid var(--border)}
+  .rp-autres .danger{color:#b3261e;border-color:#f0c4c0}
   .rp-vide{text-align:center;padding:36px 12px;color:var(--text-2,#777);font-size:.9rem;line-height:1.6}
 </style>
 </head>
@@ -241,6 +245,10 @@
       + '<input class="rp-in" id="rpPoint" placeholder="Près de la Croissanterie…"></div>'
 
       + '<div class="rp-apercu" id="rpApercu"><span>Ce qui sera enregistré</span>—</div>'
+      + '<div class="rp-autres">'
+      +   '<button id="rpSold">' + (b.rent_sale === 'sale' ? 'Vendu' : 'Loué') + '</button>'
+      +   '<button id="rpDel" class="danger">Supprimer</button>'
+      + '</div>'
       + '<div class="rp-barre"><button class="rp-skip" id="rpSkip">Passer</button>'
       + '<button class="rp-go" id="rpGo">Enregistrer</button></div>';
 
@@ -276,6 +284,23 @@
     document.getElementById('rpSkip').onclick = function () {
       passes[b.slug] = 1; garder(); dessiner();
     };
+    document.getElementById('rpSold').onclick = function () {
+      var mot = b.rent_sale === 'sale' ? 'vendu' : 'loué';
+      if (!confirm('Marquer ce bien comme ' + mot + ' ?\n\n'
+                   + (b.title || b.slug)
+                   + '\n\nIl sortira des annonces et des Réels.')) return;
+      agir(b, { action: 'statut', vente: b.rent_sale === 'sale' },
+           'Marqué ' + mot);
+    };
+    document.getElementById('rpDel').onclick = function () {
+      /* Deux confirmations, et le titre rappele : depuis un telephone, une
+         tape malheureuse effacerait une annonce sans retour possible. */
+      if (!confirm('SUPPRIMER définitivement cette annonce ?\n\n'
+                   + (b.title || b.slug)
+                   + '\n\nCette action est irréversible.')) return;
+      if (!confirm('Confirmez une seconde fois : la suppression est définitive.')) return;
+      agir(b, { action: 'supprimer' }, 'Annonce supprimée');
+    };
     brancherOnglets();
     maj();
   }
@@ -294,18 +319,41 @@
     i = 0; garder(); dessiner();
   };
 
-  async function enregistrer(b, valeur) {
-    var go = document.getElementById('rpGo');
-    go.disabled = true; go.textContent = 'Envoi…';
+  /* Statut et suppression passent par le meme chemin que le repere : la
+     session CRM valide cote serveur, aucun secret dans le navigateur. */
+  async function agir(b, charge, message) {
     try {
       var sess = (await window.SLCM_DB.getClient().auth.getSession()).data.session;
-      var r = await fetch(SITE + '/.netlify/functions/listing-set-repere', {
+      var r = await fetch(SITE + '/.netlify/functions/listing-maj', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: 'Bearer ' + (sess && sess.access_token)
         },
-        body: JSON.stringify({ slug: b.slug, repere: valeur })
+        body: JSON.stringify(Object.assign({ slug: b.slug }, charge))
+      });
+      var j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      passes[b.slug] = 2;
+      window.UI.toast(message, 'success');
+      garder(); dessiner();
+    } catch (e) {
+      window.UI.toast('Échec : ' + ((e && e.message) || e), 'error');
+    }
+  }
+
+  async function enregistrer(b, valeur) {
+    var go = document.getElementById('rpGo');
+    go.disabled = true; go.textContent = 'Envoi…';
+    try {
+      var sess = (await window.SLCM_DB.getClient().auth.getSession()).data.session;
+      var r = await fetch(SITE + '/.netlify/functions/listing-maj', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + (sess && sess.access_token)
+        },
+        body: JSON.stringify({ slug: b.slug, action: 'repere', repere: valeur })
       });
       var j = await r.json();
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));

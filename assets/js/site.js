@@ -36,10 +36,13 @@
      `video_url` / `reel_url` : ajoutes le 26/09/2026 pour le studio Reels.
      Verifies presents sur la base du site (48 annonces les portent).
 
+     `repere` : ajoute le 27/09/2026 pour la page de saisie des reperes.
+     Verifie le meme jour par lecture directe avec la cle anon.
+
      PIEGE : demander une colonne inexistante fait echouer TOUTE la lecture
      (PostgREST 42703, sans erreur visible). Ne rien ajouter ici sans avoir
      verifie que la colonne existe. */
-  const COLS = 'id,slug,title,price,district,city,type,rent_sale,bedrooms,status,furnished,created_at,images,video_url,reel_url';
+  const COLS = 'id,slug,title,price,district,city,type,rent_sale,bedrooms,status,furnished,created_at,images,video_url,reel_url,repere';
 
   const CACHE_MS = 5 * 60 * 1000;
   let _cache = null;
