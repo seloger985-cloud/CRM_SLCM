@@ -46,6 +46,56 @@
     .actions-bar .invoice-status.is-payee   { background: #d1fae5; color: #065f46; }
     .actions-bar .invoice-status.is-annulee { background: #fee2e2; color: #991b1b; }
 
+    /* Liste des factures enregistrees. */
+    .pick-bar {
+      max-width: 800px; margin: 0 auto 16px;
+      padding: 12px 14px; border-radius: 8px;
+      background: #fff; border: 1px solid #e5e7eb;
+    }
+    .pick-bar[hidden] { display: none; }
+    .pick-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .pick-title {
+      font-size: 11px; font-weight: 700; color: #374151;
+      text-transform: uppercase; letter-spacing: .05em;
+    }
+    .pick-head input {
+      flex: 1; min-width: 200px;
+      font-family: inherit; font-size: 13px; padding: 7px 9px;
+      border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #15161b;
+    }
+    .pick-head .btn {
+      padding: 7px 14px; border: 1px solid #d1d5db; background: #fff;
+      border-radius: 6px; cursor: pointer; font-size: 13px; font-family: inherit;
+    }
+    .pick-list { margin-top: 10px; max-height: 320px; overflow-y: auto; }
+    /* Chaque ligne est un <button> : atteignable au clavier, annonce comme
+       actionnable. D'ou la remise a zero des styles natifs. */
+    .pick-row {
+      display: flex; gap: 10px; align-items: center; width: 100%;
+      padding: 9px 8px; border: 0; border-bottom: 1px solid #f1f2f4;
+      background: none; font-family: inherit; font-size: 13px;
+      text-align: left; cursor: pointer; color: #15161b;
+    }
+    .pick-row:last-child { border-bottom: none; }
+    .pick-row:hover { background: #fff8f0; }
+    .pick-row.is-current { background: #fff8f0; box-shadow: inset 3px 0 0 #ff7a00; }
+    .pick-num    { font-weight: 700; flex: 0 0 140px; }
+    .pick-client { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pick-total  { font-weight: 600; flex: 0 0 110px; text-align: right; }
+    .pick-date   { color: #666; font-size: 11px; flex: 0 0 120px; text-align: right; }
+    .pick-row .invoice-status {
+      flex: 0 0 auto; padding: 3px 9px; border-radius: 999px;
+      font-size: 10px; font-weight: 700; background: #e5e7eb; color: #374151;
+    }
+    .pick-row .invoice-status.is-emise   { background: #dbeafe; color: #1e40af; }
+    .pick-row .invoice-status.is-payee   { background: #d1fae5; color: #065f46; }
+    .pick-row .invoice-status.is-annulee { background: #fee2e2; color: #991b1b; }
+
+    @media (max-width: 680px) {
+      .pick-num, .pick-total, .pick-date { flex-basis: auto; text-align: left; }
+      .pick-row { flex-wrap: wrap; }
+    }
+
     /* Barre d'encaissement — revelee par le bouton Recu. Pas une fenetre
        modale : la page n'en a aucune, et en introduire une pour trois champs
        couterait plus que ca ne rapporte. */
@@ -571,8 +621,22 @@ table.inv-table {
     <button class="btn btn-primary" id="btnPdf" type="button">📄 Générer PDF</button>
     <button class="btn btn-secondary" id="btnReceipt" type="button"
             title="Enregistrer l'encaissement et imprimer le reçu">🧾 Reçu</button>
+    <button class="btn" id="btnOpen" type="button"
+            title="Rouvrir une facture enregistrée">📂 Ouvrir</button>
     <button class="btn" id="btnReset" type="button" title="Vider le formulaire">🗑️ Reset</button>
     <span class="invoice-status" id="invStatus">Brouillon</span>
+  </div>
+
+  <!-- Ouvrir une facture enregistrée. Facturer et encaisser sont rarement
+       simultanés : sans cette liste, une facture devenait introuvable dès que
+       l'onglet qui portait son URL était fermé. -->
+  <div class="pick-bar" id="pickBar" hidden>
+    <div class="pick-head">
+      <span class="pick-title">Ouvrir une facture</span>
+      <input type="search" id="pickSearch" placeholder="Numéro de facture ou nom du client…">
+      <button class="btn" id="pickClose" type="button">Fermer</button>
+    </div>
+    <div class="pick-list" id="pickList"></div>
   </div>
 
   <!-- Encaissement. Masquée jusqu'au clic sur « Reçu » : c'est un geste rare
@@ -1715,6 +1779,18 @@ table.inv-table {
           /* Update : on remet aussi les FK (au cas où elles ont changé via détacher/re-sélectionner) */
           payload.client_id = selectedClient ? selectedClient.id : null;
           payload.property_id = selectedProperty ? selectedProperty.id : null;
+
+          /* Une facture encaissee a deja donne lieu a un recu, qui atteste un
+             montant precis. La modifier rendrait ce recu faux sans que rien ne
+             le signale au client qui le detient. On previent, on ne bloque
+             pas : corriger une faute de frappe sur une adresse reste legitime. */
+          if (currentStatus === 'payee' &&
+              !confirm('Cette facture est deja encaissee et un recu a ete remis. '
+                     + 'La modifier peut rendre ce recu inexact. Continuer ?')) {
+            showToast('Modification annulee', 'info');
+            return;
+          }
+
           const { error } = await supabase.from('invoices').update(payload).eq('id', currentInvoiceId);
           if (error) throw error;
           showToast('Facture mise à jour', 'success');
@@ -2500,6 +2576,133 @@ table.inv-table {
     document.getElementById('btnReceipt').addEventListener('click', openCashBar);
     document.getElementById('cashConfirm').addEventListener('click', confirmCash);
     document.getElementById('cashCancel').addEventListener('click', closeCashBar);
+
+    /* ═══════════════ OUVRIR UNE FACTURE ═══════════════
+
+       Jusqu'ici la seule porte vers une facture enregistrée était l'URL
+       `?id=<uuid>`, posée par replaceState juste après la sauvegarde — donc
+       perdue dès l'onglet fermé. Facturer et encaisser sont rarement
+       simultanés : sans cette liste, le bouton Reçu était inatteignable dès
+       le lendemain.
+
+       Tout est construit en createElement + textContent, jamais en innerHTML.
+       Ce fichier n'a aucune fonction d'échappement parce qu'il n'en a jamais
+       eu besoin : un nom de client contenant < ou " ne peut pas devenir du
+       balisage s'il n'est jamais concaténé dans du balisage. */
+
+    const PICK_STATUS = {
+      emise:   { label: 'Émise',   cls: 'is-emise' },
+      payee:   { label: 'Payée',   cls: 'is-payee' },
+      annulee: { label: 'Annulée', cls: 'is-annulee' }
+    };
+
+    let pickTimer = null;
+
+    function togglePicker() {
+      const bar = document.getElementById('pickBar');
+      if (bar.hidden) {
+        bar.hidden = false;
+        document.getElementById('pickSearch').focus();
+        loadInvoiceList('');
+      } else {
+        bar.hidden = true;
+      }
+    }
+
+    async function loadInvoiceList(query) {
+      const box = document.getElementById('pickList');
+      box.textContent = 'Chargement…';
+      try {
+        const supabase = await window.SLCM_DB.init();
+        let q = supabase
+          .from('invoices')
+          .select('id, invoice_number, client_name, total, status, invoice_date, payment_date')
+          .order('created_at', { ascending: false })
+          .limit(50);
+
+        /* Recherche côté base : le numéro OU le nom du client. Les deux sont
+           ce qu'on a sous la main quand un client rappelle — il cite son nom,
+           rarement un uuid. */
+        const t = (query || '').trim();
+        if (t) {
+          const motif = '%' + t + '%';
+          q = q.or('invoice_number.ilike.' + motif + ',client_name.ilike.' + motif);
+        }
+
+        const { data, error } = await q;
+        if (error) throw error;
+        renderInvoiceList(data || []);
+      } catch (e) {
+        console.error('[facture] loadInvoiceList:', e);
+        box.textContent = 'Lecture impossible : ' + (e.message || e);
+      }
+    }
+
+    function renderInvoiceList(rows) {
+      const box = document.getElementById('pickList');
+      box.textContent = '';
+
+      if (!rows.length) {
+        box.textContent = 'Aucune facture ne correspond.';
+        return;
+      }
+
+      rows.forEach(function (r) {
+        /* Un <button> et non un <div> : il est atteignable au clavier et
+           annoncé comme actionnable, sans rien à recâbler. */
+        const ligne = document.createElement('button');
+        ligne.type = 'button';
+        ligne.className = 'pick-row';
+        if (r.id === currentInvoiceId) ligne.classList.add('is-current');
+
+        const num = document.createElement('span');
+        num.className = 'pick-num';
+        num.textContent = r.invoice_number || '(sans numéro)';
+
+        const nom = document.createElement('span');
+        nom.className = 'pick-client';
+        nom.textContent = r.client_name || '(client non renseigné)';
+
+        const montant = document.createElement('span');
+        montant.className = 'pick-total';
+        montant.textContent = fmtFCFA(Number(r.total) || 0);
+
+        const etat = document.createElement('span');
+        const m = PICK_STATUS[r.status] || { label: r.status || '—', cls: '' };
+        etat.className = 'invoice-status ' + m.cls;
+        etat.textContent = m.label;
+
+        const date = document.createElement('span');
+        date.className = 'pick-date';
+        /* La date d'encaissement prime quand elle existe : sur une facture
+           payée, c'est elle qu'on cherche. */
+        date.textContent = r.payment_date
+          ? 'encaissée le ' + fmtDateFR(new Date(r.payment_date + 'T00:00:00'))
+          : (r.invoice_date ? fmtDateFR(new Date(r.invoice_date + 'T00:00:00')) : '');
+
+        [num, nom, montant, etat, date].forEach(function (el) { ligne.appendChild(el); });
+
+        ligne.addEventListener('click', function () {
+          if (r.id === currentInvoiceId) { togglePicker(); return; }
+          /* Rechargement complet plutôt qu'un remplissage à chaud : c'est le
+             chemin que loadInvoiceFromUrl emprunte déjà, donc le seul dont on
+             sait qu'il restitue TOUT — prestations, montants, encaissement. */
+          window.location.href = 'facture.html?id=' + encodeURIComponent(r.id);
+        });
+
+        box.appendChild(ligne);
+      });
+    }
+
+    document.getElementById('btnOpen').addEventListener('click', togglePicker);
+    document.getElementById('pickClose').addEventListener('click', togglePicker);
+    document.getElementById('pickSearch').addEventListener('input', function (e) {
+      /* Temporisation : une frappe par caractère enverrait dix requêtes pour
+         un numéro de facture. */
+      clearTimeout(pickTimer);
+      const v = e.target.value;
+      pickTimer = setTimeout(function () { loadInvoiceList(v); }, 220);
+    });
 
     /* ─── Chargement d'une facture existante via ?id=UUID ─── */
     async function loadInvoiceFromUrl() {
