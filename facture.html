@@ -46,6 +46,42 @@
     .actions-bar .invoice-status.is-payee   { background: #d1fae5; color: #065f46; }
     .actions-bar .invoice-status.is-annulee { background: #fee2e2; color: #991b1b; }
 
+    /* Barre d'encaissement — revelee par le bouton Recu. Pas une fenetre
+       modale : la page n'en a aucune, et en introduire une pour trois champs
+       couterait plus que ca ne rapporte. */
+    .cash-bar {
+      max-width: 800px; margin: 0 auto 16px;
+      display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end;
+      padding: 12px 14px; border-radius: 8px;
+      background: #fff8f0; border: 1px solid #f7cda8;
+    }
+    .cash-bar[hidden] { display: none; }
+    .cash-bar .cash-title {
+      font-size: 11px; font-weight: 700; color: #9a4a00;
+      text-transform: uppercase; letter-spacing: .05em;
+      align-self: center;
+    }
+    .cash-bar label {
+      display: flex; flex-direction: column; gap: 3px;
+      font-size: 11px; font-weight: 600; color: #666;
+    }
+    .cash-bar input, .cash-bar select {
+      font-family: inherit; font-size: 13px; padding: 7px 9px;
+      border: 1px solid #d1d5db; border-radius: 6px; background: #fff; color: #15161b;
+    }
+    .cash-bar .cash-amount {
+      font-size: 16px; font-weight: 700; color: #15161b; align-self: center;
+      margin-left: auto;
+    }
+    .cash-bar .btn {
+      padding: 8px 16px; border: 1px solid #d1d5db; background: #fff;
+      border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500;
+      font-family: inherit;
+    }
+    .cash-bar .btn-primary { background: #ff7a00; color: #fff; border-color: #ff7a00; }
+    .cash-bar .btn-primary:hover { background: #e66e00; }
+    .cash-bar .btn:disabled { opacity: .5; cursor: not-allowed; }
+
     .toast {
       position: fixed; top: 20px; right: 20px;
       padding: 10px 16px; border-radius: 6px;
@@ -533,8 +569,30 @@ table.inv-table {
     <button class="btn" type="button" onclick="window.location.href='index.html'">← Retour CRM</button>
     <button class="btn btn-secondary" id="btnSave" type="button">💾 Sauvegarder</button>
     <button class="btn btn-primary" id="btnPdf" type="button">📄 Générer PDF</button>
+    <button class="btn btn-secondary" id="btnReceipt" type="button"
+            title="Enregistrer l'encaissement et imprimer le reçu">🧾 Reçu</button>
     <button class="btn" id="btnReset" type="button" title="Vider le formulaire">🗑️ Reset</button>
     <span class="invoice-status" id="invStatus">Brouillon</span>
+  </div>
+
+  <!-- Encaissement. Masquée jusqu'au clic sur « Reçu » : c'est un geste rare
+       comparé à l'édition d'une facture, elle ne doit pas occuper la place. -->
+  <div class="cash-bar" id="cashBar" hidden>
+    <span class="cash-title">Encaissement</span>
+    <label>Date
+      <input type="date" id="cashDate">
+    </label>
+    <label>Moyen de paiement
+      <select id="cashMethod">
+        <option value="especes">Espèces</option>
+        <option value="mobile_money">Mobile Money (Orange / MTN)</option>
+        <option value="virement">Virement bancaire</option>
+        <option value="cheque">Chèque</option>
+      </select>
+    </label>
+    <span class="cash-amount" id="cashAmount"></span>
+    <button class="btn btn-primary" id="cashConfirm" type="button">Confirmer et imprimer le reçu</button>
+    <button class="btn" id="cashCancel" type="button">Annuler</button>
   </div>
 
   <!-- Sélecteur de prestations -->
@@ -982,6 +1040,11 @@ table.inv-table {
       document.getElementById('grandtotal').textContent = fmtFCFA(grand);
       const wordsEl = document.getElementById('invInWords');
       if (wordsEl) wordsEl.textContent = grand > 0 ? (frenchAmountWords(grand) + ' francs CFA') : '—';
+      /* Rend aussi les chiffres : l'encaissement a besoin du total, et le
+         relire depuis le DOM imposerait de re-parser un montant déjà formaté
+         avec des espaces insécables. Ajout sans risque — jusqu'ici la valeur
+         de retour n'était lue par personne. */
+      return { sub: sub, remise: remise, tva: tva, grand: grand };
     }
 
     /* Recalculer à chaque changement */
@@ -1022,6 +1085,10 @@ table.inv-table {
       const m = map[status] || map.brouillon;
       el.textContent = m.label;
       el.className = 'invoice-status ' + m.cls;
+      /* Branche ici plutôt que sur les trois appelants (reset, sauvegarde,
+         chargement) : le libellé du bouton Reçu dépend du statut, et un
+         nouvel appelant l'oublierait. */
+      if (typeof refreshReceiptButton === 'function') refreshReceiptButton();
     }
 
     /* ─── Reset formulaire ─── */
@@ -1068,6 +1135,7 @@ table.inv-table {
       document.getElementById('invNumToggle').style.display = '';
       setNumberModeManual(false);
       setInvoiceDate(new Date());
+      currentPayment = null;
       setStatusDisplay('brouillon');
       /* Rafraîchir l'UI autocomplete (badges, boutons) */
       if (typeof refreshClientUI === 'function') refreshClientUI();
@@ -2053,6 +2121,373 @@ table.inv-table {
     }
     document.getElementById('btnPdf').addEventListener('click', generatePDF);
 
+    /* ═══════════════ ENCAISSEMENT ET REÇU ═══════════════
+
+       `invoices.status` acceptait 'payee' depuis le premier jour et
+       `payment_date` existait — mais rien dans cette page ne les écrivait
+       jamais. Une facture ne pouvait donc pas être marquée encaissée, et le
+       badge « Payée » que setStatusDisplay sait afficher était inatteignable.
+
+       Remettre un reçu EST l'acte qui constate le paiement. Ce bouton fait
+       donc les deux : il enregistre l'encaissement et imprime la preuve. */
+
+    const METHOD_FR = {
+      especes:      'Espèces',
+      mobile_money: 'Mobile Money (Orange / MTN)',
+      virement:     'Virement bancaire',
+      cheque:       'Chèque'
+    };
+
+    /* Ce que l'encaissement a réellement enregistré. Sert aux duplicatas :
+       un reçu réimprimé doit redonner le document d'origine, pas l'état
+       courant du formulaire. */
+    let currentPayment = null;
+
+    /* Le numéro du reçu se DÉDUIT de celui de la facture. Pas de seconde
+       séquence à tenir, donc rien à désynchroniser, et la correspondance
+       entre les deux pièces se lit à l'œil nu. */
+    function receiptNumber(invoiceNum) {
+      return 'REC-' + String(invoiceNum || '').replace(/^REC-/, '');
+    }
+
+    function refreshReceiptButton() {
+      const b = document.getElementById('btnReceipt');
+      if (!b) return;
+      const paid = currentStatus === 'payee';
+      b.textContent = paid ? '🧾 Reçu (duplicata)' : '🧾 Reçu';
+      b.title = paid
+        ? 'Réimprimer le reçu — il portera la mention DUPLICATA'
+        : "Enregistrer l'encaissement et imprimer le reçu";
+    }
+
+    function closeCashBar() {
+      const bar = document.getElementById('cashBar');
+      if (bar) bar.hidden = true;
+    }
+
+    function openCashBar() {
+      /* Un reçu renvoie au numéro de la facture : sans facture enregistrée,
+         il n'y a rien à quoi le rattacher. */
+      if (!currentInvoiceId) {
+        showToast("Sauvegarde d'abord la facture : le reçu renvoie à son numéro", 'error');
+        return;
+      }
+
+      /* Déjà encaissée : on ne redemande rien et on réimprime à l'identique.
+         Un duplicata qui différerait de l'original ne prouverait rien. */
+      if (currentStatus === 'payee') {
+        generateReceipt({ duplicata: true });
+        return;
+      }
+
+      const t = calcTotals();
+      if (!t || t.grand <= 0) {
+        showToast('Le total est à zéro : rien à encaisser', 'error');
+        return;
+      }
+      document.getElementById('cashDate').value = new Date().toISOString().substring(0, 10);
+      document.getElementById('cashAmount').textContent = fmtFCFA(t.grand);
+      document.getElementById('cashBar').hidden = false;
+      document.getElementById('cashDate').focus();
+    }
+
+    async function confirmCash() {
+      const btn = document.getElementById('cashConfirm');
+      btn.disabled = true;
+      const libelle = btn.textContent;
+      btn.textContent = '⏳ Enregistrement...';
+
+      try {
+        const supabase = await window.SLCM_DB.init();
+        if (!supabase) throw new Error('Connexion indisponible');
+
+        const t = calcTotals();
+        const date = document.getElementById('cashDate').value
+                     || new Date().toISOString().substring(0, 10);
+        const method = document.getElementById('cashMethod').value;
+
+        /* 1. La facture passe à « Payée ». La garde `.neq('status','payee')`
+              rend l'opération sûre si un autre onglet a encaissé entre-temps :
+              on ne réécrit pas une date déjà posée. */
+        const { data, error } = await supabase
+          .from('invoices')
+          .update({ status: 'payee', payment_date: date, payment_method: method })
+          .eq('id', currentInvoiceId)
+          .neq('status', 'payee')
+          .select()
+          .maybeSingle();
+        if (error) throw error;
+
+        if (!data) {
+          /* Rien n'a été mis à jour : la facture était déjà encaissée. On ne
+             crée donc PAS de second paiement — ce serait compter l'argent
+             deux fois dans le chiffre d'affaires. */
+          showToast('Cette facture était déjà encaissée — duplicata imprimé', 'info');
+          currentPayment = null;
+          setStatusDisplay('payee');
+          closeCashBar();
+          await generateReceipt({ duplicata: true });
+          return;
+        }
+
+        /* 2. Une ligne dans Paiements, pour que le chiffre d'affaires du
+              tableau de bord voie cet argent. Sans elle l'encaissement
+              n'existerait que dans le module Facture, et l'accueil
+              continuerait d'afficher un CA faux.
+
+              Conditionnel : `payments.client_id` ne peut pointer que sur une
+              fiche existante, et une facture peut être émise au nom d'un
+              client jamais enregistré (champ libre, sans autocomplétion). */
+        if (data.client_id) {
+          const { error: ep } = await supabase.from('payments').insert([{
+            client_id:    data.client_id,
+            property_id:  data.property_id || null,
+            amount:       t.grand,
+            status:       'paid',
+            payment_date: date,
+            notes:        'Facture ' + data.invoice_number
+                          + ' — reçu ' + receiptNumber(data.invoice_number)
+                          + ' (' + (METHOD_FR[method] || method) + ')'
+          }]);
+          /* Un échec ici ne doit pas annuler l'encaissement : la facture est
+             payée, c'est le fait principal. On le signale sans tout perdre. */
+          if (ep) {
+            console.error('[facture] paiement CRM:', ep);
+            showToast('Encaissé, mais la ligne Paiements a échoué : ' + ep.message, 'error');
+          }
+        } else {
+          showToast('Encaissé. Aucune fiche client liée : rien ajouté dans Paiements', 'info');
+        }
+
+        /* Le montant encaisse est celui que le client a VU sur son PDF, donc
+           le total recalcule (base + TVA) et non `invoices.total`.
+
+           Les deux divergent : saveInvoice enregistre `subtotal - discount`
+           SANS la TVA, alors que generatePDF imprime `base + tva`. Et le taux
+           de TVA n'est ni stocke ni restitue au rechargement, donc une facture
+           rouverte revient a 0 %. Tant que l'entreprise reste non assujettie
+           les deux chiffres coincident ; des qu'un taux est saisi, ils ne
+           coincident plus. On le dit plutot que de trancher en silence. */
+        if (Math.round(t.grand) !== Math.round(Number(data.total) || 0)) {
+          showToast('Attention : total imprime ' + fmtFCFA(t.grand)
+                    + ' mais total enregistre ' + fmtFCFA(Number(data.total) || 0)
+                    + ' — le recu porte le montant imprime', 'error');
+        }
+
+        currentPayment = { date: date, method: method, amount: t.grand };
+        setStatusDisplay('payee');
+        closeCashBar();
+        await generateReceipt({ duplicata: false });
+      } catch (e) {
+        console.error('[facture] confirmCash:', e);
+        showToast('Encaissement impossible : ' + (e.message || e), 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = libelle;
+      }
+    }
+
+    /* L'objet du reçu : les libellés des prestations actives, dans l'ordre du
+       formulaire. Même source que les line_items de la facture, pour que les
+       deux pièces décrivent la même chose. */
+    function receiptObjet() {
+      const labels = { location: 'Location', vente: 'Vente', visite: 'Visite', commercial: 'Commercial' };
+      const out = [];
+      ['location', 'vente', 'visite', 'commercial'].forEach(function (t) {
+        if (!activeTypes.has(t) || !lineTotals[t]) return;
+        const el = document.getElementById('desc-' + t + '-main');
+        out.push((el && el.value.trim()) || labels[t]);
+      });
+      if (lineTotals.libre) {
+        const el = document.getElementById('desc-libre-main');
+        out.push((el && el.value.trim()) || 'Prestation');
+      }
+      return out.join(' · ');
+    }
+
+    /* ─── Le document ───
+       Un reçu est bien plus court qu'une facture : il ne détaille pas, il
+       atteste. Pas de tableau de prestations, pas de modalités de règlement,
+       pas de coordonnées bancaires — l'argent est déjà entré. D'où un
+       générateur dédié plutôt qu'un drapeau promené dans les 395 lignes de
+       generatePDF. */
+    async function generateReceipt(opts) {
+      opts = opts || {};
+      if (typeof window.jspdf === 'undefined') {
+        showToast('Lib PDF en cours de chargement, réessaie dans 2s', 'error');
+        return;
+      }
+      const btn = document.getElementById('btnReceipt');
+      btn.disabled = true;
+      const libelle = btn.textContent;
+      btn.textContent = '⏳ Génération...';
+
+      try {
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true });
+
+        const PW = 210, PH = 297, M = 14;
+        const CW = PW - M * 2, RX = M + CW;
+        const ORANGE = [255, 122, 0];
+        const ORANGE_BG = [255, 248, 240];
+        const INK = [21, 22, 27], GREY = [102, 102, 102], GREY2 = [51, 51, 51];
+        const PT = 0.352778;
+        const lh = (size, mult) => size * PT * (mult || 1.3);
+
+        function font(style, size, color) {
+          pdf.setFont('helvetica', style);
+          pdf.setFontSize(size);
+          if (color) pdf.setTextColor(color[0], color[1], color[2]);
+        }
+        /* Espace insécable U+00A0 : le seul séparateur de milliers que les
+           polices standard de jsPDF rendent sans surprise. */
+        const grp = s => String(s).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        const money = n => grp(String(Math.round(Number(n) || 0))) + ' FCFA';
+        const val = id => {
+          const el = document.getElementById(id);
+          return el ? String(el.value || '').trim() : '';
+        };
+
+        /* Les valeurs ENREGISTRÉES ont priorité sur le formulaire : un
+           duplicata réimprimé des mois plus tard doit redonner le document
+           d'origine, même si un champ a été touché depuis. */
+        const info = currentPayment || {};
+        const montant = Number(info.amount) || calcTotals().grand;
+        const dateEnc = info.date || new Date().toISOString().substring(0, 10);
+        const methode = METHOD_FR[info.method] || METHOD_FR.especes;
+        const numFac = currentInvoiceNum || '—';
+        const numRec = receiptNumber(numFac);
+        const dateFR = fmtDateFR(new Date(dateEnc + 'T00:00:00'));
+
+        let y = 16;
+
+        /* ════════ EN-TÊTE ════════ */
+        pdf.setFillColor(ORANGE[0], ORANGE[1], ORANGE[2]);
+        pdf.roundedRect(M, y, 12, 12, 2.5, 2.5, 'F');
+        font('bold', 13, [255, 255, 255]);
+        pdf.text('SL', M + 6, y + 7.7, { align: 'center' });
+
+        const bx = M + 16;
+        font('bold', 18, INK);   pdf.text('SE LOGER CM', bx, y + 4.2);
+        font('bold', 8, GREY);   pdf.text('Ets SELOGER', bx, y + 8.2);
+        font('italic', 9, GREY); pdf.text('Unique Solutions, Smart Living', bx, y + 12);
+        font('normal', 8, GREY); pdf.text('RCCM DLA-02-2024-A10-00712 — NIU PO68916714973N', bx, y + 15.6);
+
+        font('bold', 17, INK);   pdf.text('REÇU', RX, y + 4, { align: 'right', charSpace: 0.6 });
+        font('bold', 10, INK);   pdf.text('N° ' + numRec, RX, y + 10, { align: 'right' });
+        font('normal', 9, GREY); pdf.text('Le ' + dateFR, RX, y + 14.5, { align: 'right' });
+
+        y += 19;
+        pdf.setDrawColor(ORANGE[0], ORANGE[1], ORANGE[2]); pdf.setLineWidth(0.8);
+        pdf.line(M, y, RX, y);
+        y += 12;
+
+        /* ════════ DUPLICATA ════════
+           Mention portée en clair, pas en filigrane : elle doit survivre à
+           une photocopie et à un envoi WhatsApp compressé. Sans elle, deux
+           exemplaires du même reçu pourraient justifier deux encaissements. */
+        if (opts.duplicata) {
+          font('bold', 9, [153, 27, 27]);
+          pdf.text('DUPLICATA — réimpression du reçu N° ' + numRec, M, y);
+          y += 8;
+        }
+
+        /* ════════ REÇU DE ════════ */
+        font('normal', 8.5, GREY); pdf.text('REÇU DE', M, y, { charSpace: 0.4 });
+        y += 6.5;
+        font('bold', 13, INK);
+        pdf.text(val('clientName') || '—', M, y);
+        y += 6;
+        font('normal', 9.5, GREY2);
+        ['clientAddress', 'clientDistrict', 'clientPhone']
+          .map(id => val(id)).filter(Boolean)
+          .forEach(line => { pdf.text(line, M, y); y += 5; });
+        y += 6;
+
+        /* ════════ LA SOMME DE ════════ */
+        const boxH = 26;
+        pdf.setFillColor(ORANGE_BG[0], ORANGE_BG[1], ORANGE_BG[2]);
+        pdf.rect(M, y, CW, boxH, 'F');
+        pdf.setFillColor(ORANGE[0], ORANGE[1], ORANGE[2]);
+        pdf.rect(M, y, 1, boxH, 'F');
+        font('normal', 8.5, GREY);
+        pdf.text('LA SOMME DE', M + 6, y + 7, { charSpace: 0.4 });
+        font('bold', 20, INK);
+        pdf.text(money(montant), M + 6, y + 18);
+        y += boxH + 7;
+
+        const mots = montant > 0
+          ? (typeof frenchAmountWords === 'function' ? frenchAmountWords(montant) : montant) + ' francs CFA'
+          : '—';
+        font('italic', 9.5, GREY2);
+        pdf.splitTextToSize('Soit ' + mots + '.', CW).forEach(function (l) {
+          pdf.text(l, M, y); y += lh(9.5);
+        });
+        y += 7;
+
+        /* ════════ EN RÈGLEMENT DE ════════ */
+        font('normal', 8.5, GREY); pdf.text('EN RÈGLEMENT DE', M, y, { charSpace: 0.4 });
+        y += 6.5;
+
+        const refs = [['Facture', 'N° ' + numFac], ['Prestation', receiptObjet() || '—']];
+        const bien = [val('propertyType'), val('propertyRef')].filter(Boolean).join(' · ');
+        if (bien) refs.push(['Bien', bien]);
+        refs.push(['Moyen de paiement', methode]);
+
+        refs.forEach(function (row) {
+          const lignes = pdf.splitTextToSize(row[1], CW - 44);
+          font('bold', 9.5, INK);
+          pdf.text(row[0] + ' :', M, y);
+          font('normal', 9.5, GREY2);
+          lignes.forEach(function (l, i) { pdf.text(l, M + 44, y + i * lh(9.5)); });
+          y += Math.max(1, lignes.length) * lh(9.5) + 1.5;
+        });
+        y += 10;
+
+        /* ════════ ACQUIT ════════ */
+        font('normal', 9.5, GREY2);
+        pdf.splitTextToSize(
+          'Le présent reçu vaut quittance pour la somme ci-dessus et éteint, à due '
+          + 'concurrence, la créance portée par la facture N° ' + numFac + '.', CW
+        ).forEach(function (l) { pdf.text(l, M, y); y += lh(9.5); });
+        y += 14;
+
+        /* ════════ SIGNATURE ════════ */
+        const sigX = M + CW - 70;
+        font('normal', 9.5, GREY2);
+        pdf.text('Fait à Douala, le ' + dateFR, M, y);
+        font('bold', 9.5, INK);
+        pdf.text('Pour Ets SELOGER', sigX, y);
+        font('normal', 8.5, GREY);
+        pdf.text('(signature et cachet)', sigX, y + 5);
+        pdf.setDrawColor(200, 200, 200); pdf.setLineWidth(0.3);
+        pdf.line(sigX, y + 24, sigX + 62, y + 24);
+
+        /* ════════ PIED ════════ */
+        const fy = PH - 16;
+        pdf.setDrawColor(ORANGE[0], ORANGE[1], ORANGE[2]); pdf.setLineWidth(0.3);
+        pdf.line(M, fy, RX, fy);
+        font('normal', 7, GREY);
+        pdf.text('Ets SELOGER — SE LOGER CM · Bonamoussadi, Douala · (+237) 650 840 714 · contact@selogercm.com · selogercm.com',
+                 PW / 2, fy + 5, { align: 'center' });
+
+        const cn = (val('clientName') || 'client').replace(/[^a-z0-9]+/gi, '_');
+        pdf.save('Recu_' + numRec + '_' + cn + '.pdf');
+        showToast(opts.duplicata ? 'Duplicata généré' : 'Encaissé — reçu généré', 'success');
+      } catch (e) {
+        console.error('[facture] generateReceipt:', e);
+        showToast('Erreur reçu : ' + (e.message || e), 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = libelle;
+        refreshReceiptButton();
+      }
+    }
+
+    document.getElementById('btnReceipt').addEventListener('click', openCashBar);
+    document.getElementById('cashConfirm').addEventListener('click', confirmCash);
+    document.getElementById('cashCancel').addEventListener('click', closeCashBar);
+
     /* ─── Chargement d'une facture existante via ?id=UUID ─── */
     async function loadInvoiceFromUrl() {
       const params = new URLSearchParams(window.location.search);
@@ -2073,6 +2508,12 @@ table.inv-table {
         currentInvoiceNum = data.invoice_number;
         document.getElementById('invNum').textContent = 'N° ' + data.invoice_number;
         setInvoiceDate(data.invoice_date);
+
+        /* Ce que l'encaissement avait enregistré, pour qu'un duplicata
+           redonne le document d'origine et non l'état du formulaire. */
+        currentPayment = data.payment_date
+          ? { date: data.payment_date, method: data.payment_method, amount: Number(data.total) || 0 }
+          : null;
         setStatusDisplay(data.status || 'emise');
 
         /* Affiche le bon badge selon la source du numéro (lecture seule, on ne peut
