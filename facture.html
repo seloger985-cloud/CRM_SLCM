@@ -1371,6 +1371,14 @@ table.inv-table {
 
     /* Recherche Supabase : clients */
     async function searchClients(query) {
+      /* `supabase` n'etait defini NULLE PART dans ce fichier : l'appel tombait
+         sur window.supabase, qui est la BIBLIOTHEQUE supabase-js (elle expose
+         createClient, pas from). D'ou « supabase.from is not a function », et
+         une autocompletion client/bien morte depuis toujours.
+
+         Consequence invisible et couteuse : sans client lie, invoices.client_id
+         restait nul, donc la facture n'etait rattachee a personne. */
+      const supabase = await window.SLCM_DB.init();
       const q = '%' + query + '%';
       const { data, error } = await supabase
         .from('clients')
@@ -1389,6 +1397,7 @@ table.inv-table {
     /* Recherche Supabase : propriétés. Champs `type`, `district`, `ref` — à ajuster
        si ta table properties utilise d'autres noms. */
     async function searchProperties(query) {
+      const supabase = await window.SLCM_DB.init();
       const q = '%' + query + '%';
       const { data, error } = await supabase
         .from('properties')
@@ -1411,6 +1420,7 @@ table.inv-table {
         if (window.UI) UI.toast('Le nom est obligatoire', 'error');
         return;
       }
+      const supabase = await window.SLCM_DB.init();
       try {
         const { data, error } = await supabase
           .from('clients')
@@ -1440,6 +1450,7 @@ table.inv-table {
     async function updateLinkedClient() {
       if (!selectedClient || !selectedClient.id) return;
       const current = getCurrentClientValues();
+      const supabase = await window.SLCM_DB.init();
       try {
         const { data, error } = await supabase
           .from('clients')
@@ -1527,6 +1538,8 @@ table.inv-table {
         clientId = localStorage.getItem(STORAGE_KEY_CLIENT);
         propertyId = localStorage.getItem(STORAGE_KEY_PROPERTY);
       } catch (e) { return; }
+
+      const supabase = await window.SLCM_DB.init();
 
       if (clientId) {
         try {

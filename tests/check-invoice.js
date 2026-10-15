@@ -41,7 +41,11 @@ function codeOnly(src) {
 function run() {
   const facture = fs.readFileSync(path.join(ROOT, 'facture.html'), 'utf8');
   const code = codeOnly(facture);
-  const sql = ['01_schema.sql', '07_invoice_receipt.sql']
+  /* Le SEUL script en ligne de la page. Analyser le HTML entier ferait passer
+     l'URL `.../umd/supabase.js` du <head> pour un usage de `supabase.` — un
+     faux positif qui a coûté un aller-retour. */
+  const script = codeOnly((facture.match(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/) || [])[1] || '');
+  const sql = ['01_schema.sql', '07_invoice_receipt.sql', '08_invoice_columns.sql']
     .map(f => fs.readFileSync(path.join(ROOT, 'sql', f), 'utf8')).join('\n');
 
   const checks = [];
@@ -114,6 +118,55 @@ function run() {
   /* ── Le reçu renvoie à sa facture ── */
   ok('le numéro de reçu se déduit de celui de la facture',
      /function receiptNumber/.test(code) && /'REC-'/.test(code));
+
+  /* ── TOUTE colonne écrite doit exister ──
+   *
+   * Raison d'être : le 15/10/2026 la sauvegarde échouait en HTTP 400 parce que
+   * `facture.html` écrivait `property_id`, absent de `invoices`. PostgREST
+   * refuse l'insertion ENTIÈRE pour une seule colonne inconnue, et le
+   * navigateur n'affiche qu'un « 400 » opaque. Même famille que le défaut
+   * `accompte`/`reste` qui avait vidé l'écran Paiements.
+   *
+   * Les trois contrôles ci-dessus ne regardaient que les colonnes de
+   * l'encaissement. Celui-ci couvre le payload entier. */
+  const payloadBlock = (code.match(/const payload = \{([\s\S]*?)\n        \};/) || [])[1] || '';
+  const ecritesToutes = new Set(
+    [...payloadBlock.matchAll(/^\s*([a-z_]+):/gm)].map(m => m[1])
+  );
+  [...code.matchAll(/payload\.([a-z_]+)\s*=/g)].forEach(m => ecritesToutes.add(m[1]));
+
+  const absentes = [...ecritesToutes].filter(c => !colsInvoices.has(c));
+  ok('le payload de saveInvoice est bien analysé (' + ecritesToutes.size + ' colonnes)',
+     ecritesToutes.size > 5);
+  ok(absentes.length
+      ? `écrite(s) dans invoices mais absente(s) du schéma : ${absentes.join(', ')}`
+      : `les ${ecritesToutes.size} colonnes écrites dans invoices existent toutes`,
+     absentes.length === 0);
+
+  /* ── Aucun `supabase` sans client ──
+   *
+   * Raison d'être : cinq fonctions utilisaient une variable `supabase` qui
+   * n'était déclarée NULLE PART. L'appel tombait donc sur `window.supabase`,
+   * c'est-à-dire la BIBLIOTHÈQUE supabase-js — qui expose `createClient`, pas
+   * `from`. Résultat : « supabase.from is not a function », autocomplétion
+   * client et bien mortes depuis toujours, bouton « + Créer ce client »
+   * inerte, et `invoices.client_id` qui restait nul sans que rien ne le dise.
+   *
+   * Le défaut ne se voit qu'à l'exécution, dans une fonction qu'il faut avoir
+   * déclenchée. D'où ce contrôle statique. */
+  const fonctions = script.split(/\n(?=    (?:async )?function )/);
+  const orphelines = [];
+  for (const f of fonctions) {
+    if (!/\bsupabase\s*\./.test(f)) continue;
+    const sig = f.match(/^\s*(?:async )?function (\w+)\s*\(([^)]*)\)/) || [];
+    const declare = /(?:const|let|var)\s+supabase\s*=/.test(f);
+    const parametre = /\bsupabase\b/.test(sig[2] || '');
+    if (!declare && !parametre) orphelines.push(sig[1] || '(anonyme)');
+  }
+  ok(orphelines.length
+      ? `utilise supabase sans client : ${orphelines.join(', ')}`
+      : 'toute fonction qui appelle supabase en obtient un (déclaré ou reçu)',
+     orphelines.length === 0);
 
   return { title: 'Module Facture et encaissement', checks };
 }
