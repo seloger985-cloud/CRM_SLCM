@@ -75,7 +75,14 @@ const ECRANS = [
   ['showLeaseForm', [{ id: 7, property_id: 2, tenant_id: 1, rent_amount: 250000, payment_day: 5, status: 'active' }]],
   ['showIncidentForm', []],
   ['showIncidentForm', [null, { lease_id: 7, property_id: 2 }, 'lease-7']],
-  ['showIncidentForm', [{ id: 9, property_id: 2, title: 'Fuite', status: 'resolu', urgency: 'urgente' }]]
+  ['showIncidentForm', [{ id: 9, property_id: 2, title: 'Fuite', status: 'resolu', urgency: 'urgente' }]],
+  /* Immeubles (20/10/2026). showBuildingForm et showUnitForm construisent leur
+     gabarit à partir de TYPE_FR et d'un `back` calculé — exactement le terrain
+     des deux bugs déjà vus ici. */
+  ['showBuildingForm', []],
+  ['showUnitForm', []],
+  ['showUnitForm', [null, { parent_id: 4 }, 4]],
+  ['showUnitForm', [{ id: 11, parent_id: 4, unit_label: 'App 2', floor: 1, type: 'apartment' }, null, 4]]
 ];
 
 async function run() {
@@ -174,8 +181,14 @@ async function run() {
     const etiquette = args.length
       ? `${nom}(${args.map(a => (a === null ? 'null' : typeof a === 'object' ? '{…}' : JSON.stringify(a))).join(', ')})`
       : `${nom}()`;
+    /* `await` et non un simple appel : plusieurs écrans sont `async`, et une
+       erreur dans leur gabarit devient une PROMESSE REJETÉE, jamais une
+       exception. Un try/catch sans await ne la voit pas — c'est ainsi que le
+       bug de zone morte sur TABLE_COLS avait échappé à la première version de
+       ce contrôle. Les écrans qui lisent la base rejettent ici sans danger :
+       le faux Supabase rend un résultat vide. */
     try {
-      fn(...args);
+      await fn(...args);
       checks.push([etiquette, true]);
     } catch (e) {
       checks.push([`${etiquette} — ${e.message}`, false]);

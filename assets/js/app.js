@@ -903,7 +903,7 @@ function toggleClientSourceDetail() {
 
 /* État de la vue Propriétés : conservé entre les rendus pour que la
    recherche n'oblige pas à re-télécharger les données à chaque frappe. */
-const propsView = { crm: [], site: [], q: '', src: 'all', loaded: false };
+const propsView = { crm: [], site: [], q: '', src: 'all', loaded: false, showUnits: false };
 
 /* Vocabulaire des types de biens, UNIQUE pour les trois endroits où il sert :
    les annonces du site (listings.type, hors de notre main), les fiches biens
@@ -985,6 +985,7 @@ async function showProperties(force) {
       </select>
       <button onclick="showPropertyForm()" class="btn btn-primary">Ajouter</button>
       <button onclick="showInbox()" class="ghost-btn" title="Coller un message reçu d'un confrère">Depuis un message</button>
+      <button onclick="toggleUnits()" class="ghost-btn" id="units-toggle" title="Les logements d'un immeuble sont masqués par défaut">${propsView.showUnits ? 'Masquer' : 'Afficher'} les logements</button>
       <button onclick="exportCSV('properties')" class="ghost-btn" title="Exporter en CSV">Export CSV</button>
       <button onclick="showProperties(true)" class="ghost-btn" title="Recharger depuis selogercm.com">↻</button>
     </div>
@@ -1067,7 +1068,11 @@ function mergeProperties() {
   const crm = propsView.crm.map(p => Object.assign({}, p, {
     _src: p.listing_id ? 'site' : 'crm',
     _linked: !!p.listing_id,
-    _cover: p.listing_id ? coverOf(parId.get(String(p.listing_id))) : null
+    _cover: p.listing_id ? coverOf(parId.get(String(p.listing_id))) : null,
+    /* Un logement d'immeuble. Masque par defaut dans la liste generale : un
+       immeuble de douze appartements y noierait tout le reste du
+       portefeuille, et on le consulte depuis sa fiche d'immeuble. */
+    _unit: !!p.parent_id
   }));
   const site = propsView.site
     .filter(l => !linked.has(l.id))
@@ -1083,6 +1088,7 @@ function mergeProperties() {
 function renderPropsList() {
   const q = propsView.q.trim().toLowerCase();
   let rows = mergeProperties();
+  if (!propsView.showUnits) rows = rows.filter(r => !r._unit);
   if (propsView.src !== 'all') rows = rows.filter(r => r._src === propsView.src);
   if (q) {
     const terms = q.split(/\s+/);
@@ -2517,7 +2523,11 @@ function viewClientDetails(clientId) {
    dans les listes. Sur une connexion mobile, c'est du volume inutile. */
 const TABLE_COLS = {
   clients:    'id,name,phone,email,type,status,source,source_detail,notes,created_at',
-  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at,district,rent_sale,bedrooms,furnished',
+  /* parent_id / landlord_id / floor / unit_label / bathrooms ajoutes par
+     sql/10 : `properties` etait plat, un immeuble et ses appartements y
+     etaient des lignes sans lien, et le proprietaire n'existait que sur
+     le bail — donc un logement vacant n'en avait pas. */
+  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at,district,rent_sale,bedrooms,furnished,parent_id,landlord_id,floor,unit_label,bathrooms',
   activities: 'id,type,client_id,property_id,notes,date,created_at,outcome,next_step,next_date,next_done_at',
   tasks:      'id,title,description,due_date,status,created_at',
   /* CORRECTIF 31/08/2026 — `accompte` et `reste` étaient demandés ici alors
@@ -2893,6 +2903,7 @@ async function showLeases() {
     <div class="toolbar">
       <button onclick="showLeaseForm()" class="btn btn-primary">Nouveau bail</button>
       <button onclick="toggleLeaseFilter()" class="ghost-btn">${leasesView.showAll ? 'Voir les baux en cours' : 'Voir tous les baux'}</button>
+      <button onclick="showLandlords()" class="ghost-btn">Portefeuille par propriétaire</button>
       <button onclick="showIncidents()" class="ghost-btn">Signalements</button>
     </div>
     <p class="item-meta">${rows.length} bail/baux affiché(s) · ${leases.filter(l => l.status === 'active').length} en cours</p>
@@ -3436,3 +3447,499 @@ async function saveIncident(id, leaseId, back) {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   IMMEUBLES ET LOGEMENTS — la structure du portefeuille
+
+   `properties` était plat : un immeuble et ses appartements y étaient des
+   lignes sans lien. On ne pouvait donc ni lister les logements d'un immeuble,
+   ni compter ceux qui sont loués, ni présenter un portefeuille par
+   propriétaire.
+
+   Chaque logement est une VRAIE ligne `properties` pointant vers l'immeuble
+   par `parent_id`, et non un compteur sur l'immeuble : les loyers diffèrent
+   d'un appartement à l'autre, donc chacun porte son prix, son statut, son
+   bail et son locataire.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* « RDC », « 1er étage », « 4e étage ». Le rez-de-chaussée est l'étage 0 :
+   un entier se trie dans l'ordre du bâtiment, là où un texte placerait
+   « 10e » avant « 2e ». */
+function floorLabel(n) {
+  const e = Number(n);
+  if (!Number.isFinite(e)) return '';
+  if (e === 0) return 'RDC';
+  if (e === 1) return '1er étage';
+  return e + 'e étage';
+}
+
+function unitTitle(immeubleNom, etage, libelle) {
+  return [immeubleNom, floorLabel(etage), libelle].filter(Boolean).join(' — ');
+}
+
+/* Ce qui décrit un logement en un coup d'œil : « 2 ch · 2 dch · meublé ». */
+function unitSpec(u) {
+  const bits = [];
+  if (u.bedrooms) bits.push(Number(u.bedrooms) + ' ch');
+  if (u.bathrooms) bits.push(Number(u.bathrooms) + ' dch');
+  if (u.furnished) bits.push('meublé');
+  if (u.type && typeof TYPE_FR !== 'undefined' && TYPE_FR[u.type]) bits.unshift(TYPE_FR[u.type]);
+  return bits.join(' · ');
+}
+
+/* ─────────────── PORTEFEUILLE PAR PROPRIÉTAIRE ─────────────── */
+
+async function showLandlords() {
+  UI.showLoading();
+  const [properties, clients, leases] = await Promise.all([
+    getAll('properties'), getAll('clients'), getAll('leases')
+  ]);
+
+  const parClient = new Map(clients.map(c => [String(c.id), c]));
+  const bauxActifs = new Set(leases.filter(l => l.status === 'active').map(l => String(l.property_id)));
+
+  /* Regroupement par propriétaire. Les biens sans bailleur forment un groupe
+     à part plutôt que d'être tus : c'est la liste de ce qui reste à
+     renseigner, et la cacher la rendrait invisible. */
+  const groupes = new Map();
+  properties.forEach(p => {
+    const k = p.landlord_id ? String(p.landlord_id) : '';
+    if (!groupes.has(k)) groupes.set(k, []);
+    groupes.get(k).push(p);
+  });
+
+  const ordre = [...groupes.keys()].sort((a, b) => {
+    if (!a) return 1;
+    if (!b) return -1;
+    const na = (parClient.get(a) || {}).name || '';
+    const nb = (parClient.get(b) || {}).name || '';
+    return na.localeCompare(nb);
+  });
+
+  mainContent.innerHTML = `
+    <h2>Portefeuille par propriétaire</h2>
+    <div class="toolbar">
+      <button onclick="showBuildingForm()" class="btn btn-primary">Nouvel immeuble</button>
+      <button onclick="showLeases()" class="ghost-btn">Retour aux baux</button>
+    </div>
+    ${ordre.length ? ordre.map(k => {
+      const prop = k ? parClient.get(k) : null;
+      const biens = groupes.get(k);
+      const immeubles = biens.filter(b => b.type === 'building');
+      const logements = biens.filter(b => b.parent_id);
+      const isoles = biens.filter(b => !b.parent_id && b.type !== 'building');
+      const unites = logements.concat(isoles);
+      const loues = unites.filter(u => bauxActifs.has(String(u.id))).length;
+      const loyers = unites.reduce((s, u) => s + (bauxActifs.has(String(u.id)) ? (Number(u.price) || 0) : 0), 0);
+
+      return `<div class="match-card">
+        <div class="match-head">
+          <strong>${escHtml(prop ? prop.name : 'Propriétaire non renseigné')}</strong>
+          ${prop && prop.phone ? `<span class="item-meta">${escHtml(prop.phone)}</span>` : ''}
+          <span class="src-badge src-site">${unites.length} logement(s) · ${loues} loué(s)</span>
+        </div>
+        <p class="item-meta">${loyers ? formatMoney(loyers) + ' FCFA de loyers en cours' : 'Aucun loyer en cours'}</p>
+        <div class="list">
+          ${immeubles.map(im => {
+            const siens = logements.filter(u => String(u.parent_id) === String(im.id));
+            const sl = siens.filter(u => bauxActifs.has(String(u.id))).length;
+            return `<div class="list-item">
+              <div><strong>${escHtml(im.title)}</strong>
+                <div class="item-meta">${escHtml(im.district || im.address || '')} · ${siens.length} logement(s) · ${sl} loué(s)</div>
+              </div>
+              <div><button onclick="showBuilding(${Number(im.id)})" class="btn btn-outline">Ouvrir</button></div>
+            </div>`;
+          }).join('')}
+          ${isoles.map(b => `<div class="list-item">
+            <div><strong>${escHtml(b.title)}</strong>
+              <div class="item-meta">Bien isolé · ${escHtml(b.district || '')} ${b.price ? '· ' + formatMoney(b.price) + ' FCFA' : ''}</div>
+            </div>
+            <div><span class="src-badge ${bauxActifs.has(String(b.id)) ? 'src-site' : 'src-crm'}">${bauxActifs.has(String(b.id)) ? 'Loué' : 'Libre'}</span></div>
+          </div>`).join('')}
+        </div>
+      </div>`;
+    }).join('') : `<div class="empty-state"><p><strong>Aucun bien enregistré.</strong></p>
+      <p>Commence par créer un immeuble : tu décris sa composition une fois,
+      et chaque logement devient une fiche que tu peux louer séparément.</p></div>`}
+  `;
+}
+
+/* ─────────────── FICHE D'UN IMMEUBLE ─────────────── */
+
+async function showBuilding(id) {
+  UI.showLoading();
+  const [properties, clients, leases] = await Promise.all([
+    getAll('properties'), getAll('clients'), getAll('leases')
+  ]);
+
+  const im = properties.find(p => String(p.id) === String(id));
+  if (!im) { mainContent.innerHTML = '<h2>Immeuble introuvable</h2>'; return; }
+
+  const prop = clients.find(c => String(c.id) === String(im.landlord_id));
+  const bailParBien = new Map(
+    leases.filter(l => l.status === 'active').map(l => [String(l.property_id), l])
+  );
+  const parClient = new Map(clients.map(c => [String(c.id), c]));
+
+  /* Ordre du bâtiment : étage puis libellé. Sans le tri sur l'entier `floor`,
+     le 10e étage s'intercalerait entre le 1er et le 2e. */
+  const unites = properties
+    .filter(p => String(p.parent_id) === String(im.id))
+    .sort((a, b) => (Number(a.floor) || 0) - (Number(b.floor) || 0)
+                 || String(a.unit_label || '').localeCompare(String(b.unit_label || '')));
+
+  const loues = unites.filter(u => bailParBien.has(String(u.id))).length;
+  const loyersEnCours = unites.reduce((s, u) =>
+    s + (bailParBien.has(String(u.id)) ? (Number(bailParBien.get(String(u.id)).rent_amount) || 0) : 0), 0);
+  const potentiel = unites.reduce((s, u) => s + (Number(u.price) || 0), 0);
+
+  /* Les logements groupés par étage, pour que la fiche se lise comme le
+     bâtiment et non comme une liste à plat. */
+  const etages = new Map();
+  unites.forEach(u => {
+    const e = Number(u.floor) || 0;
+    if (!etages.has(e)) etages.set(e, []);
+    etages.get(e).push(u);
+  });
+
+  mainContent.innerHTML = `
+    <h2>${escHtml(im.title)}</h2>
+    <p class="item-meta">${escHtml(im.address || '')}${im.district ? ' · ' + escHtml(im.district) : ''}</p>
+
+    <div class="dashboard">
+      <div class="card"><h3>Logements</h3><p class="metric">${unites.length}</p><small>${loues} loué(s) · ${unites.length - loues} libre(s)</small></div>
+      <div class="card"><h3>Loyers en cours</h3><p class="metric">${formatMoney(loyersEnCours)}</p><small>FCFA par mois</small></div>
+      <div class="card"><h3>Potentiel</h3><p class="metric">${formatMoney(potentiel)}</p><small>FCFA si tout est loué</small></div>
+      <div class="card"><h3>Propriétaire</h3><p class="metric" style="font-size:1.1rem">${escHtml(prop ? prop.name : 'Non renseigné')}</p><small>${escHtml((prop && prop.phone) || '')}</small></div>
+    </div>
+
+    <div class="toolbar">
+      <button onclick="showUnitForm(null, {parent_id:${Number(im.id)}}, ${Number(im.id)})" class="btn btn-primary">Ajouter un logement</button>
+      <button onclick="showBuildingForm(${Number(im.id)})" class="ghost-btn">Modifier l'immeuble</button>
+      <button onclick="showLandlords()" class="ghost-btn">Retour au portefeuille</button>
+    </div>
+
+    ${unites.length ? [...etages.keys()].sort((a, b) => a - b).map(e => `
+      <h3>${floorLabel(e)}</h3>
+      <div class="list">
+        ${etages.get(e).map(u => {
+          const bail = bailParBien.get(String(u.id));
+          const loc = bail ? parClient.get(String(bail.tenant_id)) : null;
+          return `<div class="list-item">
+            <div>
+              <strong>${escHtml(u.unit_label || u.title)}</strong>
+              <span class="src-badge ${bail ? 'src-site' : 'src-crm'}">${bail ? 'Loué' : 'Libre'}</span>
+              <div class="item-meta">${escHtml(unitSpec(u) || '—')}</div>
+              <div class="item-meta">${bail
+                ? formatMoney(bail.rent_amount) + ' FCFA/mois · ' + escHtml((loc && loc.name) || 'Locataire #' + bail.tenant_id)
+                : (u.price ? formatMoney(u.price) + ' FCFA/mois demandés' : 'Loyer non renseigné')}</div>
+            </div>
+            <div>
+              ${bail
+                ? `<button onclick="showLeaseDetail(${Number(bail.id)})" class="btn btn-outline">Le bail</button>`
+                : `<button onclick="showLeaseForm(null, {property_id:${Number(u.id)}, landlord_id:${Number(u.landlord_id) || 0}, rent_amount:${Number(u.price) || 0}})" class="btn btn-outline">Louer</button>`}
+              <button onclick="editUnit(${Number(u.id)}, ${Number(im.id)})" class="edit-btn" title="Modifier le logement">${ICON_EDIT}</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`).join('')
+      : `<div class="empty-state"><p><strong>Cet immeuble n'a aucun logement.</strong></p>
+         <p>Modifie l'immeuble pour en décrire la composition, ou ajoute les logements un par un.</p></div>`}
+  `;
+}
+
+/* ─────────────── CRÉATION D'UN IMMEUBLE, AVEC SA COMPOSITION ─────────────── */
+
+async function showBuildingForm(id = null) {
+  let im = null;
+  if (id) {
+    const rows = await getAll('properties');
+    im = rows.find(p => String(p.id) === String(id)) || null;
+  }
+  const v = im || {};
+  const editing = !!im;
+
+  mainContent.innerHTML = `
+    <h2>${editing ? "Modifier l'immeuble" : 'Nouvel immeuble'}</h2>
+    <form id="building-form">
+      <div class="form-group">
+        <label for="b-title">Nom de l'immeuble :</label>
+        <input type="text" id="b-title" value="${escAttr(v.title || '')}" required placeholder="Immeuble Makepe">
+      </div>
+      <div class="form-group">
+        <label for="b-landlord">Propriétaire :</label>
+        <select id="b-landlord"><option value="">Non renseigné</option></select>
+        <small class="item-meta">Chaque logement créé en hérite, et peut ensuite le surcharger.</small>
+      </div>
+      <div class="form-group">
+        <label for="b-address">Adresse :</label>
+        <input type="text" id="b-address" value="${escAttr(v.address || '')}" required>
+      </div>
+      <div class="form-group">
+        <label for="b-district">Quartier :</label>
+        <input type="text" id="b-district" value="${escAttr(v.district || '')}" placeholder="Makepe">
+      </div>
+      <div class="form-group">
+        <label for="b-notes">Description :</label>
+        <textarea id="b-notes">${escHtml(v.description || '')}</textarea>
+      </div>
+
+      ${editing ? '' : `
+      <h3>Composition</h3>
+      <p class="item-meta">Les logements sont créés d'un coup, puis tu ajustes chacun —
+      loyer, chambres, douches. Laisse à 0 pour créer l'immeuble seul et ajouter
+      les logements un par un.</p>
+      <div class="form-group">
+        <label for="b-floors">Nombre d'étages (hors rez-de-chaussée) :</label>
+        <input type="number" id="b-floors" min="0" max="30" value="2">
+      </div>
+      <div class="form-group">
+        <label for="b-rdc">Logements au rez-de-chaussée :</label>
+        <input type="number" id="b-rdc" min="0" max="20" value="0">
+      </div>
+      <div class="form-group">
+        <label for="b-per-floor">Logements par étage :</label>
+        <input type="number" id="b-per-floor" min="0" max="20" value="2">
+      </div>
+      <div class="form-group">
+        <label for="b-unit-type">Type des logements :</label>
+        <select id="b-unit-type">
+          ${Object.keys(TYPE_FR).map(t => `<option value="${escAttr(t)}" ${t === 'apartment' ? 'selected' : ''}>${escHtml(TYPE_FR[t])}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="b-bed">Chambres par logement :</label>
+        <input type="number" id="b-bed" min="0" max="10" value="2">
+      </div>
+      <div class="form-group">
+        <label for="b-bath">Douches par logement :</label>
+        <input type="number" id="b-bath" min="0" max="10" value="1">
+      </div>
+      <div class="form-group">
+        <label for="b-rent">Loyer mensuel par défaut (FCFA) :</label>
+        <input type="number" id="b-rent" min="0" value="" placeholder="Ajustable logement par logement">
+      </div>`}
+
+      <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : "Créer l'immeuble"}</button>
+      <button type="button" onclick="${editing ? 'showBuilding(' + Number(id) + ')' : 'showLandlords()'}" class="btn btn-outline">Annuler</button>
+    </form>
+  `;
+
+  populateSelect('b-landlord', 'clients', 'name', v.landlord_id);
+
+  document.getElementById('building-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveBuilding(editing ? im.id : null);
+  });
+}
+
+async function saveBuilding(id) {
+  const titre = document.getElementById('b-title').value.trim();
+  const immeuble = {
+    title: titre,
+    type: 'building',
+    address: document.getElementById('b-address').value.trim(),
+    district: document.getElementById('b-district').value.trim() || null,
+    description: document.getElementById('b-notes').value || null,
+    landlord_id: document.getElementById('b-landlord').value || null,
+    rent_sale: 'rent',
+    status: 'available'
+  };
+
+  try {
+    if (id) {
+      const { error } = await supabaseClient.from('properties').update(immeuble).eq('id', id);
+      if (error) throw error;
+      UI.toast('Immeuble mis à jour', 'success');
+      showBuilding(id);
+      return;
+    }
+
+    const { data, error } = await supabaseClient
+      .from('properties').insert([immeuble]).select().single();
+    if (error) throw error;
+
+    const etages = Number(document.getElementById('b-floors').value) || 0;
+    const auRdc = Number(document.getElementById('b-rdc').value) || 0;
+    const parEtage = Number(document.getElementById('b-per-floor').value) || 0;
+
+    const modele = {
+      type: document.getElementById('b-unit-type').value,
+      bedrooms: Number(document.getElementById('b-bed').value) || null,
+      bathrooms: Number(document.getElementById('b-bath').value) || null,
+      price: Number(document.getElementById('b-rent').value) || null
+    };
+
+    const unites = [];
+    const poser = (etage, nb) => {
+      for (let k = 1; k <= nb; k++) {
+        const libelle = 'App ' + k;
+        unites.push(Object.assign({}, modele, {
+          parent_id: data.id,
+          landlord_id: immeuble.landlord_id,
+          floor: etage,
+          unit_label: libelle,
+          /* Le titre reste la désignation complète : c'est lui que cherche la
+             barre de recherche des Propriétés, et « App 2 » seul n'y
+             distinguerait pas deux immeubles. */
+          title: unitTitle(titre, etage, libelle),
+          address: immeuble.address,
+          district: immeuble.district,
+          rent_sale: 'rent',
+          status: 'available',
+          source: 'crm'
+        }));
+      }
+    };
+    poser(0, auRdc);
+    for (let e = 1; e <= etages; e++) poser(e, parEtage);
+
+    if (unites.length) {
+      const { error: eu } = await supabaseClient.from('properties').insert(unites);
+      /* L'immeuble est créé : un échec ici ne doit pas le perdre. On le dit,
+         et l'agent ajoute les logements un par un depuis la fiche. */
+      if (eu) {
+        console.error('[immeubles] creation des logements:', eu);
+        UI.toast('Immeuble créé, mais les logements ont échoué : ' + eu.message, 'error');
+        showBuilding(data.id);
+        return;
+      }
+    }
+
+    UI.toast(unites.length
+      ? 'Immeuble créé avec ' + unites.length + ' logement(s)'
+      : 'Immeuble créé', 'success');
+    showBuilding(data.id);
+  } catch (e) {
+    console.error('[immeubles] saveBuilding:', e);
+    UI.handleError(e);
+  }
+}
+
+/* ─────────────── UN LOGEMENT ───────────────
+
+   Formulaire distinct de celui des biens : un logement HÉRITE de l'adresse et
+   du quartier de son immeuble. Les redemander inviterait à les faire diverger,
+   et il faudrait ensuite deviner lequel fait foi. */
+
+async function editUnit(id, buildingId) {
+  const rows = await getAll('properties');
+  const u = rows.find(p => String(p.id) === String(id));
+  if (u) showUnitForm(u, null, buildingId || u.parent_id);
+}
+
+function showUnitForm(unit = null, draft = null, buildingId = null) {
+  const v = unit || draft || {};
+  const editing = !!unit;
+  const retour = 'showBuilding(' + Number(buildingId || v.parent_id || 0) + ')';
+
+  mainContent.innerHTML = `
+    <h2>${editing ? 'Modifier le' : 'Nouveau'} logement</h2>
+    <form id="unit-form">
+      <div class="form-group">
+        <label for="u-label">Libellé :</label>
+        <input type="text" id="u-label" value="${escAttr(v.unit_label || '')}" required placeholder="App 3, Porte gauche, Boutique A">
+      </div>
+      <div class="form-group">
+        <label for="u-floor">Étage :</label>
+        <input type="number" id="u-floor" min="0" max="30" value="${escAttr(v.floor != null ? v.floor : 0)}" required>
+        <small class="item-meta">0 pour le rez-de-chaussée.</small>
+      </div>
+      <div class="form-group">
+        <label for="u-type">Type :</label>
+        <select id="u-type">
+          ${Object.keys(TYPE_FR).map(t => `<option value="${escAttr(t)}" ${(v.type || 'apartment') === t ? 'selected' : ''}>${escHtml(TYPE_FR[t])}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="u-bed">Chambres :</label>
+        <input type="number" id="u-bed" min="0" max="10" value="${escAttr(v.bedrooms != null ? v.bedrooms : '')}">
+      </div>
+      <div class="form-group">
+        <label for="u-bath">Douches :</label>
+        <input type="number" id="u-bath" min="0" max="10" value="${escAttr(v.bathrooms != null ? v.bathrooms : '')}">
+      </div>
+      <div class="form-group">
+        <label for="u-price">Loyer mensuel demandé (FCFA) :</label>
+        <input type="number" id="u-price" min="0" value="${escAttr(v.price || '')}">
+        <small class="item-meta">Le loyer réellement convenu est porté par le bail.</small>
+      </div>
+      <div class="form-group">
+        <label for="u-furnished">
+          <input type="checkbox" id="u-furnished" ${v.furnished ? 'checked' : ''}> Meublé
+        </label>
+      </div>
+      <div class="form-group">
+        <label for="u-landlord">Propriétaire :</label>
+        <select id="u-landlord"><option value="">Celui de l'immeuble</option></select>
+        <small class="item-meta">À ne renseigner que si ce logement appartient à quelqu'un d'autre.</small>
+      </div>
+      <div class="form-group">
+        <label for="u-desc">Description :</label>
+        <textarea id="u-desc">${escHtml(v.description || '')}</textarea>
+      </div>
+      <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Ajouter le logement'}</button>
+      <button type="button" onclick="${retour}" class="btn btn-outline">Annuler</button>
+    </form>
+  `;
+
+  populateSelect('u-landlord', 'clients', 'name', v.landlord_id);
+  document.getElementById('unit-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveUnit(editing ? unit.id : null, buildingId || v.parent_id);
+  });
+}
+
+async function saveUnit(id, buildingId) {
+  try {
+    const biens = await getAll('properties');
+    const im = biens.find(p => String(p.id) === String(buildingId));
+
+    const libelle = document.getElementById('u-label').value.trim();
+    const etage = Number(document.getElementById('u-floor').value) || 0;
+
+    const unite = {
+      parent_id: buildingId || null,
+      unit_label: libelle,
+      floor: etage,
+      type: document.getElementById('u-type').value,
+      bedrooms: Number(document.getElementById('u-bed').value) || null,
+      bathrooms: Number(document.getElementById('u-bath').value) || null,
+      price: Number(document.getElementById('u-price').value) || null,
+      furnished: document.getElementById('u-furnished').checked,
+      description: document.getElementById('u-desc').value || null,
+      /* Vide = celui de l'immeuble. On RECOPIE au lieu de laisser NULL : une
+         requête « les biens de ce propriétaire » doit répondre sans avoir à
+         remonter la chaîne des parents. */
+      landlord_id: document.getElementById('u-landlord').value || (im ? im.landlord_id : null) || null,
+      /* Hérités de l'immeuble, jamais saisis deux fois. */
+      title: unitTitle(im ? im.title : '', etage, libelle),
+      address: im ? im.address : '',
+      district: im ? im.district : null,
+      rent_sale: 'rent',
+      source: 'crm'
+    };
+    if (!id) unite.status = 'available';
+
+    if (id) {
+      const { error } = await supabaseClient.from('properties').update(unite).eq('id', id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabaseClient.from('properties').insert([unite]);
+      if (error) throw error;
+    }
+    UI.toast('Logement enregistré', 'success');
+    showBuilding(buildingId);
+  } catch (e) {
+    console.error('[immeubles] saveUnit:', e);
+    UI.handleError(e);
+  }
+}
+
+
+/* Bascule d'affichage des logements dans la liste generale des biens. */
+function toggleUnits() {
+  propsView.showUnits = !propsView.showUnits;
+  const b = document.getElementById('units-toggle');
+  if (b) b.textContent = (propsView.showUnits ? 'Masquer' : 'Afficher') + ' les logements';
+  renderPropsList();
+}
