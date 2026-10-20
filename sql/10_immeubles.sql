@@ -3,6 +3,11 @@
 --
 -- À jouer dans le SQL Editor de dukwtseqticijlvrmkgz. Rejouable.
 --
+-- ⚠ DÉPEND DE sql/09_gestion_locative.sql — à jouer AVANT celui-ci.
+--   La reprise des propriétaires (section 2) lit la table `leases`, que 09
+--   crée. La garde posée plus bas évite que le fichier entier échoue si 09
+--   manque, mais la reprise ne se fera alors pas : rejoue 10 après 09.
+--
 -- POURQUOI :
 -- `properties` était PLAT. Un immeuble de Makepe et l'un de ses appartements
 -- y étaient deux lignes sans aucun lien. Impossible de dire « les logements
@@ -83,12 +88,28 @@ create index if not exists idx_properties_landlord on public.properties (landlor
 -- sur le bien évite de ressaisir ce qu'on sait déjà. Rejouable : on ne touche
 -- que les biens qui n'en ont pas encore.
 -- ─────────────────────────────────────────────────────────────────
-update public.properties p
-   set landlord_id = l.landlord_id
-  from public.leases l
- where l.property_id = p.id
-   and l.landlord_id is not null
-   and p.landlord_id is null;
+-- Enveloppé dans une garde : `leases` est créée par sql/09. Sans cette
+-- garde, jouer 10 avant 09 fait échouer TOUT le fichier sur un « relation
+-- public.leases does not exist », alors que les colonnes ajoutées plus haut
+-- n'ont, elles, aucune dépendance. Une migration ne doit pas exploser à cause
+-- d'une étape facultative.
+--
+-- Si 09 n'a pas encore été joué, il n'y a simplement aucun bail d'où reprendre
+-- quoi que ce soit : rejouer 10 après 09 fera la reprise.
+do $$
+begin
+  if to_regclass('public.leases') is null then
+    raise notice 'Table leases absente (sql/09 pas encore joué) — reprise des propriétaires ignorée.';
+    return;
+  end if;
+
+  update public.properties p
+     set landlord_id = l.landlord_id
+    from public.leases l
+   where l.property_id = p.id
+     and l.landlord_id is not null
+     and p.landlord_id is null;
+end $$;
 
 
 -- ═══════════════════════════════════════════════════════════════════
@@ -116,7 +137,15 @@ with attendu(objet, present) as (
   select 'cle etrangere bailleur', count(*) from pg_constraint
     where conname = 'properties_landlord_id_fkey'
 )
+-- N'interroge QUE information_schema et pg_constraint, jamais les colonnes
+-- qu'elle vérifie.
+--
+-- La version précédente comptait `where landlord_id is not null` : elle ne
+-- pouvait donc s'exécuter que si la colonne existait déjà — l'inverse de son
+-- rôle. Pire, l'éditeur SQL de Supabase joue le fichier dans UNE transaction :
+-- cette erreur finale annulait tout, y compris les ajouts de colonnes réussis
+-- plus haut. La migration semblait jouée, et rien ne l'était.
 select
   coalesce(string_agg(objet, ', ') filter (where present = 0), '') as manquant,
-  (select count(*) from public.properties where landlord_id is not null) as biens_avec_proprietaire,
-  (select count(*) from public.properties where type = 'building')      as immeubles;
+  count(*) filter (where present > 0) as objets_en_place
+from attendu;

@@ -48,6 +48,24 @@ copiées dans le CRM : elles sont lues en direct (voir l'en-tête de `site.js`).
 
 ## Migrations
 
+## Dans l'ordre des numéros, toujours
+
+Une migration peut s'appuyer sur une table créée par une précédente.
+`10_immeubles.sql` lit `leases`, que `09_gestion_locative.sql` crée : le
+20/10/2026, jouer 10 avant 09 a fait échouer **tout** le fichier sur
+« relation public.leases does not exist », y compris les colonnes ajoutées
+plus haut qui n'avaient aucune dépendance.
+
+Deux réponses, et il faut les deux :
+
+- chaque fichier qui dépend d'un autre le **dit en tête**, et enveloppe la
+  partie dépendante dans une garde `to_regclass` pour ne pas tout perdre ;
+- `tests/check-migrations.js` refuse qu'une migration s'appuie sur une table
+  créée plus tard — ce serait injouable quel que soit le soin de l'opérateur.
+
+Tous les fichiers sont **rejouables** : rejouer 10 après 09 fait la reprise
+qui avait été sautée.
+
 Les fichiers numérotés à partir de `03_` **modifient** la base, contrairement
 à `00`–`02` qui la décrivent. Après en avoir joué un : relancer
 `00_introspection.sql`, remplacer `01_schema.sql` et `02_rls.sql`, puis
