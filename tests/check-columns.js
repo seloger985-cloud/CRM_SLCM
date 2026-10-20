@@ -13,13 +13,28 @@ const ROOT = path.join(__dirname, '..');
 
 function run() {
   const app = fs.readFileSync(path.join(ROOT, 'assets/js/app.js'), 'utf8');
-  const sql = fs.readFileSync(path.join(ROOT, 'sql/01_schema.sql'), 'utf8');
+  /* TOUS les fichiers SQL, pas seulement 01_schema.sql.
+   *
+   * Raison d'être : 01 décrit l'état d'origine, les migrations numérotées le
+   * font évoluer. Ne lire que 01 obligeait à le recopier à la main à chaque
+   * migration — et le 15/10/2026 cette recopie avait divergé : `property_id`
+   * manquait sur `invoices` alors que le code l'écrivait, d'où un HTTP 400 à
+   * chaque sauvegarde de facture. Le schéma tenu à la main re-divergera
+   * toujours ; la somme des migrations, non. */
+  const sql = fs.readdirSync(path.join(ROOT, 'sql'))
+    .filter(f => f.endsWith('.sql')).sort()
+    .map(f => fs.readFileSync(path.join(ROOT, 'sql', f), 'utf8'))
+    .join('\n');
   const checks = [];
 
   const schema = {};
-  for (const m of sql.matchAll(/create table public\.(\w+)\s*\(([\s\S]*?)\n\);/g)) {
+  for (const m of sql.matchAll(/create table (?:if not exists )?public\.(\w+)\s*\(([\s\S]*?)\n\);/g)) {
     schema[m[1]] = m[2].split('\n').map(l => l.trim())
       .filter(l => l && !l.startsWith('--')).map(l => l.split(/\s+/)[0]);
+  }
+  /* Puis les colonnes ajoutées après coup par une migration. */
+  for (const m of sql.matchAll(/alter table public\.(\w+)\s+add column if not exists\s+(\w+)/g)) {
+    if (schema[m[1]] && !schema[m[1]].includes(m[2])) schema[m[1]].push(m[2]);
   }
 
   const block = app.match(/const TABLE_COLS = \{([\s\S]*?)\n\};/);
@@ -39,11 +54,17 @@ function run() {
     ]);
   }
 
-  /* Les statuts proposés doivent être acceptés par la contrainte CHECK. */
+  /* Les statuts proposés doivent être acceptés par la contrainte CHECK.
+   *
+   * Scopé au SEUL formulaire de paiement : depuis la gérance, d'autres écrans
+   * proposent un `v.status` qui relève de leur propre table (un bail est
+   * 'suspended', un signalement 'en_cours'). Les confronter au CHECK de
+   * `payments` faisait crier ce contrôle sur du code parfaitement correct. */
   const check = sql.match(/payments_status_check CHECK \(\(status = ANY \(ARRAY\[([^\]]+)\]/);
+  const formPaiement = (app.match(/function showPaymentForm[\s\S]*?\n}/) || [''])[0];
   if (check) {
     const allowed = [...check[1].matchAll(/'([^']+)'::text/g)].map(x => x[1]);
-    const form = [...app.matchAll(/<option value="(\w+)" \$\{v\.status/g)].map(x => x[1]);
+    const form = [...formPaiement.matchAll(/<option value="(\w+)"\s*\$\{/g)].map(x => x[1]);
     const bad = form.filter(x => !allowed.includes(x));
     checks.push([
       bad.length

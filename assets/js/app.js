@@ -17,6 +17,7 @@ const tasksBtn = document.getElementById('tasks-btn');
 const automationBtn = document.getElementById('automation-btn');
 const pipelineBtn = document.getElementById('pipeline-btn');
 const matchingBtn = document.getElementById('matching-btn');
+const leasesBtn = document.getElementById('leases-btn');
 
 // Event listeners — wrappés pour marquer l'état actif dans la sidebar
 function setActiveNav(btn) {
@@ -54,6 +55,7 @@ tasksBtn.addEventListener('click', navTo(tasksBtn, showTasks));
 automationBtn.addEventListener('click', navTo(automationBtn, showAutomation));
 pipelineBtn.addEventListener('click', navTo(pipelineBtn, showPipeline));
 matchingBtn.addEventListener('click', navTo(matchingBtn, showMatching));
+leasesBtn.addEventListener('click', navTo(leasesBtn, showLeases));
 
 /* Redessine le tableau de bord au changement de thème, uniquement s'il est à
    l'écran : ses deux graphiques sont peints sur un canevas et ne suivent pas
@@ -2524,7 +2526,13 @@ const TABLE_COLS = {
      tableau vide, et par ricochet : écran Paiements toujours vide, chiffre
      d'affaires à 0, alerte retards muette, relances jamais proposées.
      Le suivi acompte / solde reste à construire, base comprise. */
-  payments:   'id,client_id,property_id,amount,status,payment_date,notes,created_at',
+  /* lease_id / period / kind ajoutes par sql/09 : une echeance de loyer EST
+     un paiement attendu. Sans `period`, « le loyer d'octobre » n'est pas
+     exprimable ; sans `kind`, on ne distingue plus un loyer d'un
+     encaissement de facture. */
+  payments:   'id,client_id,property_id,amount,status,payment_date,notes,created_at,lease_id,period,kind',
+  leases:     'id,property_id,tenant_id,landlord_id,start_date,duration_months,rent_amount,payment_day,caution_months,avance_months,commission_rate,status,notes,created_at',
+  incidents:  'id,property_id,lease_id,reported_at,reported_by,title,description,urgency,status,cost,resolved_at,resolution,created_at',
   demands:    'id,client_id,label,rent_sale,wanted_types,wanted_districts,budget,budget_min,min_bedrooms,wants_furnished,active,notes,created_at'
 };
 
@@ -2796,3 +2804,635 @@ async function editPayment(id) {
   }
   showPaymentForm(payment);
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   GÉRANCE LOCATIVE — baux, échéances, relances, signalements
+
+   Modèle décidé le 20/10/2026 : le locataire paie DIRECTEMENT le
+   propriétaire. L'agence ne tient pas de compte de gérance — elle constate,
+   elle relance, et elle facture sa commission à part avec le module Facture.
+   Un seul flux d'argent à suivre.
+
+   Les échéances ne vivent PAS dans une table à elles : ce sont des lignes de
+   `payments` en 'pending', portant `lease_id` et `period`. Conséquence
+   directe et voulue : l'alerte retard du tableau de bord, le chiffre
+   d'affaires et l'écran Paiements les voient sans une ligne de code en plus.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const LEASE_STATUS_FR = { active: 'En cours', ended: 'Terminé', suspended: 'Suspendu' };
+const INCIDENT_STATUS_FR = { ouvert: 'Ouvert', en_cours: 'En cours', resolu: 'Résolu' };
+const INCIDENT_URGENCY_FR = { basse: 'Basse', normale: 'Normale', urgente: 'Urgente' };
+const REPORTED_BY_FR = { tenant: 'Locataire', landlord: 'Propriétaire', agency: 'Agence' };
+
+const MOIS_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin',
+  'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+
+/* « octobre 2026 » à partir de 2026-10-01. Construit à la main : toLocaleDateString
+   dépend de la locale du navigateur, et l'écran affichait déjà deux formats de
+   date différents côte à côte avant qu'on ne l'uniformise. */
+function periodLabel(period) {
+  if (!period) return '—';
+  const p = String(period).split('-');
+  const m = Number(p[1]) - 1;
+  return (MOIS_FR[m] || '?') + ' ' + p[0];
+}
+
+/* Le premier du mois, en texte, sans passer par Date : un décalage de fuseau
+   suffirait à faire reculer la période d'un mois dans l'hémisphère ouest. */
+function firstOfMonth(annee, mois) {
+  const m = ((mois % 12) + 12) % 12;
+  const a = annee + Math.floor(mois / 12);
+  return a + '-' + String(m + 1).padStart(2, '0') + '-01';
+}
+
+function addMonths(periode, n) {
+  const p = String(periode).split('-');
+  return firstOfMonth(Number(p[0]), Number(p[1]) - 1 + n);
+}
+
+/* L'état réel d'une échéance. 'late' n'est pas un statut en base : c'est
+   'pending' dont la date est passée. Le calculer ici évite d'avoir à tenir
+   une colonne à jour par un travail planifié qui n'existe pas. */
+function rentState(p) {
+  if (p.status === 'paid') return 'paid';
+  const auj = new Date().toISOString().split('T')[0];
+  return (p.payment_date && p.payment_date < auj) ? 'late' : 'due';
+}
+
+const RENT_STATE_FR = { paid: 'Payé', late: 'En retard', due: 'À venir' };
+
+/* ─────────────── LISTE DES BAUX ─────────────── */
+
+const leasesView = { showAll: false };
+
+async function showLeases() {
+  UI.showLoading();
+  const [leases, clients, properties, payments] = await Promise.all([
+    getAll('leases'), getAll('clients'), getAll('properties'), getAll('payments')
+  ]);
+
+  const parClient = new Map(clients.map(c => [String(c.id), c]));
+  const parBien = new Map(properties.map(p => [String(p.id), p]));
+
+  /* Les échéances par bail, pour afficher l'état sans un appel par ligne. */
+  const parBail = new Map();
+  payments.forEach(p => {
+    if (!p.lease_id) return;
+    const k = String(p.lease_id);
+    if (!parBail.has(k)) parBail.set(k, []);
+    parBail.get(k).push(p);
+  });
+
+  const rows = leasesView.showAll ? leases : leases.filter(l => l.status === 'active');
+  const enRetardTotal = payments.filter(p => p.lease_id && rentState(p) === 'late').length;
+
+  mainContent.innerHTML = `
+    <h2>Gérance</h2>
+    ${enRetardTotal ? `<div class="alert-match"><strong>${enRetardTotal} loyer(s) en retard.</strong>
+       Ouvre le bail concerné pour relancer le locataire.</div>` : ''}
+    <div class="toolbar">
+      <button onclick="showLeaseForm()" class="btn btn-primary">Nouveau bail</button>
+      <button onclick="toggleLeaseFilter()" class="ghost-btn">${leasesView.showAll ? 'Voir les baux en cours' : 'Voir tous les baux'}</button>
+      <button onclick="showIncidents()" class="ghost-btn">Signalements</button>
+    </div>
+    <p class="item-meta">${rows.length} bail/baux affiché(s) · ${leases.filter(l => l.status === 'active').length} en cours</p>
+    <div class="list">
+      ${rows.length ? rows.map(l => {
+        const bien = parBien.get(String(l.property_id));
+        const loc = parClient.get(String(l.tenant_id));
+        const ech = parBail.get(String(l.id)) || [];
+        const retards = ech.filter(p => rentState(p) === 'late').length;
+        const impayes = ech.filter(p => p.status !== 'paid').length;
+        return `<div class="list-item${retards ? ' attention' : ''}">
+          <div>
+            <strong>${escHtml((bien && bien.title) || 'Bien #' + l.property_id)}</strong>
+            <span class="src-badge ${l.status === 'active' ? 'src-site' : 'src-crm'}">${LEASE_STATUS_FR[l.status] || l.status}</span>
+            <div class="item-meta">${escHtml((loc && loc.name) || 'Locataire #' + l.tenant_id)} · ${formatMoney(l.rent_amount)} FCFA/mois · échéance le ${Number(l.payment_day)}</div>
+            <div class="item-meta">${retards
+              ? '<strong>' + retards + ' loyer(s) en retard</strong>'
+              : (impayes ? impayes + ' échéance(s) à venir' : 'Rien en attente')}</div>
+          </div>
+          <div>
+            <button onclick="showLeaseDetail(${Number(l.id)})" class="btn btn-outline">Ouvrir</button>
+            <button onclick="editLease(${Number(l.id)})" class="edit-btn" title="Modifier le bail">${ICON_EDIT}</button>
+          </div>
+        </div>`;
+      }).join('') : `<div class="empty-state"><p><strong>Aucun bail ${leasesView.showAll ? '' : 'en cours'}.</strong></p>
+        <p>Un bail relie un bien, un locataire et un propriétaire. Il porte le loyer,
+        la durée et le jour d'échéance — c'est lui qui permet de générer les loyers à percevoir.</p></div>`}
+    </div>
+  `;
+}
+
+function toggleLeaseFilter() {
+  leasesView.showAll = !leasesView.showAll;
+  showLeases();
+}
+
+/* ─────────────── FICHE D'UN BAIL ─────────────── */
+
+async function showLeaseDetail(id) {
+  UI.showLoading();
+  const [leases, clients, properties, payments, incidents] = await Promise.all([
+    getAll('leases'), getAll('clients'), getAll('properties'), getAll('payments'), getAll('incidents')
+  ]);
+
+  const l = leases.find(x => String(x.id) === String(id));
+  if (!l) { mainContent.innerHTML = '<h2>Bail introuvable</h2>'; return; }
+
+  const bien = properties.find(p => String(p.id) === String(l.property_id));
+  const loc = clients.find(c => String(c.id) === String(l.tenant_id));
+  const bailleur = clients.find(c => String(c.id) === String(l.landlord_id));
+
+  /* Les plus récentes en tête : c'est le mois courant qu'on vient consulter. */
+  const ech = payments
+    .filter(p => String(p.lease_id) === String(l.id))
+    .sort((a, b) => String(b.period || '').localeCompare(String(a.period || '')));
+
+  const sign = incidents
+    .filter(i => String(i.lease_id) === String(l.id))
+    .sort((a, b) => String(b.reported_at || '').localeCompare(String(a.reported_at || '')));
+
+  const fin = l.duration_months
+    ? addMonths(String(l.start_date).slice(0, 7) + '-01', Number(l.duration_months))
+    : null;
+  const commission = Math.round(Number(l.rent_amount) * Number(l.commission_rate || 0) / 100);
+
+  mainContent.innerHTML = `
+    <h2>${escHtml((bien && bien.title) || 'Bien #' + l.property_id)}</h2>
+    <p class="item-meta">
+      <span class="src-badge ${l.status === 'active' ? 'src-site' : 'src-crm'}">${LEASE_STATUS_FR[l.status] || l.status}</span>
+      ${escHtml((bien && bien.address) || '')}
+    </p>
+
+    <div class="dashboard">
+      <div class="card"><h3>Loyer mensuel</h3><p class="metric">${formatMoney(l.rent_amount)}</p><small>FCFA · dû le ${Number(l.payment_day)} du mois</small></div>
+      <div class="card"><h3>Locataire</h3><p class="metric" style="font-size:1.1rem">${escHtml((loc && loc.name) || '—')}</p><small>${escHtml((loc && loc.phone) || 'Pas de téléphone')}</small></div>
+      <div class="card"><h3>Propriétaire</h3><p class="metric" style="font-size:1.1rem">${escHtml((bailleur && bailleur.name) || 'Non renseigné')}</p><small>${escHtml((bailleur && bailleur.phone) || '')}</small></div>
+      <div class="card"><h3>Part agence</h3><p class="metric">${formatMoney(commission)}</p><small>${Number(l.commission_rate || 0)} % · à facturer séparément</small></div>
+    </div>
+
+    <h3>Le bail</h3>
+    <div class="list">
+      <div class="list-item"><div>Début</div><div class="item-meta">${formatDate(l.start_date)}</div></div>
+      <div class="list-item"><div>Durée</div><div class="item-meta">${l.duration_months ? Number(l.duration_months) + ' mois — fin prévue le ' + formatDate(fin) : 'Durée indéterminée'}</div></div>
+      <div class="list-item"><div>Caution</div><div class="item-meta">${Number(l.caution_months || 0)} mois (${formatMoney(Number(l.rent_amount) * Number(l.caution_months || 0))} FCFA)</div></div>
+      <div class="list-item"><div>Avance</div><div class="item-meta">${Number(l.avance_months || 0)} mois (${formatMoney(Number(l.rent_amount) * Number(l.avance_months || 0))} FCFA)</div></div>
+      ${l.notes ? `<div class="list-item"><div>Notes</div><div class="item-meta">${escHtml(l.notes)}</div></div>` : ''}
+    </div>
+
+    <h3>Échéances</h3>
+    <div class="toolbar">
+      <button onclick="generateSchedule(${Number(l.id)})" class="btn btn-primary">Générer les prochains loyers</button>
+      <button onclick="showIncidentForm(null, {lease_id:${Number(l.id)}, property_id:${Number(l.property_id)}}, 'lease-${Number(l.id)}')" class="ghost-btn">Signaler un problème</button>
+      ${l.status === 'active' ? `<button onclick="endLease(${Number(l.id)})" class="ghost-btn">Clore le bail</button>` : ''}
+    </div>
+    <div class="list">
+      ${ech.length ? ech.map(p => {
+        const etat = rentState(p);
+        return `<div class="list-item${etat === 'late' ? ' attention' : ''}">
+          <div>
+            <strong>${periodLabel(p.period)}</strong>
+            <span class="src-badge ${etat === 'paid' ? 'src-site' : 'src-crm'}">${RENT_STATE_FR[etat]}</span>
+            <div class="item-meta">${formatMoney(p.amount)} FCFA · dû le ${formatDate(p.payment_date)}</div>
+          </div>
+          <div>
+            ${etat !== 'paid' ? `<button onclick="markRentPaid(${Number(p.id)}, ${Number(l.id)})" class="btn btn-outline">Marquer payé</button>` : ''}
+            ${etat === 'late' && loc && loc.phone ? `<button onclick="relanceRent(${Number(p.id)}, ${Number(l.id)})" class="edit-btn" title="Relancer par WhatsApp">${ICON_WHATSAPP}</button>` : ''}
+          </div>
+        </div>`;
+      }).join('') : '<p class="item-meta">Aucune échéance générée. Le bouton ci-dessus crée les loyers à percevoir pour les mois à venir.</p>'}
+    </div>
+
+    <h3>Signalements</h3>
+    <div class="list">
+      ${sign.length ? sign.map(i => incidentRow(i)).join('')
+        : '<p class="item-meta">Aucun signalement sur ce bail.</p>'}
+    </div>
+
+    <button onclick="showLeases()" class="btn btn-outline">Retour aux baux</button>
+  `;
+}
+
+/* ─────────────── GÉNÉRATION DES ÉCHÉANCES ───────────────
+
+   On génère à la demande, jamais automatiquement : rien dans ce CRM ne
+   tourne en arrière-plan, et un travail planifié qui créerait des lignes
+   sans qu'on le voie serait impossible à déboguer depuis le navigateur.
+
+   La base refuse les doublons (index unique sur lease_id + period), donc
+   relancer le bouton ne peut pas créer deux fois le loyer d'octobre. On
+   s'appuie sur elle plutôt que sur une vérification en JavaScript qu'un
+   second onglet contournerait. */
+async function generateSchedule(leaseId) {
+  try {
+    const [leases, payments] = await Promise.all([getAll('leases'), getAll('payments')]);
+    const l = leases.find(x => String(x.id) === String(leaseId));
+    if (!l) throw new Error('Bail introuvable');
+
+    const existantes = new Set(
+      payments.filter(p => String(p.lease_id) === String(l.id) && p.period)
+              .map(p => String(p.period))
+    );
+
+    const debut = String(l.start_date).slice(0, 7) + '-01';
+    /* On s'arrête à la fin du bail quand elle est connue, sinon douze mois :
+       au-delà, on génèrerait des loyers pour un bail qui aura peut-être été
+       résilié, et il faudrait ensuite les effacer — or le CRM ne supprime rien. */
+    const total = l.duration_months ? Number(l.duration_months) : 12;
+
+    const aCreer = [];
+    for (let i = 0; i < total; i++) {
+      const periode = addMonths(debut, i);
+      if (existantes.has(periode)) continue;
+      aCreer.push({
+        lease_id: l.id,
+        client_id: l.tenant_id,
+        property_id: l.property_id,
+        amount: l.rent_amount,
+        status: 'pending',
+        /* La date d'exigibilité : le jour du mois convenu au bail. Distincte
+           de `period`, qui désigne le mois couvert. */
+        payment_date: periode.slice(0, 8) + String(l.payment_day).padStart(2, '0'),
+        period: periode,
+        kind: 'rent',
+        notes: 'Loyer ' + periodLabel(periode)
+      });
+    }
+
+    if (!aCreer.length) {
+      UI.toast('Toutes les échéances sont déjà générées', 'info');
+      return;
+    }
+
+    const continuer = await UI.confirm(
+      aCreer.length + ' échéance(s) vont être créées, de ' + periodLabel(aCreer[0].period)
+      + ' à ' + periodLabel(aCreer[aCreer.length - 1].period) + '.',
+      'Générer les loyers'
+    );
+    if (!continuer) return;
+
+    const { error } = await supabaseClient.from('payments').insert(aCreer);
+    if (error) throw error;
+    UI.toast(aCreer.length + ' échéance(s) créée(s)', 'success');
+    showLeaseDetail(leaseId);
+  } catch (e) {
+    console.error('[gerance] generateSchedule:', e);
+    UI.handleError(e);
+  }
+}
+
+async function markRentPaid(paymentId, leaseId) {
+  try {
+    const { error } = await supabaseClient
+      .from('payments')
+      .update({ status: 'paid', payment_date: new Date().toISOString().split('T')[0] })
+      .eq('id', paymentId);
+    if (error) throw error;
+    UI.toast('Loyer encaissé', 'success');
+    showLeaseDetail(leaseId);
+  } catch (e) {
+    console.error('[gerance] markRentPaid:', e);
+    UI.handleError(e);
+  }
+}
+
+/* La relance n'écrit RIEN : elle ouvre WhatsApp avec un message prêt. C'est
+   l'agent qui envoie, parce qu'un message parti sans relecture engage
+   l'agence auprès d'un client. */
+async function relanceRent(paymentId, leaseId) {
+  const [payments, clients, properties, leases] = await Promise.all([
+    getAll('payments'), getAll('clients'), getAll('properties'), getAll('leases')
+  ]);
+  const p = payments.find(x => String(x.id) === String(paymentId));
+  const l = leases.find(x => String(x.id) === String(leaseId));
+  if (!p || !l) return;
+  const loc = clients.find(c => String(c.id) === String(l.tenant_id));
+  const bien = properties.find(b => String(b.id) === String(l.property_id));
+  if (!loc || !loc.phone) { UI.toast('Pas de téléphone pour ce locataire', 'error'); return; }
+
+  const message = 'Bonjour ' + (loc.name || '') + ', '
+    + 'le loyer de ' + periodLabel(p.period)
+    + (bien && bien.title ? ' pour ' + bien.title : '')
+    + ' (' + formatMoney(p.amount) + ' FCFA) était dû le ' + formatDate(p.payment_date) + '. '
+    + 'Merci de régulariser dès que possible. SE LOGER CM.';
+  sendWhatsApp(loc.phone, message);
+}
+
+async function endLease(id) {
+  const continuer = await UI.confirm(
+    "Le bail passera en « Terminé » et le bien redeviendra disponible. "
+    + 'Les échéances déjà générées sont conservées : elles font partie de ton historique.',
+    'Clore le bail'
+  );
+  if (!continuer) return;
+  try {
+    const { data: l, error } = await supabaseClient
+      .from('leases').update({ status: 'ended' }).eq('id', id).select().single();
+    if (error) throw error;
+    /* Le bien redevient proposable au rapprochement. Sans ça il resterait
+       'rented' et n'apparaîtrait plus jamais dans les correspondances. */
+    if (l && l.property_id) {
+      await supabaseClient.from('properties').update({ status: 'available' }).eq('id', l.property_id);
+    }
+    UI.toast('Bail clos', 'success');
+    showLeases();
+  } catch (e) {
+    console.error('[gerance] endLease:', e);
+    UI.handleError(e);
+  }
+}
+
+/* ─────────────── FORMULAIRE DE BAIL ─────────────── */
+
+async function editLease(id) {
+  const rows = await getAll('leases');
+  const l = rows.find(x => String(x.id) === String(id));
+  if (l) showLeaseForm(l);
+}
+
+function showLeaseForm(lease = null, draft = null, back = null) {
+  const v = lease || draft || {};
+  const editing = !!lease;
+  mainContent.innerHTML = `
+    <h2>${editing ? 'Modifier le' : 'Nouveau'} bail</h2>
+    <form id="lease-form">
+      <div class="form-group">
+        <label for="lease-property">Bien loué :</label>
+        <select id="lease-property" required><option value="">Sélectionne un bien</option></select>
+      </div>
+      <div class="form-group">
+        <label for="lease-tenant">Locataire :</label>
+        <select id="lease-tenant" required><option value="">Sélectionne un client</option></select>
+      </div>
+      <div class="form-group">
+        <label for="lease-landlord">Propriétaire bailleur :</label>
+        <select id="lease-landlord"><option value="">Non renseigné</option></select>
+        <small class="item-meta">Facultatif — le bail peut être saisi avant que sa fiche n'existe.</small>
+      </div>
+      <div class="form-group">
+        <label for="lease-start">Début du bail :</label>
+        <input type="date" id="lease-start" value="${escAttr(v.start_date || new Date().toISOString().split('T')[0])}" required>
+      </div>
+      <div class="form-group">
+        <label for="lease-duration">Durée (mois) :</label>
+        <input type="number" id="lease-duration" min="1" value="${escAttr(v.duration_months || '')}" placeholder="Laisser vide pour une durée indéterminée">
+      </div>
+      <div class="form-group">
+        <label for="lease-rent">Loyer mensuel (FCFA) :</label>
+        <input type="number" id="lease-rent" min="1" value="${escAttr(v.rent_amount || '')}" required>
+      </div>
+      <div class="form-group">
+        <label for="lease-day">Jour d'échéance :</label>
+        <input type="number" id="lease-day" min="1" max="28" value="${escAttr(v.payment_day || 5)}" required>
+        <small class="item-meta">Entre 1 et 28 : un bail au 31 n'aurait pas d'échéance en février.</small>
+      </div>
+      <div class="form-group">
+        <label for="lease-caution">Caution (mois) :</label>
+        <input type="number" id="lease-caution" min="0" value="${escAttr(v.caution_months != null ? v.caution_months : 0)}">
+      </div>
+      <div class="form-group">
+        <label for="lease-avance">Avance (mois) :</label>
+        <input type="number" id="lease-avance" min="0" value="${escAttr(v.avance_months != null ? v.avance_months : 0)}">
+      </div>
+      <div class="form-group">
+        <label for="lease-commission">Commission de gérance (%) :</label>
+        <input type="number" id="lease-commission" min="0" max="100" step="0.5" value="${escAttr(v.commission_rate != null ? v.commission_rate : 0)}">
+        <small class="item-meta">Se facture à part, avec le module Facture.</small>
+      </div>
+      ${editing ? `<div class="form-group">
+        <label for="lease-status">Statut :</label>
+        <select id="lease-status">
+          <option value="active"    ${v.status === 'active' ? 'selected' : ''}>En cours</option>
+          <option value="suspended" ${v.status === 'suspended' ? 'selected' : ''}>Suspendu</option>
+          <option value="ended"     ${v.status === 'ended' ? 'selected' : ''}>Terminé</option>
+        </select>
+      </div>` : ''}
+      <div class="form-group">
+        <label for="lease-notes">Notes :</label>
+        <textarea id="lease-notes">${escHtml(v.notes || '')}</textarea>
+      </div>
+      <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Créer le bail'}</button>
+      <button type="button" onclick="showLeases()" class="btn btn-outline">Annuler</button>
+    </form>
+  `;
+
+  populateSelect('lease-property', 'properties', 'title', v.property_id);
+  populateSelect('lease-tenant', 'clients', 'name', v.tenant_id);
+  populateSelect('lease-landlord', 'clients', 'name', v.landlord_id);
+
+  document.getElementById('lease-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveLease(editing ? lease.id : null);
+  });
+}
+
+async function saveLease(id) {
+  const lease = {
+    property_id: document.getElementById('lease-property').value || null,
+    tenant_id: document.getElementById('lease-tenant').value || null,
+    landlord_id: document.getElementById('lease-landlord').value || null,
+    start_date: document.getElementById('lease-start').value,
+    duration_months: document.getElementById('lease-duration').value || null,
+    rent_amount: document.getElementById('lease-rent').value,
+    payment_day: document.getElementById('lease-day').value,
+    caution_months: document.getElementById('lease-caution').value || 0,
+    avance_months: document.getElementById('lease-avance').value || 0,
+    commission_rate: document.getElementById('lease-commission').value || 0,
+    notes: document.getElementById('lease-notes').value || null
+  };
+  const statusEl = document.getElementById('lease-status');
+  if (statusEl) lease.status = statusEl.value;
+
+  try {
+    if (id) {
+      const { error } = await supabaseClient.from('leases').update(lease).eq('id', id);
+      if (error) throw error;
+      UI.toast('Bail mis à jour', 'success');
+    } else {
+      const { data, error } = await supabaseClient.from('leases').insert([lease]).select().single();
+      if (error) throw error;
+      /* Le bien passe en loué : sans ça il continuerait d'être proposé aux
+         clients en recherche, et on ferait visiter un appartement occupé. */
+      await supabaseClient.from('properties').update({ status: 'rented' }).eq('id', lease.property_id);
+      UI.toast('Bail créé — génère maintenant les échéances', 'success');
+      showLeaseDetail(data.id);
+      return;
+    }
+    showLeases();
+  } catch (e) {
+    console.error('[gerance] saveLease:', e);
+    /* L'index unique sur (property_id) where status='active' remonte ici.
+       Le message brut de PostgREST ne dirait rien à l'agent. */
+    if (String(e.message || '').indexOf('uniq_lease_active_property') !== -1) {
+      UI.toast('Ce bien porte déjà un bail en cours. Clos-le avant d’en créer un autre.', 'error');
+      return;
+    }
+    UI.handleError(e);
+  }
+}
+
+/* ─────────────── SIGNALEMENTS ─────────────── */
+
+function incidentRow(i, bienNom) {
+  const badge = i.status === 'resolu' ? 'src-site' : 'src-crm';
+  return `<div class="list-item${i.status !== 'resolu' && i.urgency === 'urgente' ? ' attention' : ''}">
+    <div>
+      <strong>${escHtml(i.title)}</strong>
+      <span class="src-badge ${badge}">${INCIDENT_STATUS_FR[i.status] || i.status}</span>
+      ${i.urgency === 'urgente' && i.status !== 'resolu' ? '<span class="src-badge src-crm">URGENT</span>' : ''}
+      <div class="item-meta">${bienNom ? escHtml(bienNom) + ' · ' : ''}Signalé par ${REPORTED_BY_FR[i.reported_by] || '—'} le ${formatDate(i.reported_at)}</div>
+      ${i.description ? `<div class="item-meta">${escHtml(i.description)}</div>` : ''}
+      ${i.cost != null ? `<div class="item-meta">Coût : ${formatMoney(i.cost)} FCFA</div>` : ''}
+      ${i.resolution ? `<div class="item-meta">Résolution : ${escHtml(i.resolution)}</div>` : ''}
+    </div>
+    <div><button onclick="editIncident(${Number(i.id)})" class="edit-btn" title="Modifier">${ICON_EDIT}</button></div>
+  </div>`;
+}
+
+const incidentsView = { showAll: false };
+
+async function showIncidents() {
+  UI.showLoading();
+  const [incidents, properties] = await Promise.all([getAll('incidents'), getAll('properties')]);
+  const parBien = new Map(properties.map(p => [String(p.id), p]));
+
+  const rows = (incidentsView.showAll ? incidents : incidents.filter(i => i.status !== 'resolu'))
+    .sort((a, b) => String(b.reported_at || '').localeCompare(String(a.reported_at || '')));
+  const ouverts = incidents.filter(i => i.status !== 'resolu').length;
+
+  mainContent.innerHTML = `
+    <h2>Signalements</h2>
+    <div class="toolbar">
+      <button onclick="showIncidentForm()" class="btn btn-primary">Nouveau signalement</button>
+      <button onclick="toggleIncidentFilter()" class="ghost-btn">${incidentsView.showAll ? 'Voir les non résolus' : 'Voir tous'}</button>
+      <button onclick="showLeases()" class="ghost-btn">Retour aux baux</button>
+    </div>
+    <p class="item-meta">${rows.length} affiché(s) · ${ouverts} non résolu(s)</p>
+    <div class="list">
+      ${rows.length ? rows.map(i => {
+        const b = parBien.get(String(i.property_id));
+        return incidentRow(i, (b && b.title) || 'Bien #' + i.property_id);
+      }).join('') : `<div class="empty-state"><p><strong>Aucun signalement${incidentsView.showAll ? '' : ' en cours'}.</strong></p>
+        <p>Un signalement est un problème sur un bien — fuite, panne, dégradation —
+        avec son cycle de vie : ouvert, en cours, résolu.</p></div>`}
+    </div>
+  `;
+}
+
+function toggleIncidentFilter() {
+  incidentsView.showAll = !incidentsView.showAll;
+  showIncidents();
+}
+
+async function editIncident(id) {
+  const rows = await getAll('incidents');
+  const i = rows.find(x => String(x.id) === String(id));
+  if (i) showIncidentForm(i);
+}
+
+function showIncidentForm(incident = null, draft = null, back = null) {
+  const v = incident || draft || {};
+  const editing = !!incident;
+  const retour = back && back.indexOf('lease-') === 0
+    ? 'showLeaseDetail(' + Number(back.slice(6)) + ')'
+    : 'showIncidents()';
+
+  mainContent.innerHTML = `
+    <h2>${editing ? 'Modifier le' : 'Nouveau'} signalement</h2>
+    <form id="incident-form">
+      <div class="form-group">
+        <label for="incident-property">Bien concerné :</label>
+        <select id="incident-property" required><option value="">Sélectionne un bien</option></select>
+      </div>
+      <div class="form-group">
+        <label for="incident-title">Objet :</label>
+        <input type="text" id="incident-title" value="${escAttr(v.title || '')}" required placeholder="Fuite d'eau à la cuisine">
+      </div>
+      <div class="form-group">
+        <label for="incident-desc">Description :</label>
+        <textarea id="incident-desc">${escHtml(v.description || '')}</textarea>
+      </div>
+      <div class="form-group">
+        <label for="incident-by">Signalé par :</label>
+        <select id="incident-by">
+          <option value="tenant"   ${(v.reported_by || 'tenant') === 'tenant' ? 'selected' : ''}>Locataire</option>
+          <option value="landlord" ${v.reported_by === 'landlord' ? 'selected' : ''}>Propriétaire</option>
+          <option value="agency"   ${v.reported_by === 'agency' ? 'selected' : ''}>Agence</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="incident-date">Date du signalement :</label>
+        <input type="date" id="incident-date" value="${escAttr(v.reported_at || new Date().toISOString().split('T')[0])}" required>
+      </div>
+      <div class="form-group">
+        <label for="incident-urgency">Urgence :</label>
+        <select id="incident-urgency">
+          <option value="basse"   ${v.urgency === 'basse' ? 'selected' : ''}>Basse</option>
+          <option value="normale" ${(v.urgency || 'normale') === 'normale' ? 'selected' : ''}>Normale</option>
+          <option value="urgente" ${v.urgency === 'urgente' ? 'selected' : ''}>Urgente</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="incident-status">État :</label>
+        <select id="incident-status">
+          <option value="ouvert"   ${(v.status || 'ouvert') === 'ouvert' ? 'selected' : ''}>Ouvert</option>
+          <option value="en_cours" ${v.status === 'en_cours' ? 'selected' : ''}>En cours</option>
+          <option value="resolu"   ${v.status === 'resolu' ? 'selected' : ''}>Résolu</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="incident-cost">Coût de l'intervention (FCFA) :</label>
+        <input type="number" id="incident-cost" min="0" value="${escAttr(v.cost != null ? v.cost : '')}" placeholder="Laisser vide tant qu'on ne sait pas">
+      </div>
+      <div class="form-group">
+        <label for="incident-resolution">Résolution :</label>
+        <textarea id="incident-resolution" placeholder="Ce qui a été fait">${escHtml(v.resolution || '')}</textarea>
+      </div>
+      <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Enregistrer le signalement'}</button>
+      <button type="button" onclick="${retour}" class="btn btn-outline">Annuler</button>
+    </form>
+  `;
+
+  populateSelect('incident-property', 'properties', 'title', v.property_id);
+  document.getElementById('incident-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveIncident(editing ? incident.id : null, v.lease_id || null, back);
+  });
+}
+
+async function saveIncident(id, leaseId, back) {
+  const statut = document.getElementById('incident-status').value;
+  const incident = {
+    property_id: document.getElementById('incident-property').value || null,
+    title: document.getElementById('incident-title').value,
+    description: document.getElementById('incident-desc').value || null,
+    reported_by: document.getElementById('incident-by').value,
+    reported_at: document.getElementById('incident-date').value,
+    urgency: document.getElementById('incident-urgency').value,
+    status: statut,
+    cost: document.getElementById('incident-cost').value || null,
+    resolution: document.getElementById('incident-resolution').value || null,
+    /* Horodaté à la clôture, et effacé si on rouvre : une date de résolution
+       sur un signalement rouvert ferait croire le problème réglé. */
+    resolved_at: statut === 'resolu' ? new Date().toISOString().split('T')[0] : null
+  };
+  if (leaseId) incident.lease_id = leaseId;
+
+  try {
+    if (id) {
+      const { error } = await supabaseClient.from('incidents').update(incident).eq('id', id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabaseClient.from('incidents').insert([incident]);
+      if (error) throw error;
+    }
+    UI.toast('Signalement enregistré', 'success');
+    if (back && back.indexOf('lease-') === 0) showLeaseDetail(Number(back.slice(6)));
+    else showIncidents();
+  } catch (e) {
+    console.error('[gerance] saveIncident:', e);
+    UI.handleError(e);
+  }
+}
+

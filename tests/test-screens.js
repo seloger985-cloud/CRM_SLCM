@@ -66,7 +66,16 @@ const ECRANS = [
   ['showPaymentForm', []],
   ['showPaymentForm', [null, { client_id: 1 }, 'clients']],
   ['showDemandForm', [null, { client_id: 1 }, 'clients']],
-  ['showDemandForm', [{ id: 5, client_id: 1, rent_sale: 'rent', active: true }]]
+  ['showDemandForm', [{ id: 5, client_id: 1, rent_sale: 'rent', active: true }]],
+  /* Gérance (20/10/2026). Le formulaire de signalement reçoit un `back` de la
+     forme 'lease-<id>' : c'est exactement le motif qui avait produit
+     « back is not defined » sur la boîte de réception, donc celui qu'il faut
+     exercer plutôt que relire. */
+  ['showLeaseForm', []],
+  ['showLeaseForm', [{ id: 7, property_id: 2, tenant_id: 1, rent_amount: 250000, payment_day: 5, status: 'active' }]],
+  ['showIncidentForm', []],
+  ['showIncidentForm', [null, { lease_id: 7, property_id: 2 }, 'lease-7']],
+  ['showIncidentForm', [{ id: 9, property_id: 2, title: 'Fuite', status: 'resolu', urgency: 'urgente' }]]
 ];
 
 async function run() {
