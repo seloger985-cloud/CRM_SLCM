@@ -799,9 +799,9 @@ function showClientForm(client = null) {
       <div class="form-group">
         <label>Type:</label>
         <select id="client-type">
-          <option value="buyer" ${client && client.type === 'buyer' ? 'selected' : ''}>Acheteur</option>
-          <option value="seller" ${client && client.type === 'seller' ? 'selected' : ''}>Vendeur</option>
-          <option value="renter" ${client && client.type === 'renter' ? 'selected' : ''}>Locataire</option>
+          ${Object.keys(CLIENT_TYPE_FR).map(t =>
+            `<option value="${escAttr(t)}" ${client && client.type === t ? 'selected' : ''}>${escHtml(CLIENT_TYPE_FR[t])}</option>`
+          ).join('')}
         </select>
       </div>
       <div class="form-group">
@@ -2540,7 +2540,7 @@ const TABLE_COLS = {
      un paiement attendu. Sans `period`, « le loyer d'octobre » n'est pas
      exprimable ; sans `kind`, on ne distingue plus un loyer d'un
      encaissement de facture. */
-  payments:   'id,client_id,property_id,amount,status,payment_date,notes,created_at,lease_id,period,kind',
+  payments:   'id,client_id,property_id,amount,status,payment_date,notes,created_at,lease_id,period,kind,last_reminder_at',
   leases:     'id,property_id,tenant_id,landlord_id,start_date,duration_months,rent_amount,payment_day,caution_months,avance_months,commission_rate,status,notes,created_at',
   incidents:  'id,property_id,lease_id,reported_at,reported_by,title,description,urgency,status,cost,resolved_at,resolution,created_at',
   demands:    'id,client_id,label,rent_sale,wanted_types,wanted_districts,budget,budget_min,min_bedrooms,wants_furnished,active,notes,created_at'
@@ -2829,6 +2829,19 @@ async function editPayment(id) {
    d'affaires et l'écran Paiements les voient sans une ligne de code en plus.
    ═══════════════════════════════════════════════════════════════════ */
 
+/* Le vocabulaire des clients, en UN seul endroit.
+   `landlord` a été ajouté à la contrainte CHECK par sql/09 — mais pas au
+   formulaire, qui ne proposait toujours que trois types. Un propriétaire
+   bailleur devait donc être enregistré en « Vendeur », et toute lecture par
+   type mentait. Construire les <option> depuis cette table plutôt que de les
+   écrire à la main évite que le défaut se reproduise au prochain ajout. */
+const CLIENT_TYPE_FR = {
+  buyer:    'Acheteur',
+  seller:   'Vendeur',
+  renter:   'Locataire',
+  landlord: 'Propriétaire (bailleur)'
+};
+
 const LEASE_STATUS_FR = { active: 'En cours', ended: 'Terminé', suspended: 'Suspendu' };
 const INCIDENT_STATUS_FR = { ouvert: 'Ouvert', en_cours: 'En cours', resolu: 'Résolu' };
 const INCIDENT_URGENCY_FR = { basse: 'Basse', normale: 'Normale', urgente: 'Urgente' };
@@ -2858,6 +2871,58 @@ function firstOfMonth(annee, mois) {
 function addMonths(periode, n) {
   const p = String(periode).split('-');
   return firstOfMonth(Number(p[0]), Number(p[1]) - 1 + n);
+}
+
+/* Le DERNIER JOUR couvert par un bail.
+ *
+ * Ne pas confondre avec addMonths, qui travaille sur des PÉRIODES de loyer et
+ * rend toujours un 1er du mois. Réutiliser addMonths ici — ce que faisait la
+ * première version — jetait le jour du mois : un bail du 15 avril sur 12 mois
+ * affichait « 01/04/2027 » au lieu du 14 avril.
+ *
+ * La règle est celle du QUANTIÈME : le bail court jusqu'à la veille du jour
+ * anniversaire. Un bail de 12 mois commencé le 15 avril finit le 14 avril
+ * suivant — sans ce « moins un jour » il durerait douze mois et un.
+ *
+ * Et quand le jour anniversaire n'existe pas — le 31 février —, le bail court
+ * jusqu'au DERNIER JOUR du mois, sans retrancher. Un bail d'un mois commencé
+ * le 31 janvier finit donc le 28 février, pas le 27 : la veille d'un
+ * « 31 février » tombe après le 28, pas avant.
+ *
+ * Tout passe par Date.UTC : avec un Date local, un fuseau à l'ouest ferait
+ * reculer la date d'une journée. */
+function leaseEnd(startDate, months) {
+  const n = Number(months);
+  if (!startDate || !Number.isFinite(n) || n <= 0) return null;
+  const p = String(startDate).slice(0, 10).split('-');
+  const a = Number(p[0]), m = Number(p[1]) - 1, j = Number(p[2]);
+  if (!Number.isFinite(a) || !Number.isFinite(m) || !Number.isFinite(j)) return null;
+
+  const total = m + n;
+  const annee = a + Math.floor(total / 12);
+  const mois = ((total % 12) + 12) % 12;
+  /* Jour 0 du mois suivant = dernier jour du mois visé. */
+  const dernier = new Date(Date.UTC(annee, mois + 1, 0)).getUTCDate();
+
+  /* Le quantième n'existe pas dans le mois d'arrivée : on s'arrête à son
+     dernier jour, sans retirer de journée. */
+  if (j > dernier) {
+    return annee + '-' + String(mois + 1).padStart(2, '0') + '-' + String(dernier).padStart(2, '0');
+  }
+  const d = new Date(Date.UTC(annee, mois, j));
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/* Jours entiers entre deux dates, positif si `date` est dans le futur.
+   Comparaison faite à midi UTC : à minuit, un décalage d'heure d'été suffit à
+   changer le résultat d'une unité. */
+function daysUntil(date, today) {
+  if (!date) return null;
+  const j = (s) => Date.parse(String(s).slice(0, 10) + 'T12:00:00Z');
+  const a = j(date), b = j(today || new Date().toISOString().slice(0, 10));
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return Math.round((a - b) / 86400000);
 }
 
 /* L'état réel d'une échéance. 'late' n'est pas un statut en base : c'est
@@ -2894,12 +2959,12 @@ async function showLeases() {
   });
 
   const rows = leasesView.showAll ? leases : leases.filter(l => l.status === 'active');
-  const enRetardTotal = payments.filter(p => p.lease_id && rentState(p) === 'late').length;
+  /* Calcule a l'ouverture : rien ne tourne en arriere-plan dans ce CRM. */
+  const alertes = geranceAlerts(leases, payments);
 
   mainContent.innerHTML = `
     <h2>Gérance</h2>
-    ${enRetardTotal ? `<div class="alert-match"><strong>${enRetardTotal} loyer(s) en retard.</strong>
-       Ouvre le bail concerné pour relancer le locataire.</div>` : ''}
+    ${geranceAlertBanner(alertes)}
     <div class="toolbar">
       <button onclick="showLeaseForm()" class="btn btn-primary">Nouveau bail</button>
       <button onclick="toggleLeaseFilter()" class="ghost-btn">${leasesView.showAll ? 'Voir les baux en cours' : 'Voir tous les baux'}</button>
@@ -2964,9 +3029,11 @@ async function showLeaseDetail(id) {
     .filter(i => String(i.lease_id) === String(l.id))
     .sort((a, b) => String(b.reported_at || '').localeCompare(String(a.reported_at || '')));
 
-  const fin = l.duration_months
-    ? addMonths(String(l.start_date).slice(0, 7) + '-01', Number(l.duration_months))
-    : null;
+  /* leaseEnd, et surtout PAS addMonths : celle-ci travaille sur les périodes
+     de loyer et rend toujours un 1er du mois. C'est la confusion qui affichait
+     « 01/04/2027 » pour un bail commencé le 15 avril. */
+  const fin = leaseEnd(l.start_date, l.duration_months);
+  const joursAvantFin = fin ? daysUntil(fin) : null;
   const commission = Math.round(Number(l.rent_amount) * Number(l.commission_rate || 0) / 100);
 
   mainContent.innerHTML = `
@@ -2986,7 +3053,16 @@ async function showLeaseDetail(id) {
     <h3>Le bail</h3>
     <div class="list">
       <div class="list-item"><div>Début</div><div class="item-meta">${formatDate(l.start_date)}</div></div>
-      <div class="list-item"><div>Durée</div><div class="item-meta">${l.duration_months ? Number(l.duration_months) + ' mois — fin prévue le ' + formatDate(fin) : 'Durée indéterminée'}</div></div>
+      <div class="list-item"><div>Durée</div><div class="item-meta">${l.duration_months
+        ? Number(l.duration_months) + ' mois — dernier jour couvert : ' + formatDate(fin)
+          + (l.status === 'active' && joursAvantFin !== null
+              ? (joursAvantFin < 0
+                  ? ' <strong>(échu depuis ' + Math.abs(joursAvantFin) + ' jour(s))</strong>'
+                  : joursAvantFin <= RENEWAL_NOTICE_DAYS
+                    ? ' <strong>(dans ' + joursAvantFin + ' jour(s))</strong>'
+                    : '')
+              : '')
+        : 'Durée indéterminée'}</div></div>
       <div class="list-item"><div>Caution</div><div class="item-meta">${Number(l.caution_months || 0)} mois (${formatMoney(Number(l.rent_amount) * Number(l.caution_months || 0))} FCFA)</div></div>
       <div class="list-item"><div>Avance</div><div class="item-meta">${Number(l.avance_months || 0)} mois (${formatMoney(Number(l.rent_amount) * Number(l.avance_months || 0))} FCFA)</div></div>
       ${l.notes ? `<div class="list-item"><div>Notes</div><div class="item-meta">${escHtml(l.notes)}</div></div>` : ''}
@@ -3128,6 +3204,21 @@ async function relanceRent(paymentId, leaseId) {
     + ' (' + formatMoney(p.amount) + ' FCFA) était dû le ' + formatDate(p.payment_date) + '. '
     + 'Merci de régulariser dès que possible. SE LOGER CM.';
   sendWhatsApp(loc.phone, message);
+
+  /* On note la date AVANT de savoir si le message est parti : WhatsApp s'ouvre
+     ailleurs et ne nous dit rien. Entre redemander une relance demain et la
+     redemander dans sept jours, la seconde erreur est la moins genante — un
+     locataire relance deux fois par semaine se braque.
+
+     Un echec d'ecriture n'est pas bloquant : le message, lui, est parti. */
+  supabaseClient
+    .from('payments')
+    .update({ last_reminder_at: new Date().toISOString().slice(0, 10) })
+    .eq('id', paymentId)
+    .then(({ error }) => {
+      if (error) console.error('[gerance] trace de relance:', error);
+      else showLeaseDetail(leaseId);
+    });
 }
 
 async function endLease(id) {
@@ -3942,4 +4033,97 @@ function toggleUnits() {
   const b = document.getElementById('units-toggle');
   if (b) b.textContent = (propsView.showUnits ? 'Masquer' : 'Afficher') + ' les logements';
   renderPropsList();
+}
+
+/* ═══════════════ RAPPELS DE GÉRANCE ═══════════════
+
+   Trois cadences, demandées le 20/10/2026 :
+     · échéance de loyer à venir  → prévenir 5 jours avant
+     · fin de bail / renouvellement → prévenir 5 jours avant
+     · loyer en retard            → relancer tous les 7 jours
+
+   CE QUE CE N'EST PAS : des notifications poussées. Le CRM est un site
+   statique, rien n'y tourne en arrière-plan — pas de tâche planifiée, pas de
+   service worker. Ces alertes sont CALCULÉES à l'ouverture de l'écran. Tant
+   que le CRM n'est pas ouvert, rien ne part. Le jour où un envoi automatique
+   sera voulu, il faudra une fonction Edge déclenchée par un cron Supabase,
+   et c'est un autre chantier.
+
+   La cadence de 7 jours est RÉELLE et non cosmétique : elle s'appuie sur
+   `payments.last_reminder_at`, posée à chaque relance envoyée (sql/11). Sans
+   cette colonne on ne saurait que compter les jours depuis l'échéance, ce qui
+   redemanderait une relance à chaque ouverture. */
+
+const RENEWAL_NOTICE_DAYS = 5;
+const RELANCE_EVERY_DAYS = 7;
+
+/* Fonction PURE : elle reçoit la date du jour plutôt que de la lire, pour
+   être vérifiable sans attendre le calendrier. */
+function geranceAlerts(leases, payments, today) {
+  const auj = today || new Date().toISOString().slice(0, 10);
+  const baux = leases || [];
+  const lignes = payments || [];
+
+  /* ── Fins de bail ── */
+  const renouvellements = [];
+  baux.forEach(l => {
+    if (l.status !== 'active' || !l.duration_months) return;
+    const fin = leaseEnd(l.start_date, l.duration_months);
+    const jours = daysUntil(fin, auj);
+    if (jours === null || jours > RENEWAL_NOTICE_DAYS) return;
+    renouvellements.push({ lease: l, fin: fin, jours: jours });
+  });
+  /* Le plus urgent d'abord : un bail déjà échu passe avant un bail qui finit
+     dans cinq jours. */
+  renouvellements.sort((a, b) => a.jours - b.jours);
+
+  /* ── Loyers ── */
+  const relances = [];
+  const echeances = [];
+  lignes.forEach(p => {
+    if (!p.lease_id || p.status === 'paid') return;
+    const jours = daysUntil(p.payment_date, auj);
+    if (jours === null) return;
+
+    if (jours < 0) {
+      /* En retard. Relançable si on n'a jamais relancé, ou si la dernière
+         relance remonte à au moins sept jours. */
+      const depuis = p.last_reminder_at ? -daysUntil(p.last_reminder_at, auj) : null;
+      if (depuis === null || depuis >= RELANCE_EVERY_DAYS) {
+        relances.push({ payment: p, retard: -jours, depuis: depuis });
+      }
+    } else if (jours <= RENEWAL_NOTICE_DAYS) {
+      echeances.push({ payment: p, jours: jours });
+    }
+  });
+  relances.sort((a, b) => b.retard - a.retard);
+  echeances.sort((a, b) => a.jours - b.jours);
+
+  return { renouvellements: renouvellements, relances: relances, echeances: echeances };
+}
+
+/* Le bandeau, rendu en tête de l'écran Gérance. Rien si tout est calme :
+   une alerte toujours présente cesse d'être lue. */
+function geranceAlertBanner(alertes) {
+  const r = alertes.renouvellements, rel = alertes.relances, ech = alertes.echeances;
+  if (!r.length && !rel.length && !ech.length) return '';
+
+  const bloc = [];
+
+  if (rel.length) {
+    bloc.push(`<p><strong>${rel.length} loyer(s) à relancer</strong>
+      — jamais relancés, ou relancés il y a plus de ${RELANCE_EVERY_DAYS} jours.</p>`);
+  }
+  if (r.length) {
+    const echus = r.filter(x => x.jours < 0).length;
+    bloc.push(`<p><strong>${r.length} bail/baux à renouveler</strong>
+      ${echus ? '— dont ' + echus + ' déjà échu(s)' : '— sous ' + RENEWAL_NOTICE_DAYS + ' jours'}.</p>`);
+  }
+  if (ech.length) {
+    bloc.push(`<p>${ech.length} échéance(s) de loyer dans les ${RENEWAL_NOTICE_DAYS} jours.</p>`);
+  }
+
+  return `<div class="alert-match">${bloc.join('')}
+    <p class="item-meta">Calculé à l'ouverture de cet écran : rien ne part tout seul.</p>
+  </div>`;
 }
