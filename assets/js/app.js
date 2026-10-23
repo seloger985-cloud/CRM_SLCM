@@ -214,6 +214,54 @@ function normalizePhone(phone) {
   return d;
 }
 
+/* ═══════════════ CONFRÈRES (sql/12) ═══════════════
+
+   Un prospect appelle pour « le T-014 ». Le code ouvre la fiche, la fiche
+   nomme le confrère qui détient le bien. Rien de tout cela ne sort sur un
+   visuel : seul le code y figure. */
+
+/* Le numéro auquel écrire à un confrère : son WhatsApp s'il en a donné un
+   distinct, sinon son téléphone. */
+function confrereWa(c) {
+  return normalizePhone((c && (c.whatsapp || c.phone)) || '');
+}
+
+/* Les numéros contenus dans un texte libre (« Paul 6 99 12 45 78 »). */
+const PHONE_IN_TEXT = /\+?\d[\d\s.-]{7,}\d/g;
+
+/* Le confrère que désigne un contact extrait d'un message. Par le NUMÉRO
+   seulement : deux confrères portent volontiers le même prénom, jamais le
+   même numéro. null si aucun ne correspond. */
+function findConfrere(contact, confreres) {
+  const voulus = (String(contact || '').match(PHONE_IN_TEXT) || []).map(normalizePhone).filter(Boolean);
+  if (!voulus.length) return null;
+  return (confreres || []).find(c =>
+    [c.phone, c.whatsapp].map(normalizePhone).some(n => n && voulus.indexOf(n) !== -1)
+  ) || null;
+}
+
+/* Ce que le contact dit du nom, une fois les numéros retirés. */
+function contactName(contact) {
+  return String(contact || '').replace(PHONE_IN_TEXT, ' ')
+    .replace(/\s+/g, ' ').replace(/^[\s,;:/-]+|[\s,;:/-]+$/g, '').trim();
+}
+
+/* Le message au confrère, dans SES mots : sa référence s'il en a donné une,
+   sinon le titre et le lieu. */
+function confrereMessage(p, c) {
+  const quoi = p.confrere_ref ? `votre bien réf. ${p.confrere_ref}` : `votre bien « ${p.title || 'sans titre'} »`;
+  const lieu = p.district || p.address || '';
+  return `Bonjour ${(c && c.name) || ''}, j'ai un client intéressé par ${quoi}${lieu ? ' (' + lieu + ')' : ''}. Est-il toujours disponible ?`;
+}
+
+/* Le code tel qu'on le tape vite : « T-014 », « t14 » et « 14 » désignent
+   le même bien — le numéro est unique sur tout le portefeuille. */
+function codeKeys(code) {
+  if (!code) return '';
+  const c = String(code).toLowerCase();
+  return c + ' ' + c.replace(/-0*/, '') + ' ' + c.replace(/^[a-z]-0*/, '');
+}
+
 /* CORRECTIF 16/08/2026 — le paramètre `phone` était reçu puis ignoré :
    l'URL était construite avec WHATSAPP_BUSINESS_NUMBER, donc toutes les
    relances s'ouvraient sur une conversation avec soi-même. */
@@ -903,7 +951,7 @@ function toggleClientSourceDetail() {
 
 /* État de la vue Propriétés : conservé entre les rendus pour que la
    recherche n'oblige pas à re-télécharger les données à chaque frappe. */
-const propsView = { crm: [], site: [], q: '', src: 'all', loaded: false, showUnits: false };
+const propsView = { crm: [], site: [], confreres: [], q: '', src: 'all', loaded: false, showUnits: false };
 
 /* Vocabulaire des types de biens, UNIQUE pour les trois endroits où il sert :
    les annonces du site (listings.type, hors de notre main), les fiches biens
@@ -965,19 +1013,21 @@ async function showProperties(force) {
   UI.showLoading();
 
   if (!propsView.loaded || force) {
-    const [crm, site] = await Promise.all([
+    const [crm, site, confreres] = await Promise.all([
       getAll('properties'),
-      (window.SLCM_SITE && window.SLCM_SITE.fetchListings) ? window.SLCM_SITE.fetchListings() : Promise.resolve([])
+      (window.SLCM_SITE && window.SLCM_SITE.fetchListings) ? window.SLCM_SITE.fetchListings() : Promise.resolve([]),
+      getAll('confreres')
     ]);
     propsView.crm = crm;
     propsView.site = site;
+    propsView.confreres = confreres;
     propsView.loaded = true;
   }
 
   mainContent.innerHTML = `
     <h2>Propriétés</h2>
     <div class="toolbar">
-      <input type="search" id="prop-search" class="search-input" placeholder="Rechercher : titre, quartier, prix, référence…" value="${escAttr(propsView.q)}">
+      <input type="search" id="prop-search" class="search-input" placeholder="Rechercher : code (T-014), titre, quartier, confrère, référence…" value="${escAttr(propsView.q)}">
       <select id="prop-source" class="search-select">
         <option value="all"  ${propsView.src === 'all'  ? 'selected' : ''}>Toutes les sources</option>
         <option value="site" ${propsView.src === 'site' ? 'selected' : ''}>selogercm.com</option>
@@ -985,6 +1035,7 @@ async function showProperties(force) {
       </select>
       <button onclick="showPropertyForm()" class="btn btn-primary">Ajouter</button>
       <button onclick="showInbox()" class="ghost-btn" title="Coller un message reçu d'un confrère">Depuis un message</button>
+      <button onclick="showConfreres()" class="ghost-btn" title="Le répertoire des confrères">Confrères</button>
       <button onclick="toggleUnits()" class="ghost-btn" id="units-toggle" title="Les logements d'un immeuble sont masqués par défaut">${propsView.showUnits ? 'Masquer' : 'Afficher'} les logements</button>
       <button onclick="exportCSV('properties')" class="ghost-btn" title="Exporter en CSV">Export CSV</button>
       <button onclick="showProperties(true)" class="ghost-btn" title="Recharger depuis selogercm.com">↻</button>
@@ -1065,10 +1116,13 @@ function mergeProperties() {
      `listing_id`, jamais les photos. Sa vignette vient donc de l'annonce —
      qui reste dans propsView.site même quand on la retire de l'affichage. */
   const parId = new Map(propsView.site.map(l => [String(l.id), l]));
+  const confParId = new Map((propsView.confreres || []).map(c => [c.id, c]));
   const crm = propsView.crm.map(p => Object.assign({}, p, {
     _src: p.listing_id ? 'site' : 'crm',
     _linked: !!p.listing_id,
     _cover: p.listing_id ? coverOf(parId.get(String(p.listing_id))) : null,
+    _confrere: p.confrere_id ? confParId.get(p.confrere_id) || null : null,
+    _ref: p.listing_id ? ((parId.get(String(p.listing_id)) || {}).ref || '') : '',
     /* Un logement d'immeuble. Masque par defaut dans la liste generale : un
        immeuble de douze appartements y noierait tout le reste du
        portefeuille, et on le consulte depuis sa fiche d'immeuble. */
@@ -1077,7 +1131,7 @@ function mergeProperties() {
   const site = propsView.site
     .filter(l => !linked.has(l.id))
     .map(l => ({
-      id: null, _siteId: l.id, _slug: l.slug, _src: 'site', _linked: false,
+      id: null, _siteId: l.id, _slug: l.slug, _ref: l.ref || '', _src: 'site', _linked: false,
       title: l.title, address: [l.district, l.city].filter(Boolean).join(', '),
       price: l.price, status: l.status, type: l.type, created_at: l.created_at,
       _cover: coverOf(l)
@@ -1093,7 +1147,9 @@ function renderPropsList() {
   if (q) {
     const terms = q.split(/\s+/);
     rows = rows.filter(r => {
-      const hay = [r.title, r.address, r.type, r.status, r.price, r._slug].join(' ').toLowerCase();
+      const c = r._confrere;
+      const hay = [r.title, r.address, r.type, r.status, r.price, r._slug, r._ref,
+                   codeKeys(r.code), r.confrere_ref, c && c.name, c && c.agency].join(' ').toLowerCase();
       return terms.every(t => hay.indexOf(t) !== -1);
     });
   }
@@ -1130,12 +1186,22 @@ function renderPropsList() {
       ? `<button onclick="addActivityFor('property', ${Number(p.id)})" class="edit-btn" title="Noter une activité sur ce bien">${ICON_ACTIVITY}</button>`
         + `<button onclick="editProperty(${Number(p.id)})" class="edit-btn" title="Modifier la fiche">${ICON_EDIT}</button>`
       : `<button onclick="importListing('${escAttr(p._siteId)}')" class="edit-btn" title="Créer une fiche CRM pour ce bien">+ Fiche</button>`;
+    /* Le code public en tête : c'est ce que cite le prospect au téléphone. */
+    const code = p.code ? `<span class="src-badge" title="Code public, imprimé sur les visuels">${escHtml(p.code)}</span> ` : '';
+    const c = p._confrere;
+    const origine = c
+      ? `<div class="item-meta">Via ${escHtml(c.name)}${c.agency ? ' (' + escHtml(c.agency) + ')' : ''}${p.confrere_ref ? ' · sa réf. ' + escHtml(p.confrere_ref) : ''}${p.commission ? ' · ' + escHtml(p.commission) : ''}</div>`
+      : '';
+    const ecrire = (c && confrereWa(c) && p.id)
+      ? `<button onclick="contactConfrere(${Number(p.id)})" class="ghost-btn" title="Écrire au confrère sur WhatsApp">Confrère</button>`
+      : '';
     return `<div class="list-item">
       ${thumbHtml(p._cover, p.id || p._siteId || p.title, p.type)}
-      <div><strong>${escHtml(p.title || 'Sans titre')}</strong> ${badge}</div>
-      <div class="item-meta">${escHtml(p.address || '')} — ${price}</div>
+      <div>${code}<strong>${escHtml(p.title || 'Sans titre')}</strong> ${badge}</div>
+      <div class="item-meta">${escHtml(p.address || '')} — ${price}${p._ref ? ' · ' + escHtml(p._ref) : ''}</div>
+      ${origine}
       <div class="item-meta">${formatDate(p.created_at)}</div>
-      <div>${link}${share}${action}</div>
+      <div>${link}${share}${ecrire}${action}</div>
     </div>`;
   }).join('');
 }
@@ -1751,6 +1817,10 @@ async function analyzeInbox() {
       address: bien.address, district: bien.district,
       rent_sale: bien.rent_sale, bedrooms: bien.bedrooms,
       furnished: bien.furnished, description,
+      /* Le contact sert à retrouver ou créer le confrère (sql/12). Il reste
+         aussi dans la description : si l'agent choisit « en direct », il
+         n'est pas perdu pour autant. */
+      _contact: bien.contact || null,
       _manquant: bien.manquant || []
     }, 'inbox');
   } catch (e) {
@@ -2057,6 +2127,37 @@ function showPropertyForm(property = null, draft = null, back = null) {
         </select>
       </div>
       <fieldset class="demand-block">
+        <legend>Origine du bien <span class="item-meta">— jamais imprimée sur un visuel</span></legend>
+        <p class="item-meta">${v.code
+          ? 'Code public : <strong>' + escHtml(v.code) + '</strong> — c&#39;est lui que cite le prospect.'
+          : 'Le code public (T-014…) est attribué à l&#39;enregistrement.'}</p>
+        <div class="form-group">
+          <label>Confrère:</label>
+          <select id="property-confrere">
+            <option value="">En direct (pas de confrère)</option>
+            <option value="__new">+ Nouveau confrère…</option>
+          </select>
+        </div>
+        <div id="confrere-new" style="display:none">
+          <div class="form-group">
+            <label>Nom du confrère:</label>
+            <input type="text" id="confrere-new-name" autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label>Téléphone / WhatsApp:</label>
+            <input type="tel" id="confrere-new-phone" autocomplete="off">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Sa référence:</label>
+          <input type="text" id="property-confrere-ref" value="${escAttr(v.confrere_ref || '')}" placeholder="La référence du confrère pour ce bien">
+        </div>
+        <div class="form-group">
+          <label>Commission convenue:</label>
+          <input type="text" id="property-commission" value="${escAttr(v.commission || '')}" placeholder="50/50, 5 % acheteur…">
+        </div>
+      </fieldset>
+      <fieldset class="demand-block">
         <legend>Pour le rapprochement <span class="item-meta">— sans transaction, ce bien n'est proposé à personne</span></legend>
         <div class="form-group">
           <label>Transaction:</label>
@@ -2092,11 +2193,155 @@ function showPropertyForm(property = null, draft = null, back = null) {
      « Bonaprisso » une fois suffit à rendre un bien introuvable. */
   wireSuggestions('property-address', 'properties', 'address', DEMAND_DISTRICTS);
   wireSuggestions('property-district', 'properties', 'district', DEMAND_DISTRICTS);
+  fillConfrereSelect(v);
 
   document.getElementById('property-form').addEventListener('submit', (e) => {
     e.preventDefault();
     saveProperty(editing ? property.id : null);
   });
+}
+
+/* Remplit la liste des confrères, puis choisit le bon :
+   - en modification, celui de la fiche ;
+   - depuis un message (draft._contact), celui dont le NUMÉRO figure dans le
+     contact extrait ; à défaut, « Nouveau confrère » pré-rempli avec le nom
+     et le numéro lus dans le message. Le contact ne se perd plus en prose. */
+async function fillConfrereSelect(v) {
+  const sel = document.getElementById('property-confrere');
+  if (!sel) return;
+  const bloc = document.getElementById('confrere-new');
+  const basculer = () => { bloc.style.display = sel.value === '__new' ? '' : 'none'; };
+  sel.addEventListener('change', basculer);
+
+  const tous = await getAll('confreres');
+  if (!sel.isConnected) return;
+  propsView.confreres = tous;
+  const nouveau = sel.querySelector('option[value="__new"]');
+  tous.filter(c => c.active !== false || c.id === v.confrere_id).forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.id;
+    o.textContent = c.name + (c.agency ? ' — ' + c.agency : '') + (c.phone ? ' · ' + c.phone : '');
+    sel.insertBefore(o, nouveau);
+  });
+
+  if (v.confrere_id) {
+    sel.value = String(v.confrere_id);
+  } else if (v._contact) {
+    const connu = findConfrere(v._contact, tous);
+    if (connu) {
+      sel.value = String(connu.id);
+    } else {
+      sel.value = '__new';
+      document.getElementById('confrere-new-name').value = contactName(v._contact);
+      const num = (String(v._contact).match(PHONE_IN_TEXT) || [])[0];
+      if (num) document.getElementById('confrere-new-phone').value = num.trim();
+    }
+  }
+  basculer();
+}
+
+/* Le confrère choisi dans le formulaire, créé s'il est nouveau. Renvoie son
+   id, null pour un bien en direct, ou undefined si la saisie est incomplète
+   (le message a déjà été affiché). Un « nouveau » confrère dont le numéro
+   est déjà connu n'est pas recréé : c'est le même, on le reprend. */
+async function resolveConfrere() {
+  const choix = document.getElementById('property-confrere').value;
+  if (!choix) return null;
+  if (choix !== '__new') return Number(choix);
+
+  const name = document.getElementById('confrere-new-name').value.trim();
+  const phone = document.getElementById('confrere-new-phone').value.trim();
+  if (!name) { UI.toast('Indiquez au moins le nom du confrère.', 'error'); return undefined; }
+
+  const deja = phone ? findConfrere(phone, await getAll('confreres')) : null;
+  if (deja) return deja.id;
+
+  const { data, error } = await supabaseClient.from('confreres')
+    .insert([{ name, phone: phone || null }]).select();
+  if (error) { UI.handleError(error); return undefined; }
+  return data[0].id;
+}
+
+/* Écrire au confrère qui détient ce bien, message déjà rédigé. */
+function contactConfrere(propertyId) {
+  const p = propsView.crm.find(x => x.id === propertyId);
+  const c = p && (propsView.confreres || []).find(x => x.id === p.confrere_id);
+  if (!p || !c || !confrereWa(c)) { UI.toast('Aucun numéro pour ce confrère.', 'error'); return; }
+  sendWhatsApp(confrereWa(c), confrereMessage(p, c));
+}
+
+/* ═══════════════ RÉPERTOIRE DES CONFRÈRES ═══════════════
+   Pas de suppression, comme partout dans le CRM : un confrère dont on ne
+   veut plus passe « inactif » et disparaît des listes de choix, ses biens
+   gardent leur origine. */
+async function showConfreres() {
+  UI.showLoading();
+  const [tous, biens] = await Promise.all([getAll('confreres'), getAll('properties')]);
+  const parConfrere = {};
+  biens.forEach(b => { if (b.confrere_id) parConfrere[b.confrere_id] = (parConfrere[b.confrere_id] || 0) + 1; });
+
+  mainContent.innerHTML = `
+    <h2>Confrères</h2>
+    <div class="toolbar">
+      <button onclick="showConfrereForm()" class="btn btn-primary">Ajouter</button>
+      <button onclick="showProperties()" class="ghost-btn">← Biens</button>
+    </div>
+    <div class="list">
+      ${tous.length ? tous.map(c => `<div class="list-item">
+        <div><strong>${escHtml(c.name)}</strong>${c.agency ? ' — ' + escHtml(c.agency) : ''}${c.active === false ? ' <span class="item-meta">(inactif)</span>' : ''}</div>
+        <div class="item-meta">${escHtml(c.phone || 'Pas de numéro')}${c.zones ? ' · ' + escHtml(c.zones) : ''} · ${parConfrere[c.id] || 0} bien(s)</div>
+        ${c.notes ? `<div class="item-meta">${escHtml(c.notes)}</div>` : ''}
+        <div><button onclick="editConfrere(${Number(c.id)})" class="edit-btn" title="Modifier">${ICON_EDIT}</button></div>
+      </div>`).join('') : '<p>Aucun confrère pour le moment. Ils se créent aussi depuis la fiche d&#39;un bien.</p>'}
+    </div>`;
+}
+
+async function editConfrere(id) {
+  const c = await getById('confreres', id);
+  if (!c) { UI.toast('Confrère introuvable', 'error'); return; }
+  showConfrereForm(c);
+}
+
+function showConfrereForm(c = null) {
+  const v = c || {};
+  mainContent.innerHTML = `
+    <h2>${c ? 'Modifier' : 'Ajouter'} un confrère</h2>
+    <form id="confrere-form">
+      <div class="form-group"><label>Nom:</label>
+        <input type="text" id="confrere-name" value="${escAttr(v.name || '')}" required></div>
+      <div class="form-group"><label>Agence:</label>
+        <input type="text" id="confrere-agency" value="${escAttr(v.agency || '')}"></div>
+      <div class="form-group"><label>Téléphone:</label>
+        <input type="tel" id="confrere-phone" value="${escAttr(v.phone || '')}"></div>
+      <div class="form-group"><label>WhatsApp (si différent):</label>
+        <input type="tel" id="confrere-whatsapp" value="${escAttr(v.whatsapp || '')}"></div>
+      <div class="form-group"><label>Zones:</label>
+        <input type="text" id="confrere-zones" value="${escAttr(v.zones || '')}" placeholder="Logpom, Kotto, PK14…"></div>
+      <div class="form-group"><label>Notes:</label>
+        <textarea id="confrere-notes" placeholder="Conditions habituelles, fiabilité…">${escHtml(v.notes || '')}</textarea></div>
+      <div class="form-group"><label><input type="checkbox" id="confrere-active" ${v.active === false ? '' : 'checked'}> Actif</label></div>
+      <button type="submit" class="btn btn-primary">${c ? 'Enregistrer' : 'Ajouter'}</button>
+      <button type="button" onclick="showConfreres()" class="btn btn-outline">Annuler</button>
+    </form>`;
+  document.getElementById('confrere-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveConfrere(c ? c.id : null);
+  });
+}
+
+async function saveConfrere(id) {
+  const val = k => document.getElementById('confrere-' + k).value.trim() || null;
+  const confrere = {
+    name: val('name'), agency: val('agency'), phone: val('phone'),
+    whatsapp: val('whatsapp'), zones: val('zones'), notes: val('notes'),
+    active: document.getElementById('confrere-active').checked
+  };
+  const { error } = id
+    ? await supabaseClient.from('confreres').update(confrere).eq('id', id)
+    : await supabaseClient.from('confreres').insert([confrere]);
+  if (error) { UI.handleError(error); return; }
+  propsView.loaded = false;
+  showConfreres();
 }
 
 async function saveProperty(id) {
@@ -2119,6 +2364,14 @@ async function saveProperty(id) {
   };
 
   try {
+    /* L'origine du bien (sql/12). Résolue avant l'écriture : un nouveau
+       confrère doit exister pour qu'on puisse y pointer. */
+    const confrereId = await resolveConfrere();
+    if (confrereId === undefined) return;
+    property.confrere_id = confrereId;
+    property.confrere_ref = document.getElementById('property-confrere-ref').value.trim() || null;
+    property.commission = document.getElementById('property-commission').value.trim() || null;
+
     const { data, error } = id
       ? await supabaseClient.from('properties').update(property).eq('id', id).select()
       : await supabaseClient.from('properties').insert([property]).select();
@@ -2126,7 +2379,9 @@ async function saveProperty(id) {
 
     rememberChoice('property-type', property.type);
     rememberChoice('property-status', property.status);
+    propsView.loaded = false;   /* le code public vient d'être attribué par la base */
     showProperties();
+    if (data && data[0] && data[0].code && !id) UI.toast('Bien enregistré — code public ' + data[0].code, 'success');
 
     /* Une fiche interne peut désormais trouver preneur : on le dit tout de
        suite. Les fiches rattachées à une annonce sont déjà couvertes par
@@ -2527,7 +2782,9 @@ const TABLE_COLS = {
      sql/10 : `properties` etait plat, un immeuble et ses appartements y
      etaient des lignes sans lien, et le proprietaire n'existait que sur
      le bail — donc un logement vacant n'en avait pas. */
-  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at,district,rent_sale,bedrooms,furnished,parent_id,landlord_id,floor,unit_label,bathrooms',
+  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at,district,rent_sale,bedrooms,furnished,parent_id,landlord_id,floor,unit_label,bathrooms,code,confrere_id,confrere_ref,commission',
+  /* sql/12 : le confrère qui détient un bien, et le code court public. */
+  confreres:  'id,name,agency,phone,whatsapp,zones,notes,active,created_at',
   activities: 'id,type,client_id,property_id,notes,date,created_at,outcome,next_step,next_date,next_done_at',
   tasks:      'id,title,description,due_date,status,created_at',
   /* CORRECTIF 31/08/2026 — `accompte` et `reste` étaient demandés ici alors

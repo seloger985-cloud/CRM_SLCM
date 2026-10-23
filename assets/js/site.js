@@ -42,7 +42,9 @@
      PIEGE : demander une colonne inexistante fait echouer TOUTE la lecture
      (PostgREST 42703, sans erreur visible). Ne rien ajouter ici sans avoir
      verifie que la colonne existe. */
-  const COLS = 'id,slug,title,price,district,city,type,rent_sale,bedrooms,status,furnished,created_at,images,video_url,reel_url,repere';
+  /* `ref` (SL26-DLA-…) ajoutee le 23/10/2026, verifiee en direct (200) :
+     c'est la reference que cite un prospect venu du site. */
+  const COLS = 'id,slug,ref,title,price,district,city,type,rent_sale,bedrooms,status,furnished,created_at,images,video_url,reel_url,repere';
 
   const CACHE_MS = 5 * 60 * 1000;
   let _cache = null;
