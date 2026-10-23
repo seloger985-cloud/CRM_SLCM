@@ -55,7 +55,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.49.0';
    code qui n'etait pas deploye. Les journaux montraient un demarrage sain, la
    trace d'erreur pointait toujours la meme ligne, et rien ne permettait de
    dire quelle version tournait. Une ligne de journal aurait suffi. */
-const VERSION = '2026-09-03-e';
+const VERSION = '2026-10-23-a';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -117,6 +117,14 @@ const OUTIL = {
       address: { type: ['string', 'null'], description: 'Localisation telle que donnée.' },
       district: { type: ['string', 'null'], description: 'Le quartier seul, sans la ville.' },
       bedrooms: { type: ['integer', 'null'], description: 'Nombre de chambres.' },
+      surface_m2: {
+        type: ['integer', 'null'],
+        description: "Surface en m², entier. Surtout pour un terrain : « 591 m² » vaut 591. « 1 ha » vaut 10000."
+      },
+      price_m2: {
+        type: ['integer', 'null'],
+        description: "Prix AU MÈTRE CARRÉ en FCFA, si le message l'annonce ainsi : « 140 mille le m² » vaut 140000."
+      },
       furnished: { type: ['boolean', 'null'], description: 'true seulement si le message dit meublé.' },
       description: { type: ['string', 'null'], description: 'Le reste : état, atouts, conditions.' },
       contact: { type: ['string', 'null'], description: 'Numéro ou nom du confrère, si présent.' },
@@ -127,7 +135,7 @@ const OUTIL = {
     },
     required: [
       'title', 'type', 'rent_sale', 'price', 'address', 'district',
-      'bedrooms', 'furnished', 'description', 'contact', 'manquant'
+      'bedrooms', 'surface_m2', 'price_m2', 'furnished', 'description', 'contact', 'manquant'
     ],
     additionalProperties: false
   }
@@ -145,7 +153,11 @@ Règles, dans l'ordre :
 
 4. Si le message ne décrit aucun bien — une salutation, une question, une annonce d'autre nature — n'appelle pas l'outil. Réponds en une phrase disant ce que le message contient.
 
-5. Le titre doit se lire seul dans une liste. Type, nombre de chambres et quartier suffisent.`;
+5. Le titre doit se lire seul dans une liste. Type, nombre de chambres et quartier suffisent. Pour un terrain : surface et quartier (« Terrain 591 m², Logpom »).
+
+6. Un terrain se vend souvent AU MÈTRE CARRÉ. « 140 mille le m² » va dans price_m2, pas dans price. Ne calcule jamais de total toi-même : si seul le prix au m² est donné, laisse price à null — le total est calculé ensuite. Si le message donne à la fois un total et un prix au m², remplis les deux.
+
+7. contact : le numéro du confrère qui partage l'offre, avec son nom s'il apparaît (« Paul 699 12 45 78 »). Ce n'est jamais le propriétaire.`;
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
@@ -305,11 +317,21 @@ Deno.serve(async (req) => {
       address: texteOuNull(brut.address),
       district: texteOuNull(brut.district),
       bedrooms: entier(brut.bedrooms),
+      surface_m2: entier(brut.surface_m2) || null,
+      price_m2: entier(brut.price_m2) || null,
       furnished: brut.furnished === true ? true : null,
       description: texteOuNull(brut.description),
       contact: texteOuNull(brut.contact),
       manquant: Array.isArray(brut.manquant) ? brut.manquant.map(String) : []
     };
+
+    /* Le total d'un terrain vendu au m² : calculé ICI, jamais par le modèle
+       (l'arithmétique se fait en code). Seulement si le message n'en donnait
+       pas déjà un — un total annoncé fait foi, il peut inclure un geste. */
+    if (bien.price === null && bien.surface_m2 && bien.price_m2) {
+      bien.price = bien.surface_m2 * bien.price_m2;
+      bien.manquant = bien.manquant.filter(m => m !== 'price');
+    }
 
     /* Sans transaction, le bien ne serait proposé à personne : autant le
        dire ici plutôt que de laisser l'agent le découvrir après coup. */

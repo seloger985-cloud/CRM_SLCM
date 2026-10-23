@@ -94,8 +94,11 @@
   .brand-name span{color:var(--orange)}
   .tagline{font-size:19px;color:#4a4f56;font-weight:400;margin-top:8px}
 
+  /* Largeur selon le contenu : le badge porte désormais le code public du
+     bien (T-014), plus un numéro d'un chiffre. Carré tant qu'il tient. */
   .badge{
-    margin-top:38px;width:96px;height:96px;border-radius:20px;background:var(--ink);color:#fff;
+    margin-top:38px;min-width:96px;width:max-content;padding:0 22px;height:96px;border-radius:20px;
+    background:var(--ink);color:#fff;white-space:nowrap;
     display:flex;align-items:center;justify-content:center;font-size:56px;font-weight:700
   }
 
@@ -156,7 +159,11 @@
 <div class="panel">
   <h1>Visuel terrain — SE LOGER CM</h1>
   <div class="grid">
-    <label>Numéro<input id="f-num" value="4"></label>
+    <!-- Le visuel part de la fiche : le code public du bien remplace le
+         numéro tapé à la main, qui n'était relié à rien. C'est lui que le
+         prospect cite, et le CRM qui le rattache au confrère. -->
+    <label class="wide">Bien du CRM<select id="f-bien"><option value="">— Choisir une fiche (ou saisir à la main) —</option></select></label>
+    <label>Code<input id="f-num" value="4"></label>
     <label>Statut<select id="f-statut"><option>À VENDRE</option><option>À LOUER</option></select></label>
     <label>Superficie<input id="f-sup" value="591"></label>
     <label>Unité<input id="f-unit" value="m²"></label>
@@ -173,9 +180,11 @@
          du CRM, et le seul recours serait le bouton « precedent ». -->
     <button class="btn ghost" type="button" onclick="window.location.href='index.html'">← Retour CRM</button>
     <button class="btn" id="dl">Télécharger le PNG</button>
+    <button class="btn" id="publier" disabled title="Choisis d'abord une fiche du CRM">Publier sur le site</button>
     <button class="btn ghost" id="zoomout">−</button>
     <button class="btn ghost" id="zoomin">+</button>
   </div>
+  <p class="hint" id="pub-etat"></p>
   <p class="hint">Charge la photo, ajuste les champs, puis télécharge. Le PNG sort en 1350 × 1150 px (format carré-ish, bon pour WhatsApp Status, Facebook et Instagram feed).</p>
 </div>
 
@@ -281,6 +290,50 @@
     inp.addEventListener('input',sync); inp.addEventListener('change',sync);
   });
 
+  /* ── Remplissage depuis une fiche du CRM ──
+     « 140 000 » s'écrit « 140 mille » sur les visuels, « 82 740 000 »
+     « 82,74 millions » : c'est ainsi qu'on dit un prix ici. */
+  function prixParle(n){
+    n=Number(n); if(!(n>0)) return '';
+    if(n>=1e6){ const m=Math.round(n/1e4)/100; return String(m).replace('.',',')+(m>=2?' millions':' million'); }
+    if(n>=1e3 && n%1e3===0) return (n/1e3)+' mille';
+    return n.toLocaleString('fr-FR');
+  }
+  const champ=(id,val)=>{ const el=document.getElementById(id); if(!el||val==null) return;
+    el.value=val; el.dispatchEvent(new Event('input')); };
+  let _biens=[];
+  function remplir(b){
+    if(!b) return;
+    champ('f-num', b.code||'');
+    champ('f-statut', b.rent_sale==='rent'?'À LOUER':'À VENDRE');
+    if(b.surface_m2) champ('f-sup', String(b.surface_m2));
+    const lieu=[b.district, b.address && b.address!==b.district ? b.address : ''].filter(Boolean).join(', ');
+    if(lieu) champ('f-lieu', lieu);
+    if(b.price_m2){ champ('f-prix', prixParle(b.price_m2)); champ('f-punit','frs/m²'); }
+    else if(b.price){ champ('f-prix', prixParle(b.price)); champ('f-punit','frs'); }
+  }
+  (async ()=>{
+    const sel=document.getElementById('f-bien');
+    try{
+      const client=await window.SLCM_DB.getClient();
+      const {data,error}=await client.from('properties')
+        .select('id,code,title,type,rent_sale,district,address,surface_m2,price,price_m2,listing_slug')
+        .order('created_at',{ascending:false}).limit(300);
+      if(error) throw error;
+      _biens=data||[];
+      _biens.forEach(b=>{ const o=document.createElement('option'); o.value=b.id;
+        o.textContent=(b.code?b.code+' — ':'')+(b.title||'Sans titre'); sel.appendChild(o); });
+      sel.addEventListener('change',()=>{ remplir(_biens.find(b=>String(b.id)===sel.value)); etatPublier(); });
+      /* Ouvert depuis la liste des biens du CRM : visuel-terrain…?bien=12 */
+      const id=new URLSearchParams(location.search).get('bien');
+      if(id && _biens.some(b=>String(b.id)===id)){ sel.value=id; remplir(_biens.find(b=>String(b.id)===id)); }
+      etatPublier();
+    }catch(err){
+      sel.disabled=true;
+      sel.options[0].textContent='Fiches indisponibles — saisie à la main ('+(err.message||err)+')';
+    }
+  })();
+
   document.getElementById('f-photo').addEventListener('change', e=>{
     const file=e.target.files[0]; if(!file) return;
     const r=new FileReader();
@@ -310,21 +363,82 @@
     document.getElementById('result').classList.add('on');
   }
 
-  document.getElementById('dl').onclick=async ()=>{
+  /* Le visuel en pleine taille, quel que soit le zoom d'aperçu. Partagé par
+     le téléchargement et la publication : ce qui part sur le site est
+     exactement ce qu'on a vu. */
+  async function capturer(){
     const prev=scaler.style.transform;
     scaler.style.transform='scale(1)';
     try{
-      const canvas=await html2canvas(document.getElementById('card'),{scale:1,backgroundColor:'#ffffff',useCORS:true,logging:false});
+      return await html2canvas(document.getElementById('card'),{scale:1,backgroundColor:'#ffffff',useCORS:true,logging:false});
+    }finally{
+      scaler.style.transform=prev; fit();
+    }
+  }
+
+  /* ── Publication sur selogercm.com (netlify/functions/crm-publier.js) ──
+     L'annonce prend le CODE comme référence, le numéro de l'AGENCE comme
+     contact, et vit 30 jours. Sa description est composée ici depuis les
+     lignes du visuel, jamais depuis la description de la fiche : celle-ci
+     contient souvent « Contact : <numéro du confrère> ». */
+  const SITE_PUBLIER='https://selogercm.com/.netlify/functions/crm-publier';
+  const ficheChoisie=()=>_biens.find(b=>String(b.id)===document.getElementById('f-bien').value);
+  function etatPublier(){
+    const b=ficheChoisie(), btn=document.getElementById('publier');
+    btn.disabled=!(b && b.code);
+    btn.title=!b?'Choisis d’abord une fiche du CRM':(b.listing_slug?'Déjà publiée — rattache seulement':'Publier '+b.code+' pour 30 jours');
+  }
+  const etat=t=>{ document.getElementById('pub-etat').innerHTML=t; };
+  const val=id=>document.getElementById(id).value.trim();
+
+  document.getElementById('publier').onclick=async ()=>{
+    const b=ficheChoisie(); if(!b||!b.code) return;
+    if(!confirm('Publier '+b.code+' sur selogercm.com pour 30 jours ?\n\nLe contact affiché sera celui de l’agence, jamais celui du confrère.')) return;
+    const btn=document.getElementById('publier'); btn.disabled=true;
+    etat('Publication en cours…');
+    try{
+      const canvas=await capturer();
+      const lieu=val('f-lieu');
+      const sup=Number(val('f-sup').replace(/\s/g,''))||b.surface_m2||null;
+      const corps={
+        code:b.code, type:b.type||'plots-of-land', rent_sale:b.rent_sale||'sale',
+        title:b.title||('Terrain '+(sup?sup+' m², ':'')+(b.district||'')),
+        price:b.price, price_m2:b.price_m2, surface_m2:sup,
+        district:b.district||lieu.split(',')[0], city:'Douala',
+        repere:lieu.indexOf(',')>-1?lieu.slice(lieu.indexOf(',')+1).trim():lieu,
+        description:[lieu?'Situé : '+lieu+'.':'', val('f-l2'), val('f-l3'), val('f-mention')].filter(Boolean).join('\n'),
+        image:canvas.toDataURL('image/jpeg',0.88)
+      };
+      const client=await window.SLCM_DB.getClient();
+      const jeton=(await client.auth.getSession()).data.session?.access_token;
+      const r=await fetch(SITE_PUBLIER,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+jeton},body:JSON.stringify(corps)});
+      const j=await r.json().catch(()=>({}));
+      if(!(r.ok||r.status===409)) throw new Error(j.error||('HTTP '+r.status));
+      /* La fiche se rattache à l'annonce : la recherche par référence et le
+         bouton « Vendu » du CRM passent par ce lien. */
+      const {error}=await client.from('properties').update({listing_id:j.id,listing_slug:j.slug}).eq('id',b.id);
+      if(error) throw new Error('annonce en ligne, mais fiche non rattachée : '+error.message);
+      b.listing_slug=j.slug;
+      const url='https://selogercm.com/annonce/'+encodeURIComponent(j.slug);
+      etat((r.status===409?'Déjà en ligne, fiche rattachée : ':'✅ En ligne : ')+'<a href="'+url+'" target="_blank" rel="noopener" style="color:inherit">'+url+'</a>');
+    }catch(err){
+      etat('❌ Publication impossible : '+String(err.message||err).replace(/</g,'&lt;'));
+    }finally{
+      etatPublier();
+    }
+  };
+
+  document.getElementById('dl').onclick=async ()=>{
+    try{
+      const canvas=await capturer();
       const a=document.createElement('a');
-      a.download='slcm-terrain-'+document.getElementById('f-sup').value+'m2.png';
+      a.download='slcm-'+(document.getElementById('f-num').value||'terrain').replace(/[^\w-]/g,'')+'-'+document.getElementById('f-sup').value+'m2.png';
       const url=canvas.toDataURL('image/png');
       a.href=url;
       a.click();
       showResult(url);
     }catch(err){
       alert("Export impossible : "+err.message+"\nSolution de repli : capture d'écran de l'aperçu.");
-    }finally{
-      scaler.style.transform=prev; fit();
     }
   };
 </script>

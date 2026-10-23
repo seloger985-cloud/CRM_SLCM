@@ -254,6 +254,24 @@ function confrereMessage(p, c) {
   return `Bonjour ${(c && c.name) || ''}, j'ai un client intéressé par ${quoi}${lieu ? ' (' + lieu + ')' : ''}. Est-il toujours disponible ?`;
 }
 
+/* Le même terrain circule souvent chez plusieurs confrères. Deux fiches
+   sont « le même bien » si elles partagent le quartier ET la surface ET un
+   prix (total ou au m²). Exigeant à dessein : une fausse alerte sur deux
+   terrains voisins de même taille coûte une seconde, un doublon publié
+   coûte deux codes pour un seul bien. Rien n'est bloquant : l'agent tranche. */
+function similarProperties(p, list) {
+  const q = looseKey(p.district);
+  const s = Number(p.surface_m2);
+  if (!q || !(s > 0)) return [];
+  return (list || []).filter(o =>
+    o.id !== p.id &&
+    looseKey(o.district) === q &&
+    Number(o.surface_m2) === s &&
+    ((p.price > 0 && Number(o.price) === Number(p.price)) ||
+     (p.price_m2 > 0 && Number(o.price_m2) === Number(p.price_m2)))
+  );
+}
+
 /* Le code tel qu'on le tape vite : « T-014 », « t14 » et « 14 » désignent
    le même bien — le numéro est unique sur tout le portefeuille. */
 function codeKeys(code) {
@@ -1193,7 +1211,17 @@ function renderPropsList() {
       ? `<div class="item-meta">Via ${escHtml(c.name)}${c.agency ? ' (' + escHtml(c.agency) + ')' : ''}${p.confrere_ref ? ' · sa réf. ' + escHtml(p.confrere_ref) : ''}${p.commission ? ' · ' + escHtml(p.commission) : ''}</div>`
       : '';
     const ecrire = (c && confrereWa(c) && p.id)
-      ? `<button onclick="contactConfrere(${Number(p.id)})" class="ghost-btn" title="Écrire au confrère sur WhatsApp">Confrère</button>`
+      ? `<button onclick="contactConfrere(${Number(p.id)})" class="ghost-btn" title="Écrire au confrère sur WhatsApp">WhatsApp confrère</button>`
+        + `<a href="tel:+${escAttr(normalizePhone(c.phone || c.whatsapp))}" class="ghost-btn" title="Appeler le confrère">Appeler</a>`
+      : '';
+    /* Vendu : la fiche passe « vendu » et, si le bien est en ligne, l'annonce
+       du site aussi — une offre de groupe se vend vite. */
+    const vendu = (p.id && p.status === 'available')
+      ? `<button onclick="markSold(${Number(p.id)})" class="ghost-btn" title="Marquer vendu / loué (et sur le site)">Vendu</button>`
+      : '';
+    /* Le visuel part de la fiche : code public sur le badge, champs remplis. */
+    const visuel = p.id
+      ? `<a href="visuel-terrain-bonapriso.html?bien=${Number(p.id)}" class="ghost-btn" title="Créer le visuel de ce bien">Visuel</a>`
       : '';
     return `<div class="list-item">
       ${thumbHtml(p._cover, p.id || p._siteId || p.title, p.type)}
@@ -1201,7 +1229,7 @@ function renderPropsList() {
       <div class="item-meta">${escHtml(p.address || '')} — ${price}${p._ref ? ' · ' + escHtml(p._ref) : ''}</div>
       ${origine}
       <div class="item-meta">${formatDate(p.created_at)}</div>
-      <div>${link}${share}${ecrire}${action}</div>
+      <div>${link}${share}${ecrire}${visuel}${vendu}${action}</div>
     </div>`;
   }).join('');
 }
@@ -1816,6 +1844,7 @@ async function analyzeInbox() {
       title: bien.title, type: bien.type, price: bien.price,
       address: bien.address, district: bien.district,
       rent_sale: bien.rent_sale, bedrooms: bien.bedrooms,
+      surface_m2: bien.surface_m2, price_m2: bien.price_m2,
       furnished: bien.furnished, description,
       /* Le contact sert à retrouver ou créer le confrère (sql/12). Il reste
          aussi dans la description : si l'agent choisit « en direct », il
@@ -1842,7 +1871,8 @@ const MANQUANT_FR = {
   title: 'le titre', type: 'le type de bien', rent_sale: 'location ou vente',
   price: 'le prix', address: "l'adresse", district: 'le quartier',
   bedrooms: 'le nombre de chambres', furnished: 'meublé ou non',
-  description: 'la description', contact: 'le contact'
+  description: 'la description', contact: 'le contact',
+  surface_m2: 'la surface', price_m2: 'le prix au m²'
 };
 
 function manquantBanner(manquant) {
@@ -2115,8 +2145,18 @@ function showPropertyForm(property = null, draft = null, back = null) {
         </select>
       </div>
       <div class="form-group">
-        <label>Prix (FCFA):</label>
+        <label>Surface (m²):</label>
+        <input type="number" id="property-surface" min="0" value="${escAttr(v.surface_m2 || '')}">
+      </div>
+      <div class="form-group">
+        <label>Prix au m² (FCFA):</label>
+        <input type="number" id="property-price-m2" min="0" value="${escAttr(v.price_m2 || '')}"
+               placeholder="Pour un terrain vendu au m²">
+      </div>
+      <div class="form-group">
+        <label>Prix total (FCFA):</label>
         <input type="number" id="property-price" value="${escAttr(v.price || '')}">
+        <small class="item-meta" id="property-price-hint"></small>
       </div>
       <div class="form-group">
         <label>Statut:</label>
@@ -2194,11 +2234,40 @@ function showPropertyForm(property = null, draft = null, back = null) {
   wireSuggestions('property-address', 'properties', 'address', DEMAND_DISTRICTS);
   wireSuggestions('property-district', 'properties', 'district', DEMAND_DISTRICTS);
   fillConfrereSelect(v);
+  wirePriceFromM2();
 
   document.getElementById('property-form').addEventListener('submit', (e) => {
     e.preventDefault();
     saveProperty(editing ? property.id : null);
   });
+}
+
+/* Le total d'un terrain vendu au m², calculé tant que l'agent ne l'a pas
+   saisi lui-même. Un total tapé à la main fait foi (il peut inclure un
+   geste) : on ne l'écrase jamais, on signale seulement l'écart. */
+function totalFromM2(surface, prixM2) {
+  const s = Number(surface), p = Number(prixM2);
+  return s > 0 && p > 0 ? Math.round(s * p) : null;
+}
+
+function wirePriceFromM2() {
+  const s = document.getElementById('property-surface');
+  const m = document.getElementById('property-price-m2');
+  const t = document.getElementById('property-price');
+  const hint = document.getElementById('property-price-hint');
+  if (!s || !m || !t) return;
+  let auto = !t.value;                       /* vide au départ → on calcule */
+  t.addEventListener('input', () => { auto = !t.value; maj(); });
+  function maj() {
+    const calc = totalFromM2(s.value, m.value);
+    if (auto && calc) t.value = calc;
+    hint.textContent = calc && Number(t.value) !== calc
+      ? `Surface × prix au m² = ${calc.toLocaleString('fr-FR')} FCFA`
+      : '';
+  }
+  s.addEventListener('input', maj);
+  m.addEventListener('input', maj);
+  maj();
 }
 
 /* Remplit la liste des confrères, puis choisit le bon :
@@ -2260,6 +2329,44 @@ async function resolveConfrere() {
     .insert([{ name, phone: phone || null }]).select();
   if (error) { UI.handleError(error); return undefined; }
   return data[0].id;
+}
+
+/* Vendu (ou loué) : la fiche d'abord, puis l'annonce du site par la même
+   passerelle que reperes.html (listing-maj, session CRM validée côté
+   serveur). Si le site échoue, la fiche reste juste et on le dit. */
+async function markSold(propertyId) {
+  const p = propsView.crm.find(x => x.id === propertyId);
+  if (!p) return;
+  const loc = p.rent_sale === 'rent';
+  const ok = await UI.confirm(
+    (p.code ? p.code + ' — ' : '') + (p.title || 'Ce bien') + ' : marquer ' + (loc ? 'loué' : 'vendu') + ' ?'
+    + (p.listing_slug ? '\n\nL\'annonce du site passera aussi « ' + (loc ? 'loué' : 'vendu') + ' ».' : ''),
+    { title: loc ? 'Bien loué' : 'Bien vendu', confirmLabel: 'Confirmer', cancelLabel: 'Annuler' });
+  if (!ok) return;
+
+  const { error } = await supabaseClient.from('properties')
+    .update({ status: loc ? 'rented' : 'sold' }).eq('id', propertyId);
+  if (error) { UI.handleError(error); return; }
+
+  if (p.listing_slug) {
+    try {
+      const sess = (await supabaseClient.auth.getSession()).data.session;
+      const r = await fetch('https://selogercm.com/.netlify/functions/listing-maj', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (sess && sess.access_token) },
+        body: JSON.stringify({ slug: p.listing_slug, action: 'statut', vente: !loc })
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      UI.toast('Fiche et annonce du site mises à jour', 'success');
+    } catch (e) {
+      UI.toast('Fiche mise à jour, mais pas le site : ' + ((e && e.message) || e), 'error');
+    }
+  } else {
+    UI.toast('Fiche mise à jour', 'success');
+  }
+  propsView.loaded = false;
+  showProperties();
 }
 
 /* Écrire au confrère qui détient ce bien, message déjà rédigé. */
@@ -2352,6 +2459,8 @@ async function saveProperty(id) {
     /* Même règle que due_date : le prix est facultatif, et '' est refusé
        par une colonne numérique. numOrNull fait déjà exactement ça. */
     price: numOrNull('property-price'),
+    surface_m2: numOrNull('property-surface'),
+    price_m2: numOrNull('property-price-m2'),
     status: document.getElementById('property-status').value,
     description: document.getElementById('property-description').value,
 
@@ -2366,6 +2475,23 @@ async function saveProperty(id) {
   try {
     /* L'origine du bien (sql/12). Résolue avant l'écriture : un nouveau
        confrère doit exister pour qu'on puisse y pointer. */
+    /* Même terrain, autre confrère ? Seulement à la création. */
+    if (!id) {
+      const tous = await getAll('properties');
+      const jumeaux = similarProperties(property, tous);
+      if (jumeaux.length) {
+        const conf = new Map((await getAll('confreres')).map(c => [c.id, c.name]));
+        const liste = jumeaux.slice(0, 3).map(o => (o.code || '#' + o.id) + ' « ' + (o.title || 'sans titre') + ' »'
+          + (o.confrere_id && conf.get(o.confrere_id) ? ' via ' + conf.get(o.confrere_id) : '')).join(', ');
+        const continuer = await UI.confirm(
+          'Ce bien ressemble à ' + liste + ' : même quartier, même surface, même prix.'
+          + '\n\nUn terrain circule souvent chez plusieurs confrères. Le publier deux fois, '
+          + 'c\'est deux codes pour un seul bien.',
+          { title: 'Bien déjà connu ?', confirmLabel: 'Créer quand même', cancelLabel: 'Revenir à la saisie' });
+        if (!continuer) return;
+      }
+    }
+
     const confrereId = await resolveConfrere();
     if (confrereId === undefined) return;
     property.confrere_id = confrereId;
@@ -2782,7 +2908,7 @@ const TABLE_COLS = {
      sql/10 : `properties` etait plat, un immeuble et ses appartements y
      etaient des lignes sans lien, et le proprietaire n'existait que sur
      le bail — donc un logement vacant n'en avait pas. */
-  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at,district,rent_sale,bedrooms,furnished,parent_id,landlord_id,floor,unit_label,bathrooms,code,confrere_id,confrere_ref,commission',
+  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at,district,rent_sale,bedrooms,furnished,parent_id,landlord_id,floor,unit_label,bathrooms,code,confrere_id,confrere_ref,commission,surface_m2,price_m2',
   /* sql/12 : le confrère qui détient un bien, et le code court public. */
   confreres:  'id,name,agency,phone,whatsapp,zones,notes,active,created_at',
   activities: 'id,type,client_id,property_id,notes,date,created_at,outcome,next_step,next_date,next_done_at',
