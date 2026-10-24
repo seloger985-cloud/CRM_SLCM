@@ -68,6 +68,36 @@
     color:#7c8288;font-size:26px;font-weight:600;text-align:center;padding:0 40px;line-height:1.5
   }
 
+  /* ── Vue aérienne (24/10/2026) ──
+     Encadré dans le coin bas-droit de la photo. Image posée en FOND
+     (background-size:cover) et non en <img object-fit> : html2canvas
+     respecte le premier à l'export, pas toujours le second. */
+  .inset{
+    position:absolute;right:34px;top:556px;width:360px;height:360px;border-radius:22px;
+    border:8px solid #fff;box-shadow:0 10px 34px rgba(0,0,0,.35);overflow:hidden;
+    background:#c9cdd2 center/cover no-repeat;display:none;z-index:2
+  }
+  .inset.on{display:block}
+  .chip{
+    position:absolute;left:14px;top:14px;background:var(--ink);color:#fff;
+    font-size:20px;font-weight:700;padding:6px 14px;border-radius:999px;letter-spacing:.01em
+  }
+  .chip i{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--orange);margin-right:8px;vertical-align:1px}
+  /* La source et la mention restent LISIBLES : c'est la condition d'usage
+     des images satellites (Google Earth, Esri…). Ne pas les masquer. */
+  .source{
+    position:absolute;left:0;right:0;bottom:0;padding:22px 12px 8px;
+    background:linear-gradient(transparent,rgba(0,0,0,.72));
+    color:#fff;font-size:21px;font-weight:600;line-height:1.25;text-align:right
+  }
+  /* Le visuel s'affiche au tiers de sa taille sur un téléphone : sous ~20 px
+     ici, la mention deviendrait illisible. */
+  .photo .source{left:auto;width:100%;font-size:24px;padding:34px 20px 14px;z-index:1}
+  .source:empty{display:none}
+  /* Vue aérienne en grand ET encadré présent : l'encadré occupe le coin
+     bas-droit, la mention monte en haut pour rester lisible. */
+  .photo .source.haut{top:0;bottom:auto;padding:16px 20px 36px;background:linear-gradient(rgba(0,0,0,.72),transparent)}
+
   /* diagonale : rectangle blanc pivoté + liseré orange */
   .diag-white{
     position:absolute;width:900px;height:1600px;background:#fff;
@@ -176,6 +206,17 @@
     <label>Unité prix<input id="f-punit" value="frs/m²"></label>
     <label class="wide">Mention<input id="f-mention" value="(non négociable)"></label>
     <label class="wide">Photo du terrain<input id="f-photo" type="file" accept="image/*"></label>
+    <!-- Vue aérienne : export de Google Earth Pro (parcelle tracée avec
+         « Ajouter un polygone ») ou capture d'Esri Wayback. -->
+    <label class="wide">Vue aérienne (facultatif)<input id="f-aerien" type="file" accept="image/*"></label>
+    <label>Disposition<select id="f-dispo">
+      <option value="encart">Photo en grand, vue aérienne en encadré</option>
+      <option value="inverse">Vue aérienne en grand, photo en encadré</option>
+    </select></label>
+    <label>Source de l'image<input id="f-source" value="Image © Google Earth"></label>
+    <label class="wide" style="flex-direction:row;align-items:center;gap:8px;text-transform:none;font-size:13px">
+      <input type="checkbox" id="f-trace" checked> Ajouter « Tracé indicatif — limites selon le plan cadastral »
+    </label>
   </div>
   <div class="actions">
     <!-- Sans ce retour la page est une impasse : elle n'a pas la navigation
@@ -197,6 +238,11 @@
       <div class="photo">
         <img id="photo-img" style="display:none" alt="">
         <div class="ph" id="photo-ph">Charge la photo<br>du terrain</div>
+        <div class="source" id="src-grand"></div>
+      </div>
+      <div class="inset" id="inset">
+        <span class="chip" id="inset-chip"><i></i>Vue aérienne</span>
+        <div class="source" id="src-encart"></div>
       </div>
       <div class="diag-white"></div>
       <div class="diag-orange"></div>
@@ -341,15 +387,49 @@
     }
   })();
 
-  document.getElementById('f-photo').addEventListener('change', e=>{
-    const file=e.target.files[0]; if(!file) return;
-    const r=new FileReader();
-    r.onload=()=>{
-      const img=document.getElementById('photo-img');
-      img.src=r.result; img.style.display='block';
-      document.getElementById('photo-ph').style.display='none';
-    };
-    r.readAsDataURL(file);
+  /* ── Deux images : la photo du terrain et la vue aérienne ──
+     L'une va dans le grand panneau, l'autre dans l'encadré, selon la
+     disposition. S'il n'y en a qu'une, elle prend le grand panneau. La
+     source et la mention suivent la vue aérienne, où qu'elle soit. */
+  const imgs={ photo:null, aerien:null };
+  function lire(file){
+    return new Promise((ok,ko)=>{ const r=new FileReader(); r.onload=()=>ok(r.result); r.onerror=ko; r.readAsDataURL(file); });
+  }
+  function legende(){
+    const src=document.getElementById('f-source').value.trim();
+    const trace=document.getElementById('f-trace').checked ? 'Tracé indicatif — limites selon le plan cadastral' : '';
+    return [trace, src].filter(Boolean).join(' · ');
+  }
+  function placerImages(){
+    const inverse=document.getElementById('f-dispo').value==='inverse';
+    let grand=inverse?imgs.aerien:imgs.photo, petit=inverse?imgs.photo:imgs.aerien;
+    if(!grand && petit){ grand=petit; petit=null; }          /* une seule image : en grand */
+    const aerienEnGrand = !!imgs.aerien && grand===imgs.aerien;
+    const aerienEnEncart = !!imgs.aerien && petit===imgs.aerien;
+
+    const img=document.getElementById('photo-img'), ph=document.getElementById('photo-ph');
+    if(grand){ img.src=grand; img.style.display='block'; ph.style.display='none'; }
+    else { img.removeAttribute('src'); img.style.display='none'; ph.style.display=''; }
+
+    const encart=document.getElementById('inset');
+    encart.classList.toggle('on', !!petit);
+    encart.style.backgroundImage = petit ? 'url("'+petit+'")' : '';
+    document.getElementById('inset-chip').innerHTML = '<i></i>'+(aerienEnEncart?'Vue aérienne':'Le terrain');
+
+    const sg=document.getElementById('src-grand');
+    sg.textContent = aerienEnGrand ? legende() : '';
+    sg.classList.toggle('haut', !!petit);
+    document.getElementById('src-encart').textContent = aerienEnEncart ? legende() : '';
+  }
+  document.getElementById('f-photo').addEventListener('change', async e=>{
+    const f=e.target.files[0]; if(!f) return; imgs.photo=await lire(f); placerImages();
+  });
+  document.getElementById('f-aerien').addEventListener('change', async e=>{
+    const f=e.target.files[0]; if(!f) return; imgs.aerien=await lire(f); placerImages();
+  });
+  ['f-dispo','f-source','f-trace'].forEach(id=>{
+    const el=document.getElementById(id);
+    el.addEventListener('input',placerImages); el.addEventListener('change',placerImages);
   });
 
   // zoom d'aperçu
