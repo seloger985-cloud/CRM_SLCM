@@ -1,7 +1,7 @@
 /* Confrères et code court — sql/12.
  *
  * Raison d'être : une campagne de terrains de confrères. Un prospect cite un
- * code (« le T-014 », « le 14 »), il faut retrouver le bien puis le confrère
+ * référence (« CF26-DLA-028 », « le 28 »), il faut retrouver le bien puis le confrère
  * qui le détient. Et le contact d'un confrère, extrait d'un message, doit
  * retrouver la fiche existante plutôt que d'en créer une seconde.
  */
@@ -32,10 +32,15 @@ function run() {
     grab(/function codeKeys[\s\S]*?\n}/, 'codeKeys'),
     grab(/function looseKey[\s\S]*?\n}/, 'looseKey'),
     grab(/function similarProperties[\s\S]*?\n}/, 'similarProperties'),
-    grab(/function totalFromM2[\s\S]*?\n}/, 'totalFromM2')
-  ].join('\n') + '\nreturn { confrereWa, findConfrere, contactName, confrereMessage, codeKeys, similarProperties, totalFromM2 };')();
+    grab(/function totalFromM2[\s\S]*?\n}/, 'totalFromM2'),
+    grab(/const RELANCE_JOURS = [^\n]*/, 'RELANCE_JOURS'),
+    grab(/function aRelancer[\s\S]*?\n}/, 'aRelancer'),
+    grab(/function relanceMessage[\s\S]*?\n}/, 'relanceMessage'),
+    grab(/const TYPE_FR = \{[\s\S]*?\n\};/, 'TYPE_FR'),
+    grab(/function texteParDefaut[\s\S]*?\n}/, 'texteParDefaut')
+  ].join('\n') + '\nreturn { confrereWa, findConfrere, contactName, confrereMessage, codeKeys, similarProperties, totalFromM2, aRelancer, relanceMessage, texteParDefaut };')();
 
-  const { confrereWa, findConfrere, contactName, confrereMessage, codeKeys, similarProperties, totalFromM2 } = scope;
+  const { confrereWa, findConfrere, contactName, confrereMessage, codeKeys, similarProperties, totalFromM2, aRelancer, relanceMessage, texteParDefaut } = scope;
   const checks = [];
   const ok = (label, cond) => checks.push([label, !!cond]);
   const id = c => c && c.id;
@@ -65,10 +70,14 @@ function run() {
   ok('message : jamais « undefined »', m2.indexOf('undefined') === -1 && confrereMessage({}, null).indexOf('undefined') === -1);
 
   /* Le code tel qu'on le tape au téléphone */
-  const k = codeKeys('T-014');
-  ok('« t-014 » retrouve T-014', k.indexOf('t-014') !== -1);
-  ok('« t14 » retrouve T-014', k.indexOf('t14') !== -1);
-  ok('« 14 » retrouve T-014', (' ' + k + ' ').indexOf(' 14 ') !== -1);
+  const k = codeKeys('CF26-DLA-028');
+  const a = ' ' + k + ' ';
+  ok('« cf26-dla-028 » retrouve CF26-DLA-028', a.indexOf(' cf26-dla-028 ') !== -1);
+  ok('« cf28 » retrouve CF26-DLA-028', a.indexOf(' cf28 ') !== -1);
+  ok('« 28 » retrouve CF26-DLA-028', a.indexOf(' 28 ') !== -1);
+  ok('SL26-YDE-031 → « sl31 » et « 31 »', (' ' + codeKeys('SL26-YDE-031') + ' ').indexOf(' sl31 ') !== -1);
+  const old = ' ' + codeKeys('T-028') + ' ';
+  ok('ancien code T-028 : « t28 » et « 28 » marchent encore', old.indexOf(' t28 ') !== -1 && old.indexOf(' 28 ') !== -1);
   ok('pas de code → rien à chercher', codeKeys(null) === '');
 
   /* Même terrain, autre confrère */
@@ -94,6 +103,37 @@ function run() {
   /* Le total d'un terrain vendu au m² */
   ok('591 m² × 140 000 = 82 740 000', totalFromM2('591', '140000') === 82740000);
   ok('un champ vide → pas de total', totalFromM2('', '140000') === null && totalFromM2('591', '') === null);
+
+  /* Relance à 15 jours */
+  const JOUR = 86400000, MAINT = Date.parse('2026-11-20T12:00:00Z');
+  const il_y_a = j => new Date(MAINT - j * JOUR).toISOString();
+  const ANNONCES = [
+    { id: 'L1', status: 'active', created_at: il_y_a(20) },
+    { id: 'L2', status: 'active', created_at: il_y_a(5) },
+    { id: 'L3', status: 'expired', created_at: il_y_a(40) }
+  ];
+  const BIENS = [
+    { id: 1, code: 'CF26-DLA-028', confrere_id: 7, listing_id: 'L1', status: 'available' },
+    { id: 2, code: 'CF26-DLA-029', confrere_id: 7, listing_id: 'L2', status: 'available' },
+    { id: 3, code: 'CF26-DLA-030', confrere_id: 7, listing_id: 'L3', status: 'available' },
+    { id: 4, code: 'SL26-DLA-031', confrere_id: null, listing_id: 'L1', status: 'available' },
+    { id: 5, code: 'CF26-DLA-032', confrere_id: 7, listing_id: 'L1', status: 'sold' }
+  ];
+  const r0 = aRelancer(BIENS, ANNONCES, {}, MAINT).map(p => p.id).join(',');
+  ok('20 jours en ligne → à relancer ; 5 jours, expirée, mandat direct, vendu → non', r0 === '1');
+  ok('relancé il y a 3 jours → plus rien jusqu\'à 15 jours après',
+     aRelancer(BIENS, ANNONCES, { 1: MAINT - 3 * JOUR }, MAINT).length === 0);
+  ok('relancé il y a 16 jours → de nouveau à relancer',
+     aRelancer(BIENS, ANNONCES, { 1: MAINT - 16 * JOUR }, MAINT).length === 1);
+  const rm = relanceMessage({ code: 'CF26-DLA-028', confrere_ref: 'LGP-07', district: 'Logpom' }, { name: 'Paul' });
+  ok('message de relance : sa réf., le lieu, notre réf.', rm.indexOf('réf. LGP-07') !== -1 && rm.indexOf('Logpom') !== -1 && rm.indexOf('CF26-DLA-028') !== -1);
+
+  /* Texte public de départ : les champs seuls */
+  ok('texte public : « Appartement, 3 chambres, 2 douches, meublé à Bonapriso. »',
+     texteParDefaut({ type: 'apartment', bedrooms: 3, bathrooms: 2, furnished: true, district: 'Bonapriso' })
+       === 'Appartement, 3 chambres, 2 douches, meublé à Bonapriso.');
+  ok('texte public : rien de la description (le message du confrère)',
+     texteParDefaut({ type: 'villa', district: 'Bali', description: 'Paul 699124578 commission 1 mois' }).indexOf('699') === -1);
 
   return { title: 'Confrères et code court (sql/12)', checks };
 }

@@ -95,12 +95,14 @@
   .tagline{font-size:19px;color:#4a4f56;font-weight:400;margin-top:8px}
 
   /* Largeur selon le contenu : le badge porte désormais le code public du
-     bien (T-014), plus un numéro d'un chiffre. Carré tant qu'il tient. */
+     bien (CF26-DLA-028), plus un numéro d'un chiffre. Carré tant qu'il tient. */
   .badge{
     margin-top:38px;min-width:96px;width:max-content;padding:0 22px;height:96px;border-radius:20px;
     background:var(--ink);color:#fff;white-space:nowrap;
     display:flex;align-items:center;justify-content:center;font-size:56px;font-weight:700
   }
+  /* Référence au format du site (CF26-DLA-028) : 12 caractères. */
+  .badge.long{font-size:38px;letter-spacing:.01em}
 
   .label{margin-top:30px;font-size:38px;font-weight:600;color:var(--ink)}
   .area{display:flex;align-items:flex-end;gap:8px;margin-top:-6px}
@@ -289,6 +291,9 @@
     const sync=()=>{ out.textContent = inp.value; };
     inp.addEventListener('input',sync); inp.addEventListener('change',sync);
   });
+  document.getElementById('f-num').addEventListener('input',e=>{
+    document.getElementById('o-num').classList.toggle('long', e.target.value.length>6);
+  });
 
   /* ── Remplissage depuis une fiche du CRM ──
      « 140 000 » s'écrit « 140 mille » sur les visuels, « 82 740 000 »
@@ -309,7 +314,9 @@
     if(b.surface_m2) champ('f-sup', String(b.surface_m2));
     const lieu=[b.district, b.address && b.address!==b.district ? b.address : ''].filter(Boolean).join(', ');
     if(lieu) champ('f-lieu', lieu);
-    if(b.price_m2){ champ('f-prix', prixParle(b.price_m2)); champ('f-punit','frs/m²'); }
+    /* Prix sur demande : le vrai prix reste dans la fiche, jamais sur le visuel. */
+    if(b.prix_sur_demande){ champ('f-prix','Sur demande'); champ('f-punit',''); champ('f-mention',''); }
+    else if(b.price_m2){ champ('f-prix', prixParle(b.price_m2)); champ('f-punit','frs/m²'); }
     else if(b.price){ champ('f-prix', prixParle(b.price)); champ('f-punit','frs'); }
   }
   (async ()=>{
@@ -317,7 +324,7 @@
     try{
       const client=await window.SLCM_DB.getClient();
       const {data,error}=await client.from('properties')
-        .select('id,code,title,type,rent_sale,district,address,surface_m2,price,price_m2,listing_slug')
+        .select('id,code,title,type,rent_sale,district,address,surface_m2,price,price_m2,listing_slug,prix_sur_demande')
         .order('created_at',{ascending:false}).limit(300);
       if(error) throw error;
       _biens=data||[];
@@ -403,7 +410,8 @@
       const corps={
         code:b.code, type:b.type||'plots-of-land', rent_sale:b.rent_sale||'sale',
         title:b.title||('Terrain '+(sup?sup+' m², ':'')+(b.district||'')),
-        price:b.price, price_m2:b.price_m2, surface_m2:sup,
+        price:b.prix_sur_demande?null:b.price, price_m2:b.prix_sur_demande?null:b.price_m2, surface_m2:sup,
+        prix_sur_demande:!!b.prix_sur_demande,
         district:b.district||lieu.split(',')[0], city:'Douala',
         repere:lieu.indexOf(',')>-1?lieu.slice(lieu.indexOf(',')+1).trim():lieu,
         description:[lieu?'Situé : '+lieu+'.':'', val('f-l2'), val('f-l3'), val('f-mention')].filter(Boolean).join('\n'),

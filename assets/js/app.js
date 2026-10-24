@@ -216,7 +216,7 @@ function normalizePhone(phone) {
 
 /* ═══════════════ CONFRÈRES (sql/12) ═══════════════
 
-   Un prospect appelle pour « le T-014 ». Le code ouvre la fiche, la fiche
+   Un prospect appelle pour « le CF26-DLA-028 ». Le code ouvre la fiche, la fiche
    nomme le confrère qui détient le bien. Rien de tout cela ne sort sur un
    visuel : seul le code y figure. */
 
@@ -272,12 +272,42 @@ function similarProperties(p, list) {
   );
 }
 
-/* Le code tel qu'on le tape vite : « T-014 », « t14 » et « 14 » désignent
-   le même bien — le numéro est unique sur tout le portefeuille. */
+/* Relance à 15 jours (choix du 24/10/2026). Une offre de groupe se vend
+   vite : un bien de confrère encore en ligne au bout de 15 jours mérite
+   la question « toujours disponible ? ». Le compteur part de la dernière
+   relance si elle est plus récente que la mise en ligne.
+   `relances` : { [propertyId]: horodatage ms } (gardé dans le navigateur). */
+const RELANCE_JOURS = 15;
+function aRelancer(props, annonces, relances, maintenant) {
+  const enLigne = new Map((annonces || []).map(l => [String(l.id), l]));
+  const delai = RELANCE_JOURS * 86400000;
+  return (props || []).filter(p => {
+    if (!p.confrere_id || !p.listing_id || p.status !== 'available') return false;
+    const l = enLigne.get(String(p.listing_id));
+    if (!l || l.status !== 'active') return false;
+    const depuis = Math.max(new Date(l.created_at).getTime() || 0, Number((relances || {})[p.id]) || 0);
+    return maintenant - depuis >= delai;
+  });
+}
+
+/* Le message de relance, dans les mots du confrère. */
+function relanceMessage(p, c) {
+  const quoi = p.confrere_ref ? `le bien réf. ${p.confrere_ref}` : `le bien « ${p.title || 'sans titre'} »`;
+  const lieu = p.district || p.address || '';
+  return `Bonjour ${(c && c.name) || ''}, ${quoi}${lieu ? ' (' + lieu + ')' : ''} est-il toujours disponible ? Il est en ligne chez nous sous la réf. ${p.code}.`;
+}
+
+/* La référence telle qu'on la tape vite. Format du site depuis sql/13 :
+   CF26-DLA-028 (confrère) ou SL26-DLA-031 (mandat direct). « cf26-dla-028 »,
+   « cf28 » et « 28 » désignent le même bien : le numéro est unique sur tout
+   le portefeuille, quel que soit le préfixe. Accepte aussi l'ancien format
+   (T-028), que garde `ancien_code` — des visuels le portent encore. */
 function codeKeys(code) {
   if (!code) return '';
   const c = String(code).toLowerCase();
-  return c + ' ' + c.replace(/-0*/, '') + ' ' + c.replace(/^[a-z]-0*/, '');
+  const m = c.match(/^([a-z]+)(?:\d{2}-[a-z]{3})?-0*(\d+)$/);
+  if (!m) return c;
+  return c + ' ' + m[1] + m[2] + ' ' + m[2];
 }
 
 /* CORRECTIF 16/08/2026 — le paramètre `phone` était reçu puis ignoré :
@@ -1045,7 +1075,7 @@ async function showProperties(force) {
   mainContent.innerHTML = `
     <h2>Propriétés</h2>
     <div class="toolbar">
-      <input type="search" id="prop-search" class="search-input" placeholder="Rechercher : code (T-014), titre, quartier, confrère, référence…" value="${escAttr(propsView.q)}">
+      <input type="search" id="prop-search" class="search-input" placeholder="Rechercher : référence (CF26-DLA-028 ou 28), titre, quartier, confrère, référence…" value="${escAttr(propsView.q)}">
       <select id="prop-source" class="search-select">
         <option value="all"  ${propsView.src === 'all'  ? 'selected' : ''}>Toutes les sources</option>
         <option value="site" ${propsView.src === 'site' ? 'selected' : ''}>selogercm.com</option>
@@ -1058,9 +1088,11 @@ async function showProperties(force) {
       <button onclick="exportCSV('properties')" class="ghost-btn" title="Exporter en CSV">Export CSV</button>
       <button onclick="showProperties(true)" class="ghost-btn" title="Recharger depuis selogercm.com">↻</button>
     </div>
+    <div id="relances"></div>
     <p class="item-meta" id="prop-count"></p>
     <div class="list" id="prop-list"></div>
   `;
+  renderRelances();
 
   const input = document.getElementById('prop-search');
   const sel = document.getElementById('prop-source');
@@ -1167,7 +1199,7 @@ function renderPropsList() {
     rows = rows.filter(r => {
       const c = r._confrere;
       const hay = [r.title, r.address, r.type, r.status, r.price, r._slug, r._ref,
-                   codeKeys(r.code), r.confrere_ref, c && c.name, c && c.agency].join(' ').toLowerCase();
+                   codeKeys(r.code), codeKeys(r.ancien_code), r.confrere_ref, c && c.name, c && c.agency].join(' ').toLowerCase();
       return terms.every(t => hay.indexOf(t) !== -1);
     });
   }
@@ -1189,7 +1221,11 @@ function renderPropsList() {
     const badge = p._src === 'site'
       ? '<span class="src-badge src-site" title="Publié sur selogercm.com">SITE</span>'
       : '<span class="src-badge src-crm" title="Saisie interne">CRM</span>';
-    const price = Number(p.price) > 0 ? Number(p.price).toLocaleString('fr-FR') + ' FCFA' : 'Prix non renseigné';
+    /* Prix sur demande : le vrai prix reste visible ICI (usage interne),
+       marqué pour rappeler qu'il n'est pas publié. */
+    const price = (Number(p.price) > 0 ? Number(p.price).toLocaleString('fr-FR') + ' FCFA'
+                   : (p.prix_sur_demande ? 'Prix sur demande' : 'Prix non renseigné'))
+                + (p.prix_sur_demande && Number(p.price) > 0 ? ' · publié « sur demande »' : '');
     const slug = p._slug || p.listing_slug;
     const link = slug
       ? `<a href="https://selogercm.com/annonce/${encodeURIComponent(slug)}" target="_blank" rel="noopener" class="ghost-btn" title="Voir l'annonce en ligne">Voir</a>`
@@ -1219,9 +1255,13 @@ function renderPropsList() {
     const vendu = (p.id && p.status === 'available')
       ? `<button onclick="markSold(${Number(p.id)})" class="ghost-btn" title="Marquer vendu / loué (et sur le site)">Vendu</button>`
       : '';
-    /* Le visuel part de la fiche : code public sur le badge, champs remplis. */
+    /* Le visuel part de la fiche : code public sur le badge, champs remplis.
+       Utile surtout aux terrains ; les logements se publient avec leurs photos. */
     const visuel = p.id
       ? `<a href="visuel-terrain-bonapriso.html?bien=${Number(p.id)}" class="ghost-btn" title="Créer le visuel de ce bien">Visuel</a>`
+      : '';
+    const publier = (p.id && p.code && !p.listing_slug && p.status === 'available')
+      ? `<button onclick="showPublishForm(${Number(p.id)})" class="ghost-btn" title="Publier sur selogercm.com avec des photos">Publier</button>`
       : '';
     return `<div class="list-item">
       ${thumbHtml(p._cover, p.id || p._siteId || p.title, p.type)}
@@ -1229,7 +1269,7 @@ function renderPropsList() {
       <div class="item-meta">${escHtml(p.address || '')} — ${price}${p._ref ? ' · ' + escHtml(p._ref) : ''}</div>
       ${origine}
       <div class="item-meta">${formatDate(p.created_at)}</div>
-      <div>${link}${share}${ecrire}${visuel}${vendu}${action}</div>
+      <div>${link}${share}${ecrire}${publier}${visuel}${vendu}${action}</div>
     </div>`;
   }).join('');
 }
@@ -2159,6 +2199,10 @@ function showPropertyForm(property = null, draft = null, back = null) {
         <small class="item-meta" id="property-price-hint"></small>
       </div>
       <div class="form-group">
+        <label><input type="checkbox" id="property-prix-demande" ${v.prix_sur_demande ? 'checked' : ''}>
+          Prix sur demande <span class="item-meta">— ventes : le prix reste ici, il n'est pas publié sur le site</span></label>
+      </div>
+      <div class="form-group">
         <label>Statut:</label>
         <select id="property-status">
           <option value="available" ${defStatus === 'available' ? 'selected' : ''}>Disponible</option>
@@ -2170,7 +2214,7 @@ function showPropertyForm(property = null, draft = null, back = null) {
         <legend>Origine du bien <span class="item-meta">— jamais imprimée sur un visuel</span></legend>
         <p class="item-meta">${v.code
           ? 'Code public : <strong>' + escHtml(v.code) + '</strong> — c&#39;est lui que cite le prospect.'
-          : 'Le code public (T-014…) est attribué à l&#39;enregistrement.'}</p>
+          : 'La référence publique (CF26-DLA-…) est attribuée à l&#39;enregistrement.'}</p>
         <div class="form-group">
           <label>Confrère:</label>
           <select id="property-confrere">
@@ -2369,6 +2413,228 @@ async function markSold(propertyId) {
   showProperties();
 }
 
+/* ═══════════════ RELANCES À 15 JOURS ═══════════════
+   Le repère « relancé le… » vit dans le navigateur (localStorage) : c'est
+   un rappel de travail pour un CRM à un seul utilisateur, pas une donnée
+   métier — comme le repère « J'ai vu » des rapprochements. */
+const RELANCES_CLE = 'slcm-relances';
+function relancesFaites() {
+  try { return JSON.parse(localStorage.getItem(RELANCES_CLE) || '{}') || {}; } catch (e) { return {}; }
+}
+
+function renderRelances() {
+  const box = document.getElementById('relances');
+  if (!box) return;
+  const liste = aRelancer(propsView.crm, propsView.site, relancesFaites(), Date.now());
+  if (!liste.length) { box.innerHTML = ''; return; }
+  const conf = new Map((propsView.confreres || []).map(c => [c.id, c]));
+  box.innerHTML = `<div class="alert alert-match">
+    <strong>${liste.length} bien${liste.length > 1 ? 's' : ''} de confrère en ligne depuis ${RELANCE_JOURS} jours ou plus</strong>
+    <p class="item-meta">Une offre de groupe se vend vite : vérifie qu'ils sont toujours disponibles. Vendu ? Bouton « Vendu » sur la fiche.</p>
+    ${liste.map(p => {
+      const c = conf.get(p.confrere_id);
+      return `<div style="margin-top:6px">${escHtml(p.code)} — ${escHtml(p.title || '')}${c ? ' · ' + escHtml(c.name) : ''}
+        ${c && confrereWa(c) ? `<button onclick="relancerConfrere(${Number(p.id)})" class="ghost-btn">Relancer</button>` : '<span class="item-meta">(pas de numéro)</span>'}</div>`;
+    }).join('')}
+  </div>`;
+}
+
+function relancerConfrere(propertyId) {
+  const p = propsView.crm.find(x => x.id === propertyId);
+  const c = p && (propsView.confreres || []).find(x => x.id === p.confrere_id);
+  if (!p || !c || !confrereWa(c)) return;
+  sendWhatsApp(confrereWa(c), relanceMessage(p, c));
+  const r = relancesFaites();
+  r[propertyId] = Date.now();
+  try { localStorage.setItem(RELANCES_CLE, JSON.stringify(r)); } catch (e) { /* navigation privée : on relancera encore */ }
+  renderRelances();
+}
+
+/* ═══════════════ PUBLIER AVEC DES PHOTOS ═══════════════
+
+   Appartements, villas, studios : pas de visuel, des photos. Même chaîne
+   que pour un terrain (netlify/functions/crm-publier.js) : référence = code,
+   contact = l'agence, 30 jours. Les photos sont réduites en WebP ici, puis
+   envoyées DIRECTEMENT à Cloudflare (crm-image-upload-url.js) — rien de
+   lourd ne transite par une fonction, la data mobile ne paie que l'utile.
+
+   Le texte public est reconstruit à partir des CHAMPS, jamais repris de la
+   description : celle-ci vient souvent du message du confrère (son numéro,
+   « commission 1 mois », « me laisser la visite »). */
+const SITE_FN = 'https://selogercm.com/.netlify/functions/';
+const PHOTOS_MIN = 3;             /* hors terrain — choix du 24/10/2026 */
+const PHOTOS_MAX = 15;
+const pubView = { p: null, photos: [] };   /* photos : [{ file, apercu }] */
+
+/* Le texte public de départ, à partir des seuls champs de la fiche. */
+function texteParDefaut(p) {
+  const n = (v, mot) => Number(v) > 0 ? v + ' ' + mot + (Number(v) > 1 ? 's' : '') : '';
+  let s = [TYPE_FR[p.type] || 'Bien', n(p.bedrooms, 'chambre'), n(p.bathrooms, 'douche')].filter(Boolean).join(', ');
+  if (p.furnished) s += ', meublé';
+  if (p.district) s += ' à ' + p.district;
+  return s + '.';
+}
+
+/* Une photo réduite à 1600 px de côté, en WebP — comme publish.html. */
+function photoEnWebp(file, maxCote = 1600, qualite = 0.82) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, maxCote / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      c.toBlob(b => b ? resolve(b) : reject(new Error('conversion impossible')), 'image/webp', qualite);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('format illisible : ' + (file.name || file.type))); };
+    img.src = url;
+  });
+}
+
+async function showPublishForm(propertyId) {
+  const p = propsView.crm.find(x => x.id === propertyId) || await getById('properties', propertyId);
+  if (!p) { UI.toast('Fiche introuvable', 'error'); return; }
+  pubView.photos.forEach(x => URL.revokeObjectURL(x.apercu));
+  pubView.p = p; pubView.photos = [];
+  const terrain = p.type === 'plots-of-land';
+  const prix = p.prix_sur_demande ? 'Prix sur demande'
+    : (Number(p.price) > 0 ? Number(p.price).toLocaleString('fr-FR') + ' FCFA' : 'Prix manquant');
+
+  mainContent.innerHTML = `
+    <h2>Publier ${escHtml(p.code)} sur selogercm.com</h2>
+    <p class="item-meta">${escHtml(p.title || '')} — ${escHtml(prix)}${p.rent_sale === 'rent' ? ' / mois' : ''} · ${escHtml(p.district || 'quartier manquant')}</p>
+    <p class="item-meta">Référence publique : <strong>${escHtml(p.code)}</strong> · contact affiché : l&#39;agence · en ligne 30 jours.</p>
+    <div class="form-group">
+      <label>Photos (${terrain ? '1' : PHOTOS_MIN} minimum, ${PHOTOS_MAX} maximum) — la première sert de couverture :</label>
+      <input type="file" id="pub-photos" accept="image/*" multiple>
+    </div>
+    <div id="pub-grille" style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0"></div>
+    <div class="form-group">
+      <label>Texte public <span class="item-meta">— relis-le : rien du message du confrère n&#39;y est repris</span></label>
+      <textarea id="pub-texte" rows="4">${escHtml(texteParDefaut(p))}</textarea>
+    </div>
+    <div class="form-group">
+      <label><input type="checkbox" id="pub-propres">
+        Aucune photo ne montre un numéro, un logo ou un nom d&#39;agence</label>
+      <p class="item-meta">Le site efface un numéro écrit dans un texte, pas sur une image. Une seule photo tamponnée envoie ton client chez le confrère.</p>
+    </div>
+    <button type="button" id="pub-go" class="btn btn-primary">Publier</button>
+    <button type="button" onclick="showProperties()" class="btn btn-outline">Annuler</button>
+    <p class="item-meta" id="pub-etat"></p>`;
+
+  document.getElementById('pub-photos').addEventListener('change', e => {
+    const nouvelles = [...e.target.files].filter(f => /^image\//.test(f.type));
+    for (const f of nouvelles) {
+      if (pubView.photos.length >= PHOTOS_MAX) break;
+      pubView.photos.push({ file: f, apercu: URL.createObjectURL(f) });
+    }
+    e.target.value = '';
+    dessinerPhotos();
+  });
+  document.getElementById('pub-go').addEventListener('click', publierAvecPhotos);
+}
+
+/* Les vignettes, avec ← → pour l'ordre et ✕ pour retirer. */
+function dessinerPhotos() {
+  const g = document.getElementById('pub-grille');
+  if (!g) return;
+  g.innerHTML = pubView.photos.map((x, i) => `
+    <div style="width:150px">
+      <img src="${escAttr(x.apercu)}" alt="" style="width:150px;height:110px;object-fit:cover;border-radius:8px;${i === 0 ? 'outline:3px solid var(--accent, #ED7A14)' : ''}">
+      <div class="item-meta">${i === 0 ? 'Couverture' : 'Photo ' + (i + 1)}</div>
+      <button type="button" class="ghost-btn" onclick="deplacerPhoto(${i},-1)" ${i === 0 ? 'disabled' : ''} title="Avant">←</button>
+      <button type="button" class="ghost-btn" onclick="deplacerPhoto(${i},1)" ${i === pubView.photos.length - 1 ? 'disabled' : ''} title="Après">→</button>
+      <button type="button" class="ghost-btn" onclick="retirerPhoto(${i})" title="Retirer">✕</button>
+    </div>`).join('');
+}
+function deplacerPhoto(i, sens) {
+  const j = i + sens, l = pubView.photos;
+  if (j < 0 || j >= l.length) return;
+  [l[i], l[j]] = [l[j], l[i]];
+  dessinerPhotos();
+}
+function retirerPhoto(i) {
+  const [x] = pubView.photos.splice(i, 1);
+  if (x) URL.revokeObjectURL(x.apercu);
+  dessinerPhotos();
+}
+
+async function publierAvecPhotos() {
+  const p = pubView.p;
+  const etat = t => { const e = document.getElementById('pub-etat'); if (e) e.textContent = t; };
+  const terrain = p.type === 'plots-of-land';
+  const min = terrain ? 1 : PHOTOS_MIN;
+  if (pubView.photos.length < min) { UI.toast(`Au moins ${min} photo${min > 1 ? 's' : ''}.`, 'error'); return; }
+  if (!document.getElementById('pub-propres').checked) {
+    UI.toast('Vérifie d\'abord qu\'aucune photo ne montre le numéro ou le logo du confrère.', 'error'); return;
+  }
+  if (!p.rent_sale || !p.district) { UI.toast('La fiche doit indiquer la transaction et le quartier.', 'error'); return; }
+  if (!(Number(p.price) > 0) && !(p.prix_sur_demande && p.rent_sale === 'sale')) {
+    UI.toast('Prix manquant (ou « prix sur demande » pour une vente).', 'error'); return;
+  }
+
+  const btn = document.getElementById('pub-go');
+  btn.disabled = true;
+  try {
+    const jeton = (await supabaseClient.auth.getSession()).data.session?.access_token;
+    const auth = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + jeton };
+
+    etat('Préparation des photos…');
+    const blobs = [];
+    for (let i = 0; i < pubView.photos.length; i++) {
+      etat(`Réduction des photos… ${i + 1}/${pubView.photos.length}`);
+      blobs.push(await photoEnWebp(pubView.photos[i].file));
+    }
+
+    const r1 = await fetch(SITE_FN + 'crm-image-upload-url', { method: 'POST', headers: auth, body: JSON.stringify({ n: blobs.length }) });
+    const j1 = await r1.json().catch(() => ({}));
+    if (!r1.ok) throw new Error(j1.error || 'URLs d\'envoi : HTTP ' + r1.status);
+
+    for (let i = 0; i < blobs.length; i++) {
+      etat(`Envoi des photos… ${i + 1}/${blobs.length}`);
+      const envoyer = () => {
+        const fd = new FormData();
+        fd.append('file', blobs[i], `photo_${i + 1}.webp`);
+        return fetch(j1.photos[i].uploadURL, { method: 'POST', body: fd });
+      };
+      /* Deux essais par photo : sur une connexion mobile, un échec isolé
+         ne doit pas faire perdre toute la publication. */
+      let r = await envoyer().catch(() => null);
+      if (!r || !r.ok) r = await envoyer().catch(() => null);
+      if (!r || !r.ok) throw new Error(`photo ${i + 1} non envoyée — réessaie (les photos déjà parties seront relevées par l'audit des images)`);
+    }
+
+    etat('Création de l\'annonce…');
+    const corps = {
+      code: p.code, title: p.title, type: p.type, rent_sale: p.rent_sale,
+      price: p.prix_sur_demande ? null : p.price, prix_sur_demande: !!p.prix_sur_demande,
+      surface_m2: p.surface_m2, district: p.district, city: 'Douala',
+      repere: (p.address && p.address !== p.district) ? p.address : null,
+      description: document.getElementById('pub-texte').value.trim(),
+      bedrooms: p.bedrooms, bathrooms: p.bathrooms, furnished: !!p.furnished,
+      images: j1.photos.map(x => x.url)
+    };
+    const r2 = await fetch(SITE_FN + 'crm-publier', { method: 'POST', headers: auth, body: JSON.stringify(corps) });
+    const j2 = await r2.json().catch(() => ({}));
+    if (!(r2.ok || r2.status === 409)) throw new Error(j2.error || 'HTTP ' + r2.status);
+
+    const { error } = await supabaseClient.from('properties').update({ listing_id: j2.id, listing_slug: j2.slug }).eq('id', p.id);
+    if (error) throw new Error('annonce en ligne, mais fiche non rattachée : ' + error.message);
+
+    UI.toast((r2.status === 409 ? 'Déjà en ligne — fiche rattachée : ' : 'En ligne : ') + 'selogercm.com/annonce/' + j2.slug, 'success');
+    pubView.photos.forEach(x => URL.revokeObjectURL(x.apercu));
+    pubView.photos = [];
+    propsView.loaded = false;
+    showProperties(true);
+  } catch (e) {
+    etat('');
+    UI.toast('Publication impossible : ' + ((e && e.message) || e), 'error');
+    btn.disabled = false;
+  }
+}
+
 /* Écrire au confrère qui détient ce bien, message déjà rédigé. */
 function contactConfrere(propertyId) {
   const p = propsView.crm.find(x => x.id === propertyId);
@@ -2461,6 +2727,7 @@ async function saveProperty(id) {
     price: numOrNull('property-price'),
     surface_m2: numOrNull('property-surface'),
     price_m2: numOrNull('property-price-m2'),
+    prix_sur_demande: document.getElementById('property-prix-demande').checked,
     status: document.getElementById('property-status').value,
     description: document.getElementById('property-description').value,
 
@@ -2908,7 +3175,7 @@ const TABLE_COLS = {
      sql/10 : `properties` etait plat, un immeuble et ses appartements y
      etaient des lignes sans lien, et le proprietaire n'existait que sur
      le bail — donc un logement vacant n'en avait pas. */
-  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at,district,rent_sale,bedrooms,furnished,parent_id,landlord_id,floor,unit_label,bathrooms,code,confrere_id,confrere_ref,commission,surface_m2,price_m2',
+  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at,district,rent_sale,bedrooms,furnished,parent_id,landlord_id,floor,unit_label,bathrooms,code,confrere_id,confrere_ref,commission,surface_m2,price_m2,ancien_code,prix_sur_demande',
   /* sql/12 : le confrère qui détient un bien, et le code court public. */
   confreres:  'id,name,agency,phone,whatsapp,zones,notes,active,created_at',
   activities: 'id,type,client_id,property_id,notes,date,created_at,outcome,next_step,next_date,next_done_at',
