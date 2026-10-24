@@ -56,6 +56,8 @@ automationBtn.addEventListener('click', navTo(automationBtn, showAutomation));
 pipelineBtn.addEventListener('click', navTo(pipelineBtn, showPipeline));
 matchingBtn.addEventListener('click', navTo(matchingBtn, showMatching));
 leasesBtn.addEventListener('click', navTo(leasesBtn, showLeases));
+const siteDemandsBtn = document.getElementById('site-demands-btn');
+if (siteDemandsBtn) siteDemandsBtn.addEventListener('click', navTo(siteDemandsBtn, showSiteDemands));
 
 /* Redessine le tableau de bord au changement de thème, uniquement s'il est à
    l'écran : ses deux graphiques sont peints sur un canevas et ne suivent pas
@@ -465,6 +467,7 @@ async function createActivityFromSuggestion(index) {
    cinq redondantes — quatre comptages de statuts et un getRecent('clients')
    que getAll('clients') contenait déjà. Ramenées à quatre, en parallèle. */
 async function showDashboard() {
+  refreshSiteDemandsCount();   /* sans attendre : le compteur suit quand il arrive */
   const [allClients, allPayments, allTasks, allActivities, siteListings, shared, allDemands] = await Promise.all([
     getAll('clients'),
     getAll('payments'),
@@ -2411,6 +2414,188 @@ async function markSold(propertyId) {
   }
   propsView.loaded = false;
   showProperties();
+}
+
+/* ═══════════════ DEMANDES DU SITE (24/10/2026) ═══════════════
+
+   Ce que les visiteurs de selogercm.com laissent avec un contact : le
+   formulaire « Je cherche un bien », les rendez-vous, le contact. Le CRM
+   vient les chercher (netlify/functions/crm-demandes.js, jeton du CRM
+   validé côté site) et l'agent les importe EN UN CLIC : le système propose,
+   l'agent valide — une demande fantaisiste ne pollue pas le fichier. */
+
+const SOURCE_DEMANDE = { je_cherche: 'Je cherche', rdv: 'Rendez-vous', contact: 'Contact' };
+
+/* La fiche client tirée d'une demande. Pure, donc testable. */
+function demandeVersClient(d) {
+  return {
+    name: (d.name && d.name !== 'Anonymous') ? d.name : (d.phone ? '+' + d.phone : d.email || 'Visiteur du site'),
+    phone: d.phone ? '+' + d.phone : null,
+    email: d.email || null,
+    type: d.rent_sale === 'sale' ? 'buyer' : (d.rent_sale === 'rent' ? 'renter' : null),
+    source: 'site',
+    source_detail: (SOURCE_DEMANDE[d.source] || d.source) + (d.listing_ref ? ' · réf. ' + d.listing_ref : ''),
+    notes: d.message || null
+  };
+}
+
+/* La recherche tirée d'une demande, ou null quand elle ne dit pas ce
+   qui est cherché (un simple message de contact). Pure, donc testable. */
+function demandeVersRecherche(d, clientId) {
+  if (!d.rent_sale) return null;
+  return {
+    client_id: clientId,
+    label: 'Site — ' + (SOURCE_DEMANDE[d.source] || d.source),
+    rent_sale: d.rent_sale,
+    wanted_types: d.type ? [d.type] : null,
+    wanted_districts: (d.districts && d.districts.length) ? d.districts : null,
+    budget: Number(d.budget_max) > 0 ? Number(d.budget_max) : null,
+    budget_min: null,
+    min_bedrooms: Number(d.bedrooms) > 0 ? Number(d.bedrooms) : null,
+    wants_furnished: d.furnished === true ? true : null,
+    notes: d.message || null,
+    active: true
+  };
+}
+
+/* Une ligne lisible : « Location · Appartement · 3 ch. · Bonapriso · 400 000 FCFA max ». */
+function resumeDemande(d) {
+  return [d.rent_sale === 'sale' ? 'Achat' : (d.rent_sale === 'rent' ? 'Location' : ''),
+          TYPE_FR[d.type] || d.type || '',
+          Number(d.bedrooms) > 0 ? d.bedrooms + ' ch.' : '',
+          (d.districts || []).join(', '),
+          Number(d.budget_max) > 0 ? Number(d.budget_max).toLocaleString('fr-FR') + ' FCFA max' : '',
+          d.furnished === true ? 'meublé' : '']
+    .filter(Boolean).join(' · ');
+}
+
+const siteDemandsView = { list: [] };
+
+async function siteFetch(chemin, options) {
+  const jeton = (await supabaseClient.auth.getSession()).data.session?.access_token;
+  const r = await fetch(SITE_FN + chemin, Object.assign({}, options, {
+    headers: Object.assign({ 'Content-Type': 'application/json', Authorization: 'Bearer ' + jeton }, (options || {}).headers || {})
+  }));
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+  return j;
+}
+
+/* Le compteur de la navigation. Silencieux en cas d'échec : il n'est
+   qu'un rappel, l'écran dira l'erreur si on l'ouvre. */
+async function refreshSiteDemandsCount() {
+  const badge = document.getElementById('site-demands-count');
+  if (!badge) return;
+  try {
+    const { demandes } = await siteFetch('crm-demandes');
+    siteDemandsView.list = demandes || [];
+    badge.textContent = siteDemandsView.list.length;
+    badge.hidden = !siteDemandsView.list.length;
+  } catch (e) { badge.hidden = true; }
+}
+
+async function showSiteDemands() {
+  UI.showLoading();
+  try {
+    const { demandes } = await siteFetch('crm-demandes');
+    siteDemandsView.list = demandes || [];
+  } catch (e) {
+    mainContent.innerHTML = `<h2>Demandes du site</h2><div class="alert alert-warning">
+      <strong>Les demandes n'ont pas pu être lues.</strong><p>${escHtml(e.message)}</p></div>`;
+    return;
+  }
+  const badge = document.getElementById('site-demands-count');
+  if (badge) { badge.textContent = siteDemandsView.list.length; badge.hidden = !siteDemandsView.list.length; }
+
+  const l = siteDemandsView.list;
+  mainContent.innerHTML = `
+    <h2>Demandes du site</h2>
+    <p class="item-meta">${l.length ? l.length + ' demande(s) à traiter, la plus récente en premier.' : ''}
+      « Importer » crée la fiche client (ou retrouve celle qui a ce numéro) et sa recherche, puis annonce les biens qui correspondent.</p>
+    <div class="list">
+      ${l.length ? l.map(d => `<div class="list-item">
+        <div><span class="src-badge">${escHtml(SOURCE_DEMANDE[d.source] || d.source)}</span>
+          <strong>${escHtml(d.name || 'Sans nom')}</strong>${d.lang === 'en' ? ' <span class="item-meta">(anglais)</span>' : ''}</div>
+        <div class="item-meta">${escHtml([d.phone ? '+' + d.phone : '', d.email || ''].filter(Boolean).join(' · '))}</div>
+        ${resumeDemande(d) ? `<div class="item-meta">${escHtml(resumeDemande(d))}</div>` : ''}
+        ${d.listing_ref ? `<div class="item-meta">Annonce : réf. ${escHtml(d.listing_ref)}</div>` : ''}
+        ${d.message ? `<div class="item-meta">« ${escHtml(d.message)} »</div>` : ''}
+        <div class="item-meta">${formatDate(d.created_at)}</div>
+        <div>
+          <button onclick="importSiteDemand(${Number(d.id)})" class="btn btn-primary">Importer</button>
+          ${d.phone ? `<button onclick="sendWhatsApp('${escAttr(d.phone)}', '')" class="ghost-btn">WhatsApp</button>` : ''}
+          <button onclick="dismissSiteDemand(${Number(d.id)})" class="ghost-btn" title="Essai, doublon ou message hors sujet">Écarter</button>
+        </div>
+      </div>`).join('') : '<p>Aucune demande en attente. Elles arrivent du formulaire « Je cherche un bien », des rendez-vous et du contact de selogercm.com.</p>'}
+    </div>`;
+}
+
+async function importSiteDemand(id) {
+  const d = siteDemandsView.list.find(x => x.id === id);
+  if (!d) return;
+  try {
+    /* 1. Le client : le même numéro = la même personne. Un nom seul ne
+          suffit pas à décider, on demande. */
+    const tous = await getAll('clients');
+    const jumeaux = findDuplicates({ name: d.name, phone: d.phone ? '+' + d.phone : null }, tous);
+    let client = null;
+    const parTel = jumeaux.find(j => d.phone && normalizePhone(j.client.phone) === normalizePhone('+' + d.phone));
+    if (parTel) {
+      client = parTel.client;
+    } else if (jumeaux.length) {
+      const ok = await UI.confirm(
+        'Une fiche porte déjà ce nom : ' + (jumeaux[0].client.name || '') + '. Lui rattacher cette demande ?',
+        { title: 'Même personne ?', confirmLabel: 'Oui, la rattacher', cancelLabel: 'Non, nouvelle fiche' });
+      if (ok) client = jumeaux[0].client;
+    }
+    if (!client) {
+      const { data, error } = await supabaseClient.from('clients').insert([demandeVersClient(d)]).select();
+      if (error) throw error;
+      client = data[0];
+    }
+
+    /* 2. La recherche, s'il y a de quoi en faire une. */
+    const recherche = demandeVersRecherche(d, client.id);
+    let creee = null;
+    if (recherche) {
+      const { data, error } = await supabaseClient.from('demands').insert([recherche]).select();
+      if (error) throw error;
+      creee = data[0];
+    }
+
+    /* 3. Une trace dans les activités pour un rendez-vous ou un contact :
+          c'est une demande à rappeler, avec la référence citée. */
+    if (d.source !== 'je_cherche') {
+      await supabaseClient.from('activities').insert([{
+        type: d.source === 'rdv' ? 'meeting' : 'email', client_id: client.id,
+        notes: (d.source === 'rdv' ? 'Demande de rendez-vous (site)' : 'Message de contact (site)')
+          + (d.listing_ref ? ' — réf. ' + d.listing_ref : '') + (d.message ? ' — ' + d.message : ''),
+        date: new Date().toISOString().slice(0, 10)
+      }]);
+    }
+
+    /* 4. Côté site : la demande est traitée, rattachée à la fiche. */
+    await siteFetch('crm-demandes', { method: 'POST', body: JSON.stringify({ id: d.id, action: 'importee', crm_client_id: client.id }) });
+
+    UI.toast('Importée : ' + (client.name || 'client') + (creee ? ' — recherche créée' : ''), 'success');
+    refreshSiteDemandsCount();
+    showClientDemands(client.id);
+    if (creee) alertMatchesForDemand(creee);
+  } catch (e) {
+    UI.toast('Import impossible : ' + ((e && e.message) || e), 'error');
+  }
+}
+
+async function dismissSiteDemand(id) {
+  const ok = await UI.confirm('Écarter cette demande sans l\'importer ? (essai, doublon, message hors sujet)',
+    { title: 'Écarter', confirmLabel: 'Écarter', cancelLabel: 'Annuler' });
+  if (!ok) return;
+  try {
+    await siteFetch('crm-demandes', { method: 'POST', body: JSON.stringify({ id, action: 'ecartee' }) });
+    showSiteDemands();
+  } catch (e) {
+    UI.toast('Impossible : ' + ((e && e.message) || e), 'error');
+  }
 }
 
 /* ═══════════════ RELANCES À 15 JOURS ═══════════════

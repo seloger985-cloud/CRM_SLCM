@@ -107,7 +107,7 @@ console.log(`\n${DIM}Caractères de contrôle${OFF}`);
    run() peut être asynchrone : certains contrôles doivent laisser passer un
    tour de boucle pour voir les promesses rejetées. */
 (async () => {
-for (const mod of ['check-migrations', 'test-dates', 'check-columns', 'check-invoice', 'check-handlers', 'test-escaping', 'test-matching', 'test-duplicates', 'test-suggestions', 'test-followups', 'test-covers', 'test-screens', 'test-confreres']) {
+for (const mod of ['check-migrations', 'test-dates', 'check-columns', 'check-invoice', 'check-handlers', 'test-escaping', 'test-matching', 'test-duplicates', 'test-suggestions', 'test-followups', 'test-covers', 'test-screens', 'test-confreres', 'test-demandes-site']) {
   let result;
   try {
     result = await require('./' + mod).run();
