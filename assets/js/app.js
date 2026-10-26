@@ -2694,6 +2694,7 @@ async function showPublishForm(propertyId) {
     <div class="form-group">
       <label>Photos (${terrain ? '1' : PHOTOS_MIN} minimum, ${PHOTOS_MAX} maximum) — la première sert de couverture :</label>
       <input type="file" id="pub-photos" accept="image/*" multiple>
+      <p class="item-meta" id="pub-compte"></p>
     </div>
     <div id="pub-grille" style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0"></div>
     <div class="form-group">
@@ -2709,15 +2710,29 @@ async function showPublishForm(propertyId) {
     <button type="button" onclick="showProperties()" class="btn btn-outline">Annuler</button>
     <p class="item-meta" id="pub-etat"></p>`;
 
+  /* Les photos s'AJOUTENT à chaque choix : sur certains téléphones, le
+     sélecteur n'en rend qu'une à la fois (appareil photo, navigateur intégré
+     d'une appli…). Le compteur dit où on en est et qu'on peut recommencer. */
   document.getElementById('pub-photos').addEventListener('change', e => {
-    const nouvelles = [...e.target.files].filter(f => /^image\//.test(f.type));
+    const choisies = [...e.target.files];
+    /* Certains sélecteurs Android rendent un fichier sans type MIME : on
+       se fie alors à l'extension plutôt que de l'écarter en silence. */
+    const nouvelles = choisies.filter(f => /^image\//.test(f.type) || (!f.type && /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(f.name || '')));
+    let ajoutees = 0;
     for (const f of nouvelles) {
       if (pubView.photos.length >= PHOTOS_MAX) break;
       pubView.photos.push({ file: f, apercu: URL.createObjectURL(f) });
+      ajoutees++;
     }
     e.target.value = '';
     dessinerPhotos();
+    if (choisies.length && !ajoutees) {
+      UI.toast(pubView.photos.length >= PHOTOS_MAX ? `Maximum ${PHOTOS_MAX} photos atteint.` : 'Fichier non reconnu comme une photo.', 'error');
+    } else if (ajoutees) {
+      UI.toast(`${ajoutees} photo${ajoutees > 1 ? 's' : ''} ajoutée${ajoutees > 1 ? 's' : ''}`, 'success');
+    }
   });
+  dessinerPhotos();
   document.getElementById('pub-go').addEventListener('click', publierAvecPhotos);
 }
 
@@ -2725,6 +2740,14 @@ async function showPublishForm(propertyId) {
 function dessinerPhotos() {
   const g = document.getElementById('pub-grille');
   if (!g) return;
+  const c = document.getElementById('pub-compte');
+  if (c && pubView.p) {
+    const min = pubView.p.type === 'plots-of-land' ? 1 : PHOTOS_MIN, n = pubView.photos.length;
+    c.textContent = n >= min
+      ? `${n} photo${n > 1 ? 's' : ''} — c'est suffisant (jusqu'à ${PHOTOS_MAX}).`
+      : `${n} photo${n > 1 ? 's' : ''} sur ${min} minimum. Le sélecteur n'en prend qu'une ? Touchez-le de nouveau : chaque choix s'ajoute aux précédents.`;
+    c.style.color = n >= min ? '' : '#b45309';
+  }
   g.innerHTML = pubView.photos.map((x, i) => `
     <div style="width:150px">
       <img src="${escAttr(x.apercu)}" alt="" style="width:150px;height:110px;object-fit:cover;border-radius:8px;${i === 0 ? 'outline:3px solid var(--accent, #ED7A14)' : ''}">
