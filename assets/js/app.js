@@ -78,9 +78,24 @@ if (window.SLCM_SESSION) {
      « Erreur » — uniquement quand la session est déjà là au chargement,
      c'est-à-dire au rechargement à chaud. La branche `else` n'avait pas le
      problème : son événement arrive après la fin du fichier. */
-  queueMicrotask(() => showDashboard());
+  queueMicrotask(() => ecranDeDepart());
 } else {
-  document.addEventListener('slcm:auth-ready', () => showDashboard(), { once: true });
+  document.addEventListener('slcm:auth-ready', () => ecranDeDepart(), { once: true });
+}
+
+/* Écran d'arrivée. `index.html?publier=12` ouvre directement la publication
+   avec photos de la fiche 12 : le générateur de visuel y renvoie les biens
+   qui ne sont pas des terrains (un visuel seul compte pour UNE image, le
+   site en exige trois hors terrain). Le paramètre est retiré de l'adresse,
+   pour qu'un rechargement ne rouvre pas le formulaire. */
+function ecranDeDepart() {
+  const recherche = typeof location !== 'undefined' ? location.search : '';   /* absent des tests Node */
+  const id = Number(new URLSearchParams(recherche).get('publier'));
+  if (id > 0) {
+    history.replaceState(null, '', location.pathname);
+    return showPublishForm(id);
+  }
+  return showDashboard();
 }
 
 window.addEventListener('error', event => {

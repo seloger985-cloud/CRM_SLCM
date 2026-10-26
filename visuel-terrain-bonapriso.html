@@ -470,16 +470,23 @@
      contient souvent « Contact : <numéro du confrère> ». */
   const SITE_PUBLIER='https://selogercm.com/.netlify/functions/crm-publier';
   const ficheChoisie=()=>_biens.find(b=>String(b.id)===document.getElementById('f-bien').value);
+  /* Seul un terrain se publie avec son visuel. Le reste (immeuble, villa,
+     appartement…) se publie avec au moins 3 photos : le visuel n'en ferait
+     qu'UNE, et le site refuserait (« au moins 3 photos (1 reçue) »). Le
+     bouton envoie alors vers la publication avec photos du CRM. */
+  const estTerrain=b=>(b.type||'plots-of-land')==='plots-of-land';
   function etatPublier(){
     const b=ficheChoisie(), btn=document.getElementById('publier');
     btn.disabled=!(b && b.code);
-    btn.title=!b?'Choisis d’abord une fiche du CRM':(b.listing_slug?'Déjà publiée — rattache seulement':'Publier '+b.code+' pour 30 jours');
+    btn.textContent=(b && !estTerrain(b))?'Publier avec photos →':'Publier sur le site';
+    btn.title=!b?'Choisis d’abord une fiche du CRM':(!estTerrain(b)?'Ce bien n’est pas un terrain : il se publie avec au moins 3 photos, depuis le CRM':(b.listing_slug?'Déjà publiée — rattache seulement':'Publier '+b.code+' pour 30 jours'));
   }
   const etat=t=>{ document.getElementById('pub-etat').innerHTML=t; };
   const val=id=>document.getElementById(id).value.trim();
 
   document.getElementById('publier').onclick=async ()=>{
     const b=ficheChoisie(); if(!b||!b.code) return;
+    if(!estTerrain(b)){ location.href='index.html?publier='+encodeURIComponent(b.id); return; }
     if(!confirm('Publier '+b.code+' sur selogercm.com pour 30 jours ?\n\nLe contact affiché sera celui de l’agence, jamais celui du confrère.')) return;
     const btn=document.getElementById('publier'); btn.disabled=true;
     etat('Publication en cours…');
