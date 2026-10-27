@@ -2294,7 +2294,9 @@ function showPropertyForm(property = null, draft = null, back = null) {
   /* Adresses déjà saisies + les quartiers connus du rapprochement : écrire
      « Bonaprisso » une fois suffit à rendre un bien introuvable. */
   wireSuggestions('property-address', 'properties', 'address', DEMAND_DISTRICTS);
-  wireSuggestions('property-district', 'properties', 'district', DEMAND_DISTRICTS);
+  /* Suggestions : la liste du site d'abord, pour qu'un bien saisi ici se
+     publie sans retouche de quartier. */
+  quartiersSite().then(liste => wireSuggestions('property-district', 'properties', 'district', liste));
   fillConfrereSelect(v);
   wirePriceFromM2();
 
@@ -2662,6 +2664,31 @@ function relancerConfrere(propertyId) {
    description : celle-ci vient souvent du message du confrère (son numéro,
    « commission 1 mois », « me laisser la visite »). */
 const SITE_FN = 'https://selogercm.com/.netlify/functions/';
+
+/* Les quartiers de Douala tels que le SITE les connaît (sa liste de filtres,
+   servie par netlify/functions/quartiers.js). Une annonce publiée dans un
+   quartier hors liste — ou mal orthographié, « Beedi » pour « Béedi » —
+   n'était trouvée ni par le filtre ni par la barre de recherche du site.
+   Repli sur DEMAND_DISTRICTS si le site ne répond pas. */
+let _quartiersSite = null;
+function quartiersSite() {
+  if (!_quartiersSite) {
+    _quartiersSite = fetch(SITE_FN + 'quartiers')
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(j => (j.cities && j.cities.Douala) || DEMAND_DISTRICTS)
+      .catch(() => { _quartiersSite = null; return DEMAND_DISTRICTS; });
+  }
+  return _quartiersSite;
+}
+/* Même rapprochement que crm-publier.js côté site : sans accents, casse,
+   tirets ni espaces ; « Bonadiwoto » retrouve « Bonadiwoto (Grand Mall) ». */
+function quartierDeLaListe(liste, saisi) {
+  const cle = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const k = cle(saisi);
+  if (!k) return null;
+  return liste.find(q => cle(q) === k) || liste.find(q => cle(q.replace(/\s*\(.*\)\s*$/, '')) === k) || null;
+}
+
 const PHOTOS_MIN = 3;             /* hors terrain — choix du 24/10/2026 */
 const PHOTOS_MAX = 15;
 const pubView = { p: null, photos: [] };   /* photos : [{ file, apercu }] */
@@ -2707,6 +2734,11 @@ async function showPublishForm(propertyId) {
     <p class="item-meta">${escHtml(p.title || '')} — ${escHtml(prix)}${p.rent_sale === 'rent' ? ' / mois' : ''} · ${escHtml(p.district || 'quartier manquant')}</p>
     <p class="item-meta">Référence publique : <strong>${escHtml(p.code)}</strong> · contact affiché : l&#39;agence · en ligne 30 jours.</p>
     <div class="form-group">
+      <label for="pub-quartier">Quartier sur le site <span class="item-meta">— celui de la recherche du site, orthographe comprise</span></label>
+      <select id="pub-quartier"><option value="">Chargement de la liste…</option></select>
+      <p class="item-meta" id="pub-quartier-info"></p>
+    </div>
+    <div class="form-group">
       <label>Photos (${terrain ? '1' : PHOTOS_MIN} minimum, ${PHOTOS_MAX} maximum) — la première sert de couverture :</label>
       <input type="file" id="pub-photos" accept="image/*" multiple>
       <p class="item-meta" id="pub-compte"></p>
@@ -2749,6 +2781,22 @@ async function showPublishForm(propertyId) {
   });
   dessinerPhotos();
   document.getElementById('pub-go').addEventListener('click', publierAvecPhotos);
+
+  /* Quartier : présélectionné s'il correspond à un quartier du site, à
+     choisir sinon (Malangue, Ndogbati… sont absents tant qu'on ne les y a
+     pas ajoutés). */
+  quartiersSite().then(liste => {
+    const sel = document.getElementById('pub-quartier'), info = document.getElementById('pub-quartier-info');
+    if (!sel || pubView.p !== p) return;   /* l'agent a quitté le formulaire */
+    const trouve = quartierDeLaListe(liste, p.district);
+    sel.innerHTML = '<option value="">— Choisir —</option>'
+      + liste.map(q => `<option value="${escAttr(q)}"${q === trouve ? ' selected' : ''}>${escHtml(q)}</option>`).join('');
+    info.textContent = !p.district ? 'La fiche n’a pas de quartier : choisis-le.'
+      : !trouve ? `« ${p.district} » n’est pas dans la liste du site : choisis le quartier le plus proche, ou demande son ajout. La fiche sera mise à jour.`
+      : trouve !== p.district ? `« ${p.district} » sera publié sous l’orthographe du site : ${trouve}. La fiche sera mise à jour.`
+      : '';
+    info.style.color = trouve ? '' : '#b45309';
+  });
 }
 
 /* Les vignettes, avec ← → pour l'ordre et ✕ pour retirer. */
@@ -2793,7 +2841,9 @@ async function publierAvecPhotos() {
   if (!document.getElementById('pub-propres').checked) {
     UI.toast('Vérifie d\'abord qu\'aucune photo ne montre le numéro ou le logo du confrère.', 'error'); return;
   }
-  if (!p.rent_sale || !p.district) { UI.toast('La fiche doit indiquer la transaction et le quartier.', 'error'); return; }
+  const quartier = (document.getElementById('pub-quartier') || {}).value || '';
+  if (!p.rent_sale) { UI.toast('La fiche doit indiquer la transaction (location ou vente).', 'error'); return; }
+  if (!quartier) { UI.toast('Choisis le quartier sur le site.', 'error'); return; }
   if (!(Number(p.price) > 0) && !(p.prix_sur_demande && p.rent_sale === 'sale')) {
     UI.toast('Prix manquant (ou « prix sur demande » pour une vente).', 'error'); return;
   }
@@ -2833,7 +2883,7 @@ async function publierAvecPhotos() {
     const corps = {
       code: p.code, title: p.title, type: p.type, rent_sale: p.rent_sale,
       price: p.prix_sur_demande ? null : p.price, prix_sur_demande: !!p.prix_sur_demande,
-      surface_m2: p.surface_m2, district: p.district, city: 'Douala',
+      surface_m2: p.surface_m2, district: quartier, city: 'Douala',
       repere: (p.address && p.address !== p.district) ? p.address : null,
       description: document.getElementById('pub-texte').value.trim(),
       bedrooms: p.bedrooms, bathrooms: p.bathrooms, furnished: !!p.furnished,
@@ -2843,7 +2893,8 @@ async function publierAvecPhotos() {
     const j2 = await r2.json().catch(() => ({}));
     if (!(r2.ok || r2.status === 409)) throw new Error(j2.error || 'HTTP ' + r2.status);
 
-    const { error } = await supabaseClient.from('properties').update({ listing_id: j2.id, listing_slug: j2.slug }).eq('id', p.id);
+    /* La fiche prend le quartier tel que publié : CRM et site disent la même chose. */
+    const { error } = await supabaseClient.from('properties').update({ listing_id: j2.id, listing_slug: j2.slug, district: quartier }).eq('id', p.id);
     if (error) throw new Error('annonce en ligne, mais fiche non rattachée : ' + error.message);
 
     UI.toast((r2.status === 409 ? 'Déjà en ligne — fiche rattachée : ' : 'En ligne : ') + 'selogercm.com/annonce/' + j2.slug, 'success');
