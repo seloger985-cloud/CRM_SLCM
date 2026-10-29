@@ -1904,6 +1904,8 @@ async function analyzeInbox() {
       rent_sale: bien.rent_sale, bedrooms: bien.bedrooms,
       surface_m2: bien.surface_m2, price_m2: bien.price_m2,
       furnished: bien.furnished, description,
+      /* Équipements repérés dans le message lui-même, par règle. */
+      ...detecterEquipements(message),
       /* Le contact sert à retrouver ou créer le confrère (sql/12). Il reste
          aussi dans la description : si l'agent choisit « en direct », il
          n'est pas perdu pour autant. */
@@ -1920,6 +1922,39 @@ async function analyzeInbox() {
     bouton.disabled = false;
     bouton.textContent = 'Analyser';
   }
+}
+
+/* ═══════════════ ÉQUIPEMENTS (sql/15) ═══════════════
+
+   Les sept cases du formulaire de publication du site, mêmes noms de
+   colonnes : la publication les recopie telles quelles.
+
+   Dans un message collé, on les repère par RÈGLE, sans modèle : un mot-clé
+   suffit, et une règle ne se trompe pas de façon imprévisible. Une négation
+   juste avant (« sans parking », « pas de piscine ») annule la détection.
+   On ne coche que ce qui est dit : rien n'est jamais décoché. */
+const EQUIPEMENTS = [
+  { k: 'parking',           label: 'Parking',            re: /\b(parking|garage|stationnement|parc\s+auto)/i },
+  { k: 'generator',         label: 'Groupe électrogène', re: /(groupe\s*)?[ée]lectrog[èe]ne|\bg[ée]n[ée]rat(eu|ri)r|\bgroupe\s+(de\s+)?secours/i },
+  { k: 'pool',              label: 'Piscine',            re: /\bpiscine/i },
+  { k: 'climatisation',     label: 'Climatisation',      re: /\bclim(atis[ée]e?s?|atisation|atiseurs?|s)?(?![a-zà-ÿ])|\bsplits?\b|\bair\s+conditionn[ée]/i },   /* pas de \b après « é » : il ne marche qu'en ASCII */
+  { k: 'forage',            label: 'Forage',             re: /\bforage|ch[aâ]teau\s+d['’]eau|\bpuits\b|b[âa]che\s+[àa]\s+eau/i },
+  { k: 'gardien',           label: 'Gardien',            re: /\bgardien(nage)?\b|\bvigile|\bs[ée]curit[ée]\s+24/i },
+  { k: 'videosurveillance', label: 'Vidéosurveillance',  re: /vid[ée]o[\s-]?surveillance|\bcam[ée]ras?\b/i }
+];
+
+function detecterEquipements(texte) {
+  const t = String(texte || '');
+  const trouves = {};
+  EQUIPEMENTS.forEach(e => {
+    const m = e.re.exec(t);
+    if (!m) return;
+    /* « sans parking », « pas de piscine », « non meublé, ni clim » */
+    const avant = t.slice(Math.max(0, m.index - 14), m.index).toLowerCase();
+    if (/\b(sans|pas\s+de|pas\s+d['’]|ni|non)\s*$/.test(avant)) return;
+    trouves[e.k] = true;
+  });
+  return trouves;
 }
 
 /* Ce que le message ne disait pas. Affiché en tête du formulaire plutôt que
@@ -2280,6 +2315,12 @@ function showPropertyForm(property = null, draft = null, back = null) {
         </div>
         <div class="form-group">
           <label><input type="checkbox" id="property-furnished" ${v.furnished ? 'checked' : ''}> Meublé</label>
+        </div>
+        <div class="form-group">
+          <label>Équipements${draft && EQUIPEMENTS.some(e => draft[e.k]) ? ' <span class="item-meta">— cochés d&#39;après le message, à vérifier</span>' : ''}</label>
+          <div style="display:flex;flex-wrap:wrap;gap:6px 16px">
+            ${EQUIPEMENTS.map(e => `<label style="font-weight:400"><input type="checkbox" class="property-equip" value="${e.k}" ${v[e.k] ? 'checked' : ''}> ${e.label}</label>`).join('')}
+          </div>
         </div>
       </fieldset>
       <div class="form-group">
@@ -2887,6 +2928,8 @@ async function publierAvecPhotos() {
       repere: (p.address && p.address !== p.district) ? p.address : null,
       description: document.getElementById('pub-texte').value.trim(),
       bedrooms: p.bedrooms, bathrooms: p.bathrooms, furnished: !!p.furnished,
+      /* Équipements (sql/15) : mêmes colonnes que le site. */
+      ...Object.fromEntries(EQUIPEMENTS.map(e => [e.k, p[e.k] === true])),
       images: j1.photos.map(x => x.url)
     };
     const r2 = await fetch(SITE_FN + 'crm-publier', { method: 'POST', headers: auth, body: JSON.stringify(corps) });
@@ -3010,7 +3053,12 @@ async function saveProperty(id) {
     district: document.getElementById('property-district').value || null,
     rent_sale: document.getElementById('property-rentsale').value || null,
     bedrooms: numOrNull('property-bedrooms'),
-    furnished: document.getElementById('property-furnished').checked ? true : null
+    furnished: document.getElementById('property-furnished').checked ? true : null,
+    /* Équipements (sql/15) : coché → true, sinon null (non renseigné). */
+    ...Object.fromEntries(EQUIPEMENTS.map(e => {
+      const c = document.querySelector(`.property-equip[value="${e.k}"]`);
+      return [e.k, c && c.checked ? true : null];
+    }))
   };
 
   try {
@@ -3449,7 +3497,7 @@ const TABLE_COLS = {
      sql/10 : `properties` etait plat, un immeuble et ses appartements y
      etaient des lignes sans lien, et le proprietaire n'existait que sur
      le bail — donc un logement vacant n'en avait pas. */
-  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at,district,rent_sale,bedrooms,furnished,parent_id,landlord_id,floor,unit_label,bathrooms,code,confrere_id,confrere_ref,commission,surface_m2,price_m2,ancien_code,prix_sur_demande',
+  properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at,district,rent_sale,bedrooms,furnished,parent_id,landlord_id,floor,unit_label,bathrooms,code,confrere_id,confrere_ref,commission,surface_m2,price_m2,ancien_code,prix_sur_demande,parking,generator,pool,climatisation,forage,gardien,videosurveillance',
   /* sql/12 : le confrère qui détient un bien, et le code court public. */
   confreres:  'id,name,agency,phone,whatsapp,zones,notes,active,created_at',
   activities: 'id,type,client_id,property_id,notes,date,created_at,outcome,next_step,next_date,next_done_at',
