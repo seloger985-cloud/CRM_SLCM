@@ -14,6 +14,7 @@ lit les annonces en direct — sans jamais les recopier.
 | **Tableau de bord** | Ce qui attend, ce qui entre, ce qui est engagé, ce qui est encaissé. |
 | **Clients** | Fiches, statut dans le pipeline, contact WhatsApp, et leurs **recherches**. |
 | **Biens** | Les annonces publiées sur le site *et* les saisies internes, fusionnées. Un message reçu d'un confrère devient une fiche en un collage. |
+| **Annonces des groupes** | (depuis Biens) La mémoire de tout ce qui circule dans les groupes WhatsApp de travail : l'export hebdomadaire de chaque groupe est découpé, trié, analysé, et chaque offre reste cherchable, rapprochée des demandes clients, transformable en fiche. Voir `sql/16_annonces_captees.sql`. |
 | **Activités** | Journal des appels, rendez-vous, e-mails et visites. |
 | **Paiements** | Encaissements rattachés à un client et à un bien. |
 | **Factures** | Page dédiée (`facture.html`), numérotation automatique, export PDF. |

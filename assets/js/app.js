@@ -1102,6 +1102,7 @@ async function showProperties(force) {
       <button onclick="showPropertyForm()" class="btn btn-primary">Ajouter</button>
       <button onclick="showInbox()" class="ghost-btn" title="Coller un message reçu d'un confrère">Depuis un message</button>
       <button onclick="showConfreres()" class="ghost-btn" title="Le répertoire des confrères">Confrères</button>
+      <button onclick="showCaptures()" class="ghost-btn" title="Tout ce qui circule dans les groupes WhatsApp, publié ou non">Annonces des groupes</button>
       <button onclick="toggleUnits()" class="ghost-btn" id="units-toggle" title="Les logements d'un immeuble sont masqués par défaut">${propsView.showUnits ? 'Masquer' : 'Afficher'} les logements</button>
       <button onclick="exportCSV('properties')" class="ghost-btn" title="Exporter en CSV">Export CSV</button>
       <button onclick="showProperties(true)" class="ghost-btn" title="Recharger depuis selogercm.com">↻</button>
@@ -2211,6 +2212,8 @@ function escAttr(v) {
 }
 
 function showPropertyForm(property = null, draft = null, back = null) {
+  /* Seul « Créer la fiche » d'une annonce captée garde le lien (sql/16). */
+  if (back !== 'captures') captureEnCours = null;
   const v = property || draft || {};
   const editing = !!property;
   /* En création, on reprend le dernier choix de l'agent ; en modification,
@@ -2328,7 +2331,7 @@ function showPropertyForm(property = null, draft = null, back = null) {
         <textarea id="property-description">${escHtml(v.description || '')}</textarea>
       </div>
       <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Ajouter'}</button>
-      <button type="button" onclick="${back === 'inbox' ? 'showInbox()' : 'showProperties()'}" class="btn btn-outline">Annuler</button>
+      <button type="button" onclick="${back === 'inbox' ? 'showInbox()' : back === 'captures' ? 'showCaptures()' : 'showProperties()'}" class="btn btn-outline">Annuler</button>
     </form>
   `;
 
@@ -3034,6 +3037,529 @@ async function saveConfrere(id) {
   showConfreres();
 }
 
+/* ═══════════════ ANNONCES DES GROUPES (sql/16) ═══════════════
+
+   La mémoire de tout ce qui circule dans les groupes de travail WhatsApp,
+   publié ou non. L'agent importe chaque semaine l'export de chaque groupe ;
+   assets/js/capture.js le découpe et écarte le bavardage, la fonction
+   capture-annonces analyse les offres retenues, par paquets.
+
+   Rien n'entre dans le portefeuille sans décision : une annonce captée
+   devient une fiche par le bouton « Créer la fiche », qui ouvre le
+   formulaire habituel pré-rempli. */
+
+const CAPTURE_PAQUET = 25;          /* = PAQUET_MAX de capture-annonces */
+/* Tarif public de Claude Haiku 5.5 au 02/11/2026, en dollars par jeton
+   (0,10 $ / 0,50 $ le million). Sert à AFFICHER ce qu'une analyse a coûté. */
+const CAPTURE_PRIX_ENTREE = 0.10 / 1e6;
+const CAPTURE_PRIX_SORTIE = 0.50 / 1e6;
+const CAPTURE_STATUT_FR = {
+  a_analyser: 'À analyser', analysee: 'Offre', pas_un_bien: 'Pas une offre',
+  erreur: 'Échec d’analyse', promue: 'Fiche créée', ecartee: 'Écartée'
+};
+const CAPTURE_STATUTS = {
+  offres: ['analysee', 'promue'],
+  attente: ['a_analyser', 'erreur'],
+  ecartees: ['pas_un_bien', 'ecartee'],
+  toutes: null
+};
+
+const capView = {
+  rows: [], confreres: [], demands: [], clients: [], attente: 0, import: null, orphelins: [],
+  q: '', rs: '', type: '', prixMax: '', periode: '90', statut: 'offres',
+  loaded: false, enCours: false, stop: false
+};
+/* L'annonce en train de devenir une fiche : saveProperty la relie à la
+   fiche créée. Remise à zéro par tout autre chemin vers le formulaire. */
+let captureEnCours = null;
+
+/* Un auteur d'export qui n'est qu'un numéro (« +237 6 99 12 45 78 »). */
+function auteurEstNumero(auteur) {
+  return /^\+?[\d\s().-]{8,}$/.test(String(auteur || '').trim());
+}
+
+/* Le confrère derrière un auteur d'export. Par le NUMÉRO quand l'auteur en
+   est un (téléphone, WhatsApp, ou alias numérique) ; sinon par le NOM tel
+   que le téléphone de l'agent l'affiche (wa_alias), ou le nom du confrère. */
+function confrereDeAuteur(auteur, confreres) {
+  const a = String(auteur || '').trim();
+  if (!a) return null;
+  const nums = (a.match(PHONE_IN_TEXT) || []).map(normalizePhone).filter(Boolean);
+  const cle = looseKey(a);
+  return (confreres || []).find(c => {
+    if (nums.length) {
+      return [c.phone, c.whatsapp, c.wa_alias].map(normalizePhone).some(n => n && nums.indexOf(n) !== -1);
+    }
+    return !!cle && (looseKey(c.wa_alias) === cle || looseKey(c.name) === cle);
+  }) || null;
+}
+
+/* Une annonce captée, à la forme qu'attend le moteur de rapprochement. */
+function captureVersListing(a) {
+  return {
+    id: 'cap-' + a.id, title: a.title, status: 'active',
+    rent_sale: a.rent_sale || null, type: a.type || null, district: a.district || null,
+    city: null, price: a.price, bedrooms: a.bedrooms, furnished: a.furnished,
+    created_at: a.posted_at || a.created_at
+  };
+}
+
+/* Ce que l'analyse renvoie, réduit aux colonnes de la table. */
+function champsCapture(b) {
+  const garder = ['title', 'type', 'rent_sale', 'price', 'price_m2', 'surface_m2', 'district',
+    'address', 'bedrooms', 'furnished', 'contact', 'manquant'];
+  return Object.fromEntries(garder.map(k => [k, b[k] === undefined ? null : b[k]]));
+}
+
+async function compterAttente() {
+  const { count, error } = await supabaseClient.from('annonces_captees')
+    .select('id', { count: 'exact', head: true }).in('statut', CAPTURE_STATUTS.attente);
+  return error ? 0 : (count || 0);
+}
+
+async function chargerCaptures() {
+  let req = supabaseClient.from('annonces_captees').select(TABLE_COLS.annonces_captees)
+    .order('posted_at', { ascending: false, nullsFirst: false }).limit(1000);
+  if (capView.periode !== 'tout') {
+    req = req.gte('posted_at', new Date(Date.now() - Number(capView.periode) * 86400000).toISOString());
+  }
+  const statuts = CAPTURE_STATUTS[capView.statut];
+  if (statuts) req = req.in('statut', statuts);
+
+  const [res, confreres, demands, clients, attente] = await Promise.all([
+    req, getAll('confreres'), getAll('demands'), getAll('clients'), compterAttente()
+  ]);
+  if (res.error) throw res.error;
+  Object.assign(capView, { rows: res.data || [], confreres, demands, clients, attente, loaded: true });
+}
+
+async function showCaptures(force) {
+  UI.showLoading();
+  try {
+    if (!capView.loaded || force) await chargerCaptures();
+  } catch (e) {
+    mainContent.innerHTML = `<h2>Annonces des groupes</h2>
+      <div class="alert alert-warning">
+        <strong>La table des annonces captées n’est pas lisible.</strong>
+        <p>${escHtml(e.message || String(e))}</p>
+        <p class="item-meta">Si la migration sql/16_annonces_captees.sql n’a pas encore été jouée, c’est la cause.</p>
+      </div>
+      <button onclick="showProperties()" class="ghost-btn">← Biens</button>`;
+    return;
+  }
+
+  const orphelins = auteursOrphelins().length;
+  const opt = (val, cur, label) => `<option value="${val}" ${cur === val ? 'selected' : ''}>${label}</option>`;
+  mainContent.innerHTML = `
+    <h2>Annonces des groupes</h2>
+    <p class="item-meta">Tout ce qui circule dans les groupes de travail, publié ou non. Chaque semaine, exporte chaque groupe : WhatsApp → ⋮ Plus → Exporter la discussion → Sans médias, puis dépose les fichiers ici.</p>
+    <div class="toolbar">
+      <label for="capture-fichiers" class="btn btn-primary">Importer des exports</label>
+      <input type="file" id="capture-fichiers" accept=".txt,text/plain" multiple hidden>
+      <input type="search" id="cap-search" class="search-input" placeholder="Rechercher : quartier, type, confrère, mot du message…" value="${escAttr(capView.q)}">
+      <select id="cap-rs" class="search-select">
+        ${opt('', capView.rs, 'Vente et location')}${opt('sale', capView.rs, 'Vente')}${opt('rent', capView.rs, 'Location')}
+      </select>
+      <select id="cap-type" class="search-select">
+        ${opt('', capView.type, 'Tous types')}${Object.keys(TYPE_FR).map(k => opt(k, capView.type, escHtml(TYPE_FR[k]))).join('')}
+      </select>
+      <input type="number" id="cap-prix" class="search-input" min="0" step="1000" placeholder="Prix max (FCFA)" value="${escAttr(capView.prixMax)}">
+      <select id="cap-periode" class="search-select">
+        ${opt('30', capView.periode, '30 derniers jours')}${opt('90', capView.periode, '3 derniers mois')}${opt('365', capView.periode, '12 derniers mois')}${opt('tout', capView.periode, 'Depuis le début')}
+      </select>
+      <select id="cap-statut" class="search-select">
+        ${opt('offres', capView.statut, 'Offres')}${opt('attente', capView.statut, 'À analyser')}${opt('ecartees', capView.statut, 'Écartées')}${opt('toutes', capView.statut, 'Tout')}
+      </select>
+      <button onclick="showCaptures(true)" class="ghost-btn" title="Recharger">↻</button>
+      <button onclick="showProperties()" class="ghost-btn">← Biens</button>
+    </div>
+    <div id="capture-import"></div>
+    <div id="capture-progress"></div>
+    ${capView.attente ? `<div class="alert alert-warning">
+      <strong>${capView.attente} annonce(s) attendent l’analyse.</strong>
+      <button onclick="lancerAnalyse()" class="btn btn-primary">Analyser maintenant</button>
+    </div>` : ''}
+    ${orphelins ? `<div class="alert alert-match">
+      <strong>${orphelins} auteur(s) à relier à un confrère.</strong> Relié une fois, un auteur l’est pour toutes ses annonces.
+      <button onclick="showCaptureAuteurs()" class="ghost-btn">Relier</button>
+    </div>` : ''}
+    <p class="item-meta" id="cap-count"></p>
+    <div class="list" id="cap-list"></div>`;
+
+  const champ = document.getElementById('cap-search');
+  let t = null;
+  champ.addEventListener('input', () => {
+    clearTimeout(t);
+    t = setTimeout(() => { capView.q = champ.value; renderCaptures(); }, 180);
+  });
+  const prix = document.getElementById('cap-prix');
+  prix.addEventListener('input', () => { capView.prixMax = prix.value; renderCaptures(); });
+  ['rs', 'type'].forEach(k => {
+    const s = document.getElementById('cap-' + k);
+    s.addEventListener('change', () => { capView[k] = s.value; renderCaptures(); });
+  });
+  /* Période et statut filtrent CÔTÉ BASE : on recharge. */
+  ['periode', 'statut'].forEach(k => {
+    const s = document.getElementById('cap-' + k);
+    s.addEventListener('change', () => { capView[k] = s.value; showCaptures(true); });
+  });
+  const fichiers = document.getElementById('capture-fichiers');
+  fichiers.addEventListener('change', () => preparerImport([...fichiers.files]));
+
+  renderCaptures();
+}
+
+function renderCaptures() {
+  const liste = document.getElementById('cap-list');
+  if (!liste) return;
+  const mots = looseKey(capView.q).split(/\s+/).filter(Boolean);
+  const max = Number(capView.prixMax) || 0;
+  const rows = capView.rows.filter(a => {
+    if (capView.rs && a.rent_sale !== capView.rs) return false;
+    if (capView.type && a.type !== capView.type) return false;
+    if (max && !(a.price > 0 && a.price <= max)) return false;
+    if (!mots.length) return true;
+    const c = confrereDeAuteur(a.auteur, capView.confreres);
+    const tout = looseKey([a.title, a.district, a.address, a.message, a.auteur, a.groupe,
+      TYPE_FR[a.type], c && c.name].filter(Boolean).join(' '));
+    return mots.every(m => tout.includes(m));
+  });
+  const compteur = document.getElementById('cap-count');
+  if (compteur) compteur.textContent = rows.length + ' annonce(s)' + (rows.length > 300 ? ' — les 300 plus récentes affichées' : '');
+  liste.innerHTML = rows.length
+    ? rows.slice(0, 300).map(captureCard).join('')
+    : '<p>Aucune annonce pour ces critères.</p>';
+}
+
+/* Les clients dont une recherche active correspond à l'annonce. Même moteur
+   que pour les biens du portefeuille et du site : match.js. */
+function clientsInteresses(a) {
+  if (!(a.statut === 'analysee' || a.statut === 'promue') || !capView.demands.length) return [];
+  const hits = window.SLCM_MATCH.demandsForListing(captureVersListing(a), capView.demands, new Set()) || [];
+  const noms = new Map(capView.clients.map(c => [c.id, c.name]));
+  return [...new Set(hits.map(h => noms.get(h.demand.client_id)).filter(Boolean))];
+}
+
+/* Le numéro auquel écrire au sujet d'une annonce : celui du confrère s'il
+   est relié, sinon l'auteur s'il est un numéro, sinon le numéro cité. */
+function numeroAuteur(a, c) {
+  if (c) return confrereWa(c);
+  if (auteurEstNumero(a.auteur)) return normalizePhone(a.auteur);
+  return normalizePhone((String(a.contact || '').match(PHONE_IN_TEXT) || [])[0]);
+}
+
+function titreCapture(a) {
+  const m = String(a.message || '').replace(/\s+/g, ' ').trim();
+  return a.title || (m.length > 80 ? m.slice(0, 80) + '…' : m);
+}
+
+function captureCard(a) {
+  const c = confrereDeAuteur(a.auteur, capView.confreres);
+  const qui = c
+    ? escHtml(c.name) + (c.agency ? ' — ' + escHtml(c.agency) : '')
+    : escHtml(a.auteur || 'Auteur inconnu') + ' <span class="item-meta">(à relier)</span>';
+  const prix = a.price
+    ? formatMoney(a.price) + ' FCFA' + (a.rent_sale === 'rent' ? ' / mois' : '')
+    : (a.price_m2 ? formatMoney(a.price_m2) + ' FCFA le m²' : 'Prix non indiqué');
+  const quoi = [
+    a.rent_sale === 'rent' ? 'Location' : a.rent_sale === 'sale' ? 'Vente' : '',
+    TYPE_FR[a.type] || '',
+    a.surface_m2 ? formatMoney(a.surface_m2) + ' m²' : '',
+    a.bedrooms ? a.bedrooms + ' ch.' : '',
+    a.district || a.address || ''
+  ].filter(Boolean).join(' · ');
+  const interesses = clientsInteresses(a);
+  const id = Number(a.id);
+
+  const actions = [];
+  if (numeroAuteur(a, c)) actions.push(`<button onclick="ecrireAuteur(${id})" class="ghost-btn" title="Demander si le bien est toujours disponible">${ICON_WHATSAPP} Confrère</button>`);
+  if (a.statut === 'promue' && a.property_id) {
+    actions.push(`<button onclick="editProperty(${Number(a.property_id)})" class="ghost-btn">Voir la fiche</button>`);
+  } else if (a.statut === 'analysee') {
+    actions.push(`<button onclick="promouvoirCapture(${id})" class="btn btn-primary">Créer la fiche</button>`);
+    actions.push(`<button onclick="statutCapture(${id}, 'ecartee')" class="ghost-btn">Écarter</button>`);
+  } else if (a.statut === 'ecartee' || a.statut === 'pas_un_bien') {
+    actions.push(`<button onclick="statutCapture(${id}, 'analysee')" class="ghost-btn">Rétablir</button>`);
+  } else {
+    actions.push(`<button onclick="lancerAnalyse()" class="ghost-btn">Analyser</button>`);
+  }
+
+  return `<div class="list-item">
+    <div><strong>${escHtml(titreCapture(a))}</strong> <span class="item-meta">${escHtml(CAPTURE_STATUT_FR[a.statut] || a.statut)}</span></div>
+    <div>${escHtml(quoi)}${quoi ? ' · ' : ''}<strong>${escHtml(prix)}</strong></div>
+    <div class="item-meta">${qui} · ${escHtml(formatDate(a.posted_at))}${a.groupe ? ' · ' + escHtml(a.groupe) : ''}</div>
+    ${interesses.length ? `<div class="alert alert-match"><strong>Intéresse :</strong> ${interesses.map(escHtml).join(', ')}</div>` : ''}
+    ${a.erreur ? `<div class="item-meta">Échec : ${escHtml(a.erreur)}</div>` : ''}
+    <details class="capture-details"><summary class="item-meta">Message d’origine</summary><div class="capture-message">${escHtml(a.message)}</div></details>
+    <div class="capture-actions">${actions.join(' ')}</div>
+  </div>`;
+}
+
+function ecrireAuteur(id) {
+  const a = capView.rows.find(r => r.id === id);
+  if (!a) return;
+  const c = confrereDeAuteur(a.auteur, capView.confreres);
+  const msg = `Bonjour${c ? ' ' + c.name : ''}, au sujet de votre annonce du ${formatDate(a.posted_at)}`
+    + `${a.groupe ? ' dans « ' + a.groupe + ' »' : ''} : « ${titreCapture(a)} ». Est-elle toujours disponible ?`;
+  sendWhatsApp(numeroAuteur(a, c), msg);
+}
+
+async function statutCapture(id, statut) {
+  const { error } = await supabaseClient.from('annonces_captees').update({ statut }).eq('id', id);
+  if (error) { UI.handleError(error); return; }
+  const a = capView.rows.find(r => r.id === id);
+  if (a) a.statut = statut;
+  renderCaptures();
+  UI.toast(statut === 'ecartee' ? 'Annonce écartée.' : 'Annonce rétablie.', 'success');
+}
+
+/* Le formulaire de fiche habituel, pré-rempli. Le message d'origine part en
+   description : la publication sur le site ne la recopie jamais (elle bâtit
+   son texte depuis les champs), le contact du confrère n'en sort donc pas. */
+function promouvoirCapture(id) {
+  const a = capView.rows.find(r => r.id === id);
+  if (!a) return;
+  const c = confrereDeAuteur(a.auteur, capView.confreres);
+  showPropertyForm(null, {
+    title: a.title, type: a.type, price: a.price, address: a.address, district: a.district,
+    rent_sale: a.rent_sale, bedrooms: a.bedrooms, surface_m2: a.surface_m2, price_m2: a.price_m2,
+    furnished: a.furnished,
+    description: [a.message, 'Vu dans « ' + (a.groupe || 'un groupe') + ' » le ' + formatDate(a.posted_at)].join('\n\n'),
+    ...detecterEquipements(a.message),
+    confrere_id: c ? c.id : null,
+    _contact: c ? null : (a.contact || a.auteur || null),
+    _manquant: a.manquant || []
+  }, 'captures');
+  captureEnCours = id;
+}
+
+/* ─────────────── Import ─────────────── */
+
+async function preparerImport(fichiers) {
+  const zone = document.getElementById('capture-import');
+  if (!zone || !fichiers.length) return;
+  const lus = [];
+  for (const f of fichiers) {
+    if (/\.zip$/i.test(f.name)) {
+      lus.push({ nom: f.name, erreur: 'Archive .zip : ouvre-la et dépose le fichier .txt qu’elle contient.' });
+      continue;
+    }
+    const texte = await f.text();
+    const groupe = window.SLCM_CAPTURE.groupeDepuisFichier(f.name) || '';
+    lus.push({ nom: f.name, texte, groupe, p: window.SLCM_CAPTURE.preparer(texte, groupe) });
+  }
+  capView.import = lus;
+
+  const offres = lus.reduce((s, l) => s + (l.p ? l.p.annonces.length : 0), 0);
+  zone.innerHTML = `<div class="alert alert-match">
+    <strong>${lus.length} fichier(s) lu(s), ${offres} offre(s) probable(s).</strong>
+    <p class="item-meta">Vérifie le nom de chaque groupe : il accompagne chaque annonce. Les annonces déjà importées ne seront ni recréées ni réanalysées.</p>
+    ${lus.map((l, i) => l.p ? `<div class="form-group">
+      <label for="cap-groupe-${i}">${escHtml(l.nom)} — ${l.p.total} message(s), ${l.p.annonces.length} offre(s) probable(s), ${l.p.ignores} écarté(s)</label>
+      <input type="text" id="cap-groupe-${i}" value="${escAttr(l.groupe)}" placeholder="Nom du groupe">
+    </div>` : `<p><strong>${escHtml(l.nom)}</strong> — ${escHtml(l.erreur)}</p>`).join('')}
+    <div class="alert-actions">
+      <button onclick="enregistrerImport()" class="btn btn-primary" id="cap-import-go" ${offres ? '' : 'disabled'}>Enregistrer et analyser</button>
+      <button onclick="annulerImport()" class="ghost-btn">Annuler</button>
+    </div>
+  </div>`;
+}
+
+function annulerImport() {
+  capView.import = null;
+  const zone = document.getElementById('capture-import');
+  if (zone) zone.innerHTML = '';
+}
+
+async function enregistrerImport() {
+  const lus = capView.import || [];
+  const bouton = document.getElementById('cap-import-go');
+  if (bouton) { bouton.disabled = true; bouton.textContent = 'Enregistrement…'; }
+
+  /* Toutes les annonces de tous les fichiers, une par empreinte : le même
+     bien posté dans deux groupes garde sa PREMIÈRE parution. */
+  const parEmpreinte = new Map();
+  let lusTotal = 0;
+  lus.forEach((l, i) => {
+    if (!l.p) return;
+    const champ = document.getElementById('cap-groupe-' + i);
+    const groupe = (champ && champ.value.trim()) || null;
+    const p = window.SLCM_CAPTURE.preparer(l.texte, groupe);
+    lusTotal += p.total;
+    p.annonces.forEach(a => {
+      const deja = parEmpreinte.get(a.empreinte);
+      if (!deja || (a.posted_at && (!deja.posted_at || a.posted_at < deja.posted_at))) parEmpreinte.set(a.empreinte, a);
+    });
+  });
+  const toutes = [...parEmpreinte.values()];
+
+  try {
+    /* Ce que la base connaît déjà. Par tranches : la liste voyage dans l'URL. */
+    const connues = new Set();
+    for (let i = 0; i < toutes.length; i += 150) {
+      const { data, error } = await supabaseClient.from('annonces_captees').select('empreinte')
+        .in('empreinte', toutes.slice(i, i + 150).map(a => a.empreinte));
+      if (error) throw error;
+      (data || []).forEach(r => connues.add(r.empreinte));
+    }
+    const nouvelles = toutes.filter(a => !connues.has(a.empreinte));
+    /* L'index unique de la base reste le vrai garde-fou : deux imports
+       simultanés ne créeraient pas de doublon pour autant. */
+    for (let i = 0; i < nouvelles.length; i += 200) {
+      const { error } = await supabaseClient.from('annonces_captees')
+        .upsert(nouvelles.slice(i, i + 200), { onConflict: 'empreinte', ignoreDuplicates: true });
+      if (error) throw error;
+    }
+
+    capView.import = null;
+    UI.toast(`${lusTotal} message(s) lu(s) : ${toutes.length} offre(s) probable(s), dont ${toutes.length - nouvelles.length} déjà connue(s) et ${nouvelles.length} nouvelle(s).`, 'success', 8000);
+    capView.loaded = false;
+    if (nouvelles.length) await lancerAnalyse();
+    else showCaptures(true);
+  } catch (e) {
+    UI.handleError(e);
+    if (bouton) { bouton.disabled = false; bouton.textContent = 'Enregistrer et analyser'; }
+  }
+}
+
+/* ─────────────── Analyse, par paquets ───────────────
+
+   Les annonces sont d'abord ENREGISTRÉES (« à analyser »), puis analysées.
+   Une coupure réseau au milieu ne perd donc rien : le bandeau « attendent
+   l'analyse » permet de reprendre où on en était. */
+
+function arreterAnalyse() {
+  capView.stop = true;
+}
+
+async function lancerAnalyse() {
+  if (capView.enCours) return;
+  capView.enCours = true;
+  capView.stop = false;
+  const zone = () => document.getElementById('capture-progress');
+  const afficher = (html) => { const z = zone(); if (z) z.innerHTML = html; };
+
+  let faits = 0, offres = 0, jetonsEntree = 0, jetonsSortie = 0, echecsDeSuite = 0;
+  try {
+    /* Un nouvel essai pour les échecs précédents : une panne passagère ne
+       doit pas condamner une annonce. */
+    await supabaseClient.from('annonces_captees').update({ statut: 'a_analyser', erreur: null }).eq('statut', 'erreur');
+    const total = await compterAttente();
+
+    while (!capView.stop) {
+      const { data: paquet, error } = await supabaseClient.from('annonces_captees')
+        .select('id,message').eq('statut', 'a_analyser').order('id').limit(CAPTURE_PAQUET);
+      if (error) throw error;
+      if (!paquet || !paquet.length) break;
+
+      afficher(`<div class="alert alert-match"><strong>Analyse : ${faits} / ${total}</strong> — ${offres} offre(s) reconnue(s).
+        <button onclick="arreterAnalyse()" class="ghost-btn">Arrêter</button></div>`);
+
+      let rep;
+      try {
+        rep = await callFunction('capture-annonces', {
+          messages: paquet.map(p => ({ id: p.id, texte: String(p.message).slice(0, 4000) }))
+        });
+        echecsDeSuite = 0;
+      } catch (e) {
+        await Promise.all(paquet.map(p => supabaseClient.from('annonces_captees')
+          .update({ statut: 'erreur', erreur: String(e.message || e).slice(0, 300) }).eq('id', p.id)));
+        faits += paquet.length;
+        /* Deux paquets de suite en échec : ce n'est plus un accident, on
+           s'arrête plutôt que de marquer tout le reste en échec. */
+        if (++echecsDeSuite >= 2) throw e;
+        continue;
+      }
+
+      if (rep && rep.usage) {
+        jetonsEntree += rep.usage.input_tokens || 0;
+        jetonsSortie += rep.usage.output_tokens || 0;
+      }
+      const parId = new Map(((rep && rep.resultats) || []).map(r => [Number(r.id), r]));
+      await Promise.all(paquet.map(p => {
+        const r = parId.get(Number(p.id));
+        /* Un message sans résultat repasserait au paquet suivant, encore et
+           encore : il est marqué en échec, la boucle avance toujours. */
+        const maj = !r || r.erreur ? { statut: 'erreur', erreur: (r && r.erreur) || 'sans_resultat' }
+          : !r.bien ? { statut: 'pas_un_bien' }
+          : { statut: 'analysee', erreur: null, ...champsCapture(r.bien) };
+        if (maj.statut === 'analysee') offres++;
+        return supabaseClient.from('annonces_captees').update(maj).eq('id', p.id);
+      }));
+      faits += paquet.length;
+    }
+
+    const cout = jetonsEntree * CAPTURE_PRIX_ENTREE + jetonsSortie * CAPTURE_PRIX_SORTIE;
+    UI.toast(`${capView.stop ? 'Analyse arrêtée' : 'Analyse terminée'} : ${offres} offre(s) sur ${faits} message(s) — coût ≈ ${cout.toFixed(3)} $.`, 'success', 8000);
+  } catch (e) {
+    UI.handleError(e);
+  } finally {
+    capView.enCours = false;
+    capView.loaded = false;
+    if (zone()) showCaptures(true);
+  }
+}
+
+/* ─────────────── Relier les auteurs ─────────────── */
+
+/* Les auteurs sans confrère, du plus prolifique au moins. */
+function auteursOrphelins() {
+  const compte = new Map();
+  capView.rows.forEach(a => {
+    if (a.auteur && !confrereDeAuteur(a.auteur, capView.confreres)) compte.set(a.auteur, (compte.get(a.auteur) || 0) + 1);
+  });
+  return [...compte.entries()].sort((x, y) => y[1] - x[1]);
+}
+
+function showCaptureAuteurs() {
+  const liste = auteursOrphelins();
+  capView.orphelins = liste.map(x => x[0]);
+  const options = capView.confreres.filter(c => c.active !== false)
+    .map(c => `<option value="${Number(c.id)}">${escHtml(c.name)}${c.agency ? ' — ' + escHtml(c.agency) : ''}${c.phone ? ' · ' + escHtml(c.phone) : ''}</option>`).join('');
+  mainContent.innerHTML = `
+    <h2>Relier les auteurs aux confrères</h2>
+    <p class="item-meta">L’export nomme chaque auteur comme ton téléphone le connaît : par son nom s’il est enregistré, sinon par son numéro. Relie-le une fois : toutes ses annonces, passées et futures, porteront le confrère.</p>
+    <div class="toolbar"><button onclick="showCaptures()" class="ghost-btn">← Annonces des groupes</button></div>
+    <div class="list">${liste.length ? liste.map(([auteur, n], i) => `<div class="list-item">
+      <div><strong>${escHtml(auteur)}</strong> <span class="item-meta">${n} annonce(s)</span></div>
+      <div class="capture-actions">
+        <select id="cap-auteur-${i}" class="search-select"><option value="__new">Nouveau confrère</option>${options}</select>
+        <button onclick="relierAuteur(${i})" class="btn btn-primary">Relier</button>
+      </div>
+    </div>`).join('') : '<p>Tous les auteurs sont reliés à un confrère.</p>'}</div>`;
+}
+
+async function relierAuteur(i) {
+  const auteur = capView.orphelins[i];
+  const sel = document.getElementById('cap-auteur-' + i);
+  if (!auteur || !sel) return;
+  const numero = auteurEstNumero(auteur);
+  let error;
+  if (sel.value === '__new') {
+    ({ error } = await supabaseClient.from('confreres').insert([{
+      name: numero ? 'Confrère ' + auteur : auteur,
+      phone: numero ? auteur : null,
+      wa_alias: auteur
+    }]));
+  } else {
+    const c = capView.confreres.find(x => x.id === Number(sel.value));
+    /* Un seul alias par confrère : en remplacer un se fait en connaissance. */
+    if (c && c.wa_alias && c.wa_alias !== auteur) {
+      const ok = await UI.confirm(`${c.name} est déjà relié à « ${c.wa_alias} ». Le relier plutôt à « ${auteur} » ?`,
+        { title: 'Remplacer l’alias ?', confirmLabel: 'Remplacer', cancelLabel: 'Annuler' });
+      if (!ok) return;
+    }
+    ({ error } = await supabaseClient.from('confreres').update({ wa_alias: auteur }).eq('id', Number(sel.value)));
+  }
+  if (error) { UI.handleError(error); return; }
+  capView.confreres = await getAll('confreres');
+  propsView.loaded = false;
+  UI.toast(numero && sel.value === '__new'
+    ? 'Confrère créé. Donne-lui son vrai nom depuis l’écran Confrères.'
+    : 'Auteur relié.', 'success');
+  showCaptureAuteurs();
+}
+
 async function saveProperty(id) {
   const property = {
     title: document.getElementById('property-title').value,
@@ -3091,6 +3617,19 @@ async function saveProperty(id) {
       ? await supabaseClient.from('properties').update(property).eq('id', id).select()
       : await supabaseClient.from('properties').insert([property]).select();
     if (error) throw error;
+
+    /* Fiche née d'une annonce captée (sql/16) : on relie les deux, pour que
+       l'annonce affiche « Fiche créée » et ne soit pas proposée deux fois.
+       Un échec ici ne défait pas la fiche, qui est l'essentiel. */
+    if (!id && captureEnCours && data && data[0]) {
+      const capId = captureEnCours;
+      captureEnCours = null;
+      const lien = await supabaseClient.from('annonces_captees')
+        .update({ statut: 'promue', property_id: data[0].id }).eq('id', capId);
+      if (lien.error) console.error('[capture] lien fiche impossible :', lien.error.message);
+      const r = capView.rows.find(x => x.id === capId);
+      if (r && !lien.error) { r.statut = 'promue'; r.property_id = data[0].id; }
+    }
 
     rememberChoice('property-type', property.type);
     rememberChoice('property-status', property.status);
@@ -3499,7 +4038,10 @@ const TABLE_COLS = {
      le bail — donc un logement vacant n'en avait pas. */
   properties: 'id,title,address,type,price,status,description,listing_id,listing_slug,source,created_at,district,rent_sale,bedrooms,furnished,parent_id,landlord_id,floor,unit_label,bathrooms,code,confrere_id,confrere_ref,commission,surface_m2,price_m2,ancien_code,prix_sur_demande,parking,generator,pool,climatisation,forage,gardien,videosurveillance',
   /* sql/12 : le confrère qui détient un bien, et le code court public. */
-  confreres:  'id,name,agency,phone,whatsapp,zones,notes,active,created_at',
+  confreres:  'id,name,agency,phone,whatsapp,zones,notes,active,created_at,wa_alias',
+  /* sql/16 : les annonces captées dans les groupes WhatsApp. `wa_alias`
+     ci-dessus est le nom d'un confrère dans les exports. */
+  annonces_captees: 'id,message,empreinte,posted_at,groupe,auteur,statut,title,type,rent_sale,price,price_m2,surface_m2,district,address,bedrooms,furnished,contact,manquant,erreur,property_id,created_at',
   activities: 'id,type,client_id,property_id,notes,date,created_at,outcome,next_step,next_date,next_done_at',
   tasks:      'id,title,description,due_date,status,created_at',
   /* CORRECTIF 31/08/2026 — `accompte` et `reste` étaient demandés ici alors

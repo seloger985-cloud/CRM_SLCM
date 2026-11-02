@@ -82,7 +82,17 @@ const ECRANS = [
   ['showBuildingForm', []],
   ['showUnitForm', []],
   ['showUnitForm', [null, { parent_id: 4 }, 4]],
-  ['showUnitForm', [{ id: 11, parent_id: 4, unit_label: 'App 2', floor: 1, type: 'apartment' }, null, 4]]
+  ['showUnitForm', [{ id: 11, parent_id: 4, unit_label: 'App 2', floor: 1, type: 'apartment' }, null, 4]],
+  /* Annonces des groupes (sql/16) : la liste, l'écran de liaison des auteurs,
+     et le formulaire de fiche ouvert depuis une annonce captée. */
+  /* PAS showCaptures : il attend la base, et le faux navigateur ne garde pas
+     window.SLCM_DB (son `set` ne stocke rien) — l'attente ne se termine
+     jamais. On exerce donc le gabarit d'une carte, là où est le risque. */
+  ['captureCard', [{ id: 1, statut: 'analysee', message: 'Terrain 591 m² à vendre Logpom', auteur: '+237 699 12 45 78', groupe: 'Pros', posted_at: '2026-11-02T08:07:00+01:00', type: 'plots-of-land', rent_sale: 'sale', surface_m2: 591, price_m2: 140000, price: 82740000 }]],
+  ['captureCard', [{ id: 2, statut: 'erreur', erreur: 'HTTP 502', message: 'x', auteur: 'Paul' }]],
+  ['captureCard', [{ id: 3, statut: 'promue', property_id: 9, message: 'Villa', auteur: null }]],
+  ['showCaptureAuteurs', []],
+  ['showPropertyForm', [null, { title: 'Terrain 591 m², Logpom', _contact: 'Paul Logpom' }, 'captures']]
 ];
 
 async function run() {

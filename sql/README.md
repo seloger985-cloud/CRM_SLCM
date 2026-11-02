@@ -26,6 +26,7 @@ Tant que ces politiques ne vivent que dans le tableau de bord Supabase :
 | `06_property_matching.sql` | **Migration** — rend une fiche bien du CRM rapprochable : `rent_sale`, `bedrooms`, `furnished`, et `shared_listings.listing_id` élargi en `text`. |
 | `03_demands.sql` | **Migration** — sort les critères de recherche de la fiche client vers une table `demands`. Contrairement aux autres, ce fichier modifie la base. |
 | `04_property_types.sql` | **Migration** — élargit `properties_type_check` aux onze types du site. À jouer AVANT d'enregistrer un bien d'un type autre que maison ou appartement. |
+| `16_annonces_captees.sql` | **Migration** — table `annonces_captees` (les offres des groupes WhatsApp, une par empreinte) et `confreres.wa_alias` (le nom d'un confrère dans les exports). **À jouer AVANT de déployer le CRM** : `TABLE_COLS.confreres` demande `wa_alias`, sans la colonne la liste des confrères se vide. Contrôle attendu : `1, 23, 1, 4`. |
 
 ## Mettre à jour après un changement de schéma
 

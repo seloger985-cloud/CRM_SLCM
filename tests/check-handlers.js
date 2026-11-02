@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
 
-const JS = ['config.js', 'auth.js', 'site.js', 'match.js', 'ui.js', 'app.js'];
+const JS = ['config.js', 'auth.js', 'site.js', 'match.js', 'ui.js', 'capture.js', 'app.js'];
 const PAGES = ['index.html', 'login.html'];
 const BUILTIN = new Set(['alert', 'confirm', 'print', 'history']);
 

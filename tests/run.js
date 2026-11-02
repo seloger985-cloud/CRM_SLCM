@@ -106,8 +106,19 @@ console.log(`\n${DIM}Caractères de contrôle${OFF}`);
 /* ── Les modules de contrôle ──
    run() peut être asynchrone : certains contrôles doivent laisser passer un
    tour de boucle pour voir les promesses rejetées. */
+/* Un contrôle qui attend une promesse jamais résolue ne lève rien : Node
+   vide sa boucle et sort en code 0, sans afficher la fin de la suite.
+   C'est arrivé le 02/11/2026 (un écran qui attendait la base dans le faux
+   navigateur). Une suite incomplète doit échouer, pas passer. */
+let fini = false;
+process.on('beforeExit', () => {
+  if (fini) return;
+  console.log(`\n${RED}Un contrôle ne s'est jamais terminé : la suite est incomplète.${OFF}\n`);
+  process.exitCode = 1;
+});
+
 (async () => {
-for (const mod of ['check-migrations', 'test-dates', 'check-columns', 'check-invoice', 'check-handlers', 'test-escaping', 'test-matching', 'test-duplicates', 'test-suggestions', 'test-followups', 'test-covers', 'test-screens', 'test-confreres', 'test-demandes-site', 'test-equipements']) {
+for (const mod of ['check-migrations', 'test-dates', 'check-columns', 'check-invoice', 'check-handlers', 'test-escaping', 'test-matching', 'test-duplicates', 'test-suggestions', 'test-followups', 'test-covers', 'test-screens', 'test-confreres', 'test-demandes-site', 'test-equipements', 'test-capture']) {
   let result;
   try {
     result = await require('./' + mod).run();
@@ -123,6 +134,7 @@ for (const mod of ['check-migrations', 'test-dates', 'check-columns', 'check-inv
   }
 }
 
+fini = true;
 console.log(failed
   ? `\n${RED}${failed} contrôle(s) en échec.${OFF}\n`
   : `\n${GREEN}Tout passe.${OFF}\n`);
