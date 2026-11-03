@@ -2558,8 +2558,16 @@ async function refreshSiteDemandsCount() {
 async function showSiteDemands() {
   UI.showLoading();
   try {
-    const { demandes } = await siteFetch('crm-demandes');
+    const [{ demandes }, recentes, confreres] = await Promise.all([
+      siteFetch('crm-demandes'),
+      /* Les offres des groupes (sql/16). Si la table manque, l'écran des
+         demandes reste utilisable : seules les correspondances manquent. */
+      chargerCapturesRecentes().catch(e => { console.error('[capture]', e && e.message); return []; }),
+      getAll('confreres')
+    ]);
     siteDemandsView.list = demandes || [];
+    capView.recentes = recentes;
+    capView.confreres = confreres;
   } catch (e) {
     mainContent.innerHTML = `<h2>Demandes du site</h2><div class="alert alert-warning">
       <strong>Les demandes n'ont pas pu être lues.</strong><p>${escHtml(e.message)}</p></div>`;
@@ -2582,6 +2590,7 @@ async function showSiteDemands() {
         ${d.listing_ref ? `<div class="item-meta">Annonce : réf. ${escHtml(d.listing_ref)}</div>` : ''}
         ${d.message ? `<div class="item-meta">« ${escHtml(d.message)} »</div>` : ''}
         <div class="item-meta">${formatDate(d.created_at)}</div>
+        ${blocCapturesPourDemande(d)}
         <div>
           <button onclick="importSiteDemand(${Number(d.id)})" class="btn btn-primary">Importer</button>
           ${d.phone ? `<button onclick="sendWhatsApp('${escAttr(d.phone)}', '')" class="ghost-btn">WhatsApp</button>` : ''}
@@ -2589,6 +2598,27 @@ async function showSiteDemands() {
         </div>
       </div>`).join('') : '<p>Aucune demande en attente. Elles arrivent du formulaire « Je cherche un bien », des rendez-vous et du contact de selogercm.com.</p>'}
     </div>`;
+}
+
+/* Les offres des groupes qui répondent à une demande du site : les trois
+   meilleures, et de quoi écrire au confrère qui détient le bien. */
+function blocCapturesPourDemande(d) {
+  const hits = capturesPourRecherche(demandeVersRecherche(d, 'site-' + d.id), capView.recentes);
+  if (!hits.length) return '';
+  const ligne = ({ capture: a }) => {
+    const c = confrereDeAuteur(a.auteur, capView.confreres);
+    const prix = a.price ? formatMoney(a.price) + ' FCFA' + (a.rent_sale === 'rent' ? ' / mois' : '') : 'prix non indiqué';
+    const qui = c ? c.name : (a.auteur || 'auteur inconnu');
+    return `<div class="capture-actions">
+      <span><strong>${escHtml(titreCapture(a))}</strong> · ${escHtml(prix)} · ${escHtml(qui)} · ${escHtml(formatDate(a.posted_at))}</span>
+      ${numeroAuteur(a, c) ? `<button onclick="ecrireAuteur(${Number(a.id)})" class="ghost-btn">${ICON_WHATSAPP} Confrère</button>` : ''}
+    </div>`;
+  };
+  return `<div class="alert alert-match capture-match">
+    <strong>${hits.length} offre(s) des groupes correspondent</strong> <span class="item-meta">(moins de ${CAPTURE_FRAICHEUR_JOURS} jours)</span>
+    ${hits.slice(0, 3).map(ligne).join('')}
+    ${hits.length > 3 ? `<div class="item-meta">Et ${hits.length - 3} autre(s) dans Biens → Annonces des groupes.</div>` : ''}
+  </div>`;
 }
 
 async function importSiteDemand(id) {
@@ -3066,6 +3096,7 @@ const CAPTURE_STATUTS = {
 
 const capView = {
   rows: [], confreres: [], demands: [], clients: [], attente: 0, import: null, orphelins: [],
+  siteRecherches: [], recentes: [],
   q: '', rs: '', type: '', prixMax: '', periode: '90', statut: 'offres',
   loaded: false, enCours: false, stop: false
 };
@@ -3111,6 +3142,43 @@ function champsCapture(b) {
   return Object.fromEntries(garder.map(k => [k, b[k] === undefined ? null : b[k]]));
 }
 
+/* Une offre de groupe se périme vite : au-delà de deux mois, la proposer à
+   un client, c'est surtout lui annoncer un bien déjà parti. */
+const CAPTURE_FRAICHEUR_JOURS = 60;
+
+/* Les demandes EN ATTENTE du site (pas encore importées), sous forme de
+   recherches que match.js sait évaluer. Le client n'existe pas encore :
+   `client_id` porte l'identifiant de la demande, `_nom` le nom à afficher.
+   Une demande sans transaction (simple message de contact) ne cherche
+   rien : elle est laissée de côté. */
+function recherchesDuSite(demandes) {
+  return (demandes || [])
+    .map(d => {
+      const r = demandeVersRecherche(d, 'site-' + d.id);
+      return r ? Object.assign(r, { _site_id: d.id, _nom: (d.name && d.name !== 'Anonymous') ? d.name : 'Visiteur du site' }) : null;
+    })
+    .filter(Boolean);
+}
+
+/* Les annonces captées qui répondent à UNE recherche, meilleures d'abord.
+   Mêmes règles que pour les biens du site et du portefeuille. */
+function capturesPourRecherche(recherche, captures) {
+  if (!recherche || !window.SLCM_MATCH.isLive(recherche)) return [];
+  const parId = new Map((captures || []).map(a => [captureVersListing(a).id, a]));
+  return (window.SLCM_MATCH.matchesForDemand(recherche, [...parId.values()].map(captureVersListing), new Set()) || [])
+    .map(h => ({ capture: parId.get(h.listing.id), score: h.score, reasons: h.reasons }));
+}
+
+/* Les offres des groupes encore fraîches, de quoi rapprocher. */
+async function chargerCapturesRecentes() {
+  const depuis = new Date(Date.now() - CAPTURE_FRAICHEUR_JOURS * 86400000).toISOString();
+  const { data, error } = await supabaseClient.from('annonces_captees').select(TABLE_COLS.annonces_captees)
+    .in('statut', CAPTURE_STATUTS.offres).gte('posted_at', depuis)
+    .order('posted_at', { ascending: false }).limit(1000);
+  if (error) throw error;
+  return data || [];
+}
+
 async function compterAttente() {
   const { count, error } = await supabaseClient.from('annonces_captees')
     .select('id', { count: 'exact', head: true }).in('statut', CAPTURE_STATUTS.attente);
@@ -3130,7 +3198,13 @@ async function chargerCaptures() {
     req, getAll('confreres'), getAll('demands'), getAll('clients'), compterAttente()
   ]);
   if (res.error) throw res.error;
-  Object.assign(capView, { rows: res.data || [], confreres, demands, clients, attente, loaded: true });
+  /* Le site peut être injoignable : les correspondances avec ses demandes
+     manqueront alors, mais l'écran s'affiche quand même. */
+  let site = [];
+  try { site = (await siteFetch('crm-demandes')).demandes || []; }
+  catch (e) { console.error('[capture] demandes du site indisponibles :', e && e.message); }
+  Object.assign(capView, { rows: res.data || [], confreres, demands, clients, attente,
+    siteRecherches: recherchesDuSite(site), loaded: true });
 }
 
 async function showCaptures(force) {
@@ -3234,10 +3308,17 @@ function renderCaptures() {
 /* Les clients dont une recherche active correspond à l'annonce. Même moteur
    que pour les biens du portefeuille et du site : match.js. */
 function clientsInteresses(a) {
-  if (!(a.statut === 'analysee' || a.statut === 'promue') || !capView.demands.length) return [];
-  const hits = window.SLCM_MATCH.demandsForListing(captureVersListing(a), capView.demands, new Set()) || [];
+  if (!(a.statut === 'analysee' || a.statut === 'promue')) return [];
+  if (!capView.demands.length && !capView.siteRecherches.length) return [];
+  const annonce = captureVersListing(a);
   const noms = new Map(capView.clients.map(c => [c.id, c.name]));
-  return [...new Set(hits.map(h => noms.get(h.demand.client_id)).filter(Boolean))];
+  const clients = (window.SLCM_MATCH.demandsForListing(annonce, capView.demands, new Set()) || [])
+    .map(h => noms.get(h.demand.client_id));
+  /* Les demandes du site pas encore importées : signalées comme telles,
+     pour que l'agent sache qu'il faut d'abord les importer. */
+  const site = (window.SLCM_MATCH.demandsForListing(annonce, capView.siteRecherches, new Set()) || [])
+    .map(h => h.demand._nom + ' (demande du site)');
+  return [...new Set(clients.concat(site).filter(Boolean))];
 }
 
 /* Le numéro auquel écrire au sujet d'une annonce : celui du confrère s'il
@@ -3284,7 +3365,7 @@ function captureCard(a) {
     actions.push(`<button onclick="lancerAnalyse()" class="ghost-btn">Analyser</button>`);
   }
 
-  return `<div class="list-item">
+  return `<div class="list-item capture-card">
     <div><strong>${escHtml(titreCapture(a))}</strong> <span class="item-meta">${escHtml(CAPTURE_STATUT_FR[a.statut] || a.statut)}</span></div>
     <div>${escHtml(quoi)}${quoi ? ' · ' : ''}<strong>${escHtml(prix)}</strong></div>
     <div class="item-meta">${qui} · ${escHtml(formatDate(a.posted_at))}${a.groupe ? ' · ' + escHtml(a.groupe) : ''}</div>
@@ -3296,7 +3377,7 @@ function captureCard(a) {
 }
 
 function ecrireAuteur(id) {
-  const a = capView.rows.find(r => r.id === id);
+  const a = capView.rows.find(r => r.id === id) || capView.recentes.find(r => r.id === id);
   if (!a) return;
   const c = confrereDeAuteur(a.auteur, capView.confreres);
   const msg = `Bonjour${c ? ' ' + c.name : ''}, au sujet de votre annonce du ${formatDate(a.posted_at)}`
@@ -3440,6 +3521,7 @@ async function lancerAnalyse() {
   const afficher = (html) => { const z = zone(); if (z) z.innerHTML = html; };
 
   let faits = 0, offres = 0, jetonsEntree = 0, jetonsSortie = 0, echecsDeSuite = 0;
+  const analysees = new Set();
   try {
     /* Un nouvel essai pour les échecs précédents : une panne passagère ne
        doit pas condamner une annonce. */
@@ -3483,7 +3565,7 @@ async function lancerAnalyse() {
         const maj = !r || r.erreur ? { statut: 'erreur', erreur: (r && r.erreur) || 'sans_resultat' }
           : !r.bien ? { statut: 'pas_un_bien' }
           : { statut: 'analysee', erreur: null, ...champsCapture(r.bien) };
-        if (maj.statut === 'analysee') offres++;
+        if (maj.statut === 'analysee') { offres++; analysees.add(p.id); }
         return supabaseClient.from('annonces_captees').update(maj).eq('id', p.id);
       }));
       faits += paquet.length;
@@ -3496,7 +3578,15 @@ async function lancerAnalyse() {
   } finally {
     capView.enCours = false;
     capView.loaded = false;
-    if (zone()) showCaptures(true);
+    if (zone()) {
+      await showCaptures(true);
+      /* Le moment où une correspondance a le plus de valeur : l'offre vient
+         d'arriver. On le dit tout de suite, sans attendre qu'on la cherche. */
+      const touchees = capView.rows.filter(a => analysees.has(a.id) && clientsInteresses(a).length);
+      if (touchees.length) {
+        UI.toast(`${touchees.length} nouvelle(s) offre(s) répondent à une demande — repère « Intéresse » sur la carte.`, 'success', 10000);
+      }
+    }
   }
 }
 

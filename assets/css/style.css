@@ -765,6 +765,15 @@ input::placeholder, textarea::placeholder {
   color: var(--fg-1);
 }
 .capture-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+/* .list-item est une RANGÉE (texte à gauche, boutons à droite). Une carte
+   d’annonce captée empile ses lignes : sinon, sur grand écran, ses six
+   blocs se rangeraient en colonnes étroites. */
+.list-item.capture-card { flex-direction: column; align-items: stretch; }
+.list-item.capture-card > div:last-child { flex-shrink: 1; }
+/* Les offres des groupes sous une demande du site : toute la largeur, en
+   dernière ligne de la fiche. */
+.list-item:has(> .capture-match) { flex-wrap: wrap; }
+.list-item > .capture-match { flex-basis: 100%; order: 99; margin: var(--space-2) 0 0; }
 
 .alert-actions {
   display: flex;
