@@ -29,9 +29,12 @@ function run() {
     grab(/function demandeVersRecherche[\s\S]*?\n}/, 'demandeVersRecherche'),
     grab(/function captureVersListing[\s\S]*?\n}/, 'captureVersListing'),
     grab(/function recherchesDuSite[\s\S]*?\n}/, 'recherchesDuSite'),
-    grab(/function capturesPourRecherche[\s\S]*?\n}/, 'capturesPourRecherche')
-  ].join('\n') + '\nreturn { demandeVersRecherche, recherchesDuSite, capturesPourRecherche };')(window);
-  const { demandeVersRecherche, recherchesDuSite, capturesPourRecherche } = scope;
+    grab(/function capturesPourRecherche[\s\S]*?\n}/, 'capturesPourRecherche'),
+    grab(/function formatMoney[\s\S]*?\n}/, 'formatMoney'),
+    grab(/function titreCapture[\s\S]*?\n}/, 'titreCapture'),
+    grab(/function messageOffreClient[\s\S]*?\n}/, 'messageOffreClient')
+  ].join('\n') + '\nreturn { demandeVersRecherche, recherchesDuSite, capturesPourRecherche, messageOffreClient };')(window);
+  const { demandeVersRecherche, recherchesDuSite, capturesPourRecherche, messageOffreClient } = scope;
 
   const checks = [];
   const ok = (label, cond) => checks.push([label, !!cond]);
@@ -68,6 +71,19 @@ function run() {
   const vide = { id: 45, name: 'X', source: 'je_cherche', rent_sale: 'rent' };
   ok('une demande sans aucun critère ne déclenche rien (le moteur exige un critère)',
     capturesPourRecherche(demandeVersRecherche(vide, 'site-45'), CAPTURES).length === 0);
+
+  /* Le message envoyé au CLIENT : l'offre et le numéro du confrère. */
+  const offre = { id: 1, title: 'Appartement 3 chambres meublé, Bonapriso', district: 'Bonapriso', price: 350000, rent_sale: 'rent' };
+  const msg = messageOffreClient(demande, offre, { name: 'Paul Ekwalla' }, '237699124578');
+  ok('message client : salue la personne par son nom', /^Bonjour Mme Ngo,/.test(msg));
+  ok('message client : porte l’offre et le loyer mensuel', msg.includes('Appartement 3 chambres meublé, Bonapriso') && /350.000 FCFA par mois/.test(msg));
+  ok('message client : porte le nom ET le numéro du confrère', msg.includes('Paul Ekwalla, +237699124578'));
+  ok('message client : le quartier n’est pas répété s’il est déjà dans le titre', !msg.includes('(Bonapriso)'));
+  const terrain = { id: 2, title: null, message: 'Terrain titré Logpom 591 m²', district: 'Logpom', price: null, price_m2: 140000, rent_sale: 'sale' };
+  const msg2 = messageOffreClient({ name: 'Anonymous' }, terrain, null, '237677001122');
+  ok('message client : « Anonymous » n’est pas un nom', /^Bonjour, suite/.test(msg2));
+  ok('message client : prix au m² quand il n’y a pas de total', /140.000 FCFA le m²/.test(msg2));
+  ok('message client : jamais « undefined » ni « null »', !/undefined|null/.test(msg + msg2));
 
   return { title: 'Demandes du site ↔ annonces des groupes', checks };
 }

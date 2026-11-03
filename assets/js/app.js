@@ -2611,7 +2611,10 @@ function blocCapturesPourDemande(d) {
     const qui = c ? c.name : (a.auteur || 'auteur inconnu');
     return `<div class="capture-actions">
       <span><strong>${escHtml(titreCapture(a))}</strong> · ${escHtml(prix)} · ${escHtml(qui)} · ${escHtml(formatDate(a.posted_at))}</span>
-      ${numeroAuteur(a, c) ? `<button onclick="ecrireAuteur(${Number(a.id)})" class="ghost-btn">${ICON_WHATSAPP} Confrère</button>` : ''}
+      <span class="capture-actions">
+        ${numeroAuteur(a, c) ? `<button onclick="ecrireAuteur(${Number(a.id)})" class="ghost-btn" title="Demander au confrère si le bien est toujours disponible">${ICON_WHATSAPP} Confrère</button>` : ''}
+        ${d.phone && numeroAuteur(a, c) ? `<button onclick="envoyerOffreAuClient(${Number(d.id)}, ${Number(a.id)})" class="ghost-btn" title="Envoyer l’offre et le numéro du confrère au client">${ICON_WHATSAPP} Client</button>` : ''}
+      </span>
     </div>`;
   };
   return `<div class="alert alert-match capture-match">
@@ -2619,6 +2622,28 @@ function blocCapturesPourDemande(d) {
     ${hits.slice(0, 3).map(ligne).join('')}
     ${hits.length > 3 ? `<div class="item-meta">Et ${hits.length - 3} autre(s) dans Biens → Annonces des groupes.</div>` : ''}
   </div>`;
+}
+
+/* Le message au client : l'offre, et le numéro du confrère qui la détient.
+   L'agent choisit, selon la demande, entre ce geste et « Confrère » (vérifier
+   d'abord la disponibilité). Pure, donc testable. */
+function messageOffreClient(d, a, c, numero) {
+  const nom = (d.name && d.name !== 'Anonymous') ? ' ' + d.name : '';
+  const prix = a.price ? formatMoney(a.price) + ' FCFA' + (a.rent_sale === 'rent' ? ' par mois' : '')
+    : (a.price_m2 ? formatMoney(a.price_m2) + ' FCFA le m²' : 'prix à confirmer');
+  const lieu = a.district || a.address || '';
+  const contact = [c ? c.name : '', numero ? '+' + numero : ''].filter(Boolean).join(', ');
+  return `Bonjour${nom}, suite à votre demande sur selogercm.com, voici une offre qui peut vous intéresser : `
+    + `${titreCapture(a)}${lieu && !titreCapture(a).includes(lieu) ? ' (' + lieu + ')' : ''}, ${prix}. `
+    + `Pour la visiter, contactez ${contact || 'le propriétaire'} de notre part.`;
+}
+
+function envoyerOffreAuClient(demandeId, captureId) {
+  const d = siteDemandsView.list.find(x => x.id === demandeId);
+  const a = capView.recentes.find(r => r.id === captureId);
+  if (!d || !a || !d.phone) return;
+  const c = confrereDeAuteur(a.auteur, capView.confreres);
+  sendWhatsApp('+' + d.phone, messageOffreClient(d, a, c, numeroAuteur(a, c)));
 }
 
 async function importSiteDemand(id) {
