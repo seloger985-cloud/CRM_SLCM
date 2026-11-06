@@ -630,7 +630,12 @@
     const btn=document.getElementById('publier'); btn.disabled=true;
     etat('Publication en cours…');
     try{
-      const r=await publierFiche(b, false);
+      /* Aucune photo chargée : l'affiche d'illustration, signalée comme telle
+         (hors accueil du site tant qu'il n'y a pas de vraie photo). Sert
+         notamment à republier une fiche venue des groupes (06/11/2026). */
+      const sansPhoto=!imgs.photo && !imgs.aerien;
+      if(sansPhoto) await preparerIllustration(b);
+      const r=await publierFiche(b, sansPhoto);
       etat((r.deja?'Déjà en ligne, fiche rattachée : ':'✅ En ligne : ')+'<a href="'+r.url+'" target="_blank" rel="noopener" style="color:inherit">'+r.url+'</a>');
     }catch(err){
       etat('❌ Publication impossible : '+String(err.message||err).replace(/</g,'&lt;'));

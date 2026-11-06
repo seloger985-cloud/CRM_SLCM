@@ -35,7 +35,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.49.0';
 
 /* À incrémenter dès qu'on touche ce fichier. Voir README, « Vérifier QUELLE
    version tourne ». */
-const VERSION = '2026-11-02-a';
+const VERSION = '2026-11-06-a';
 
 /* Choix du 02/11/2026 : le modèle léger. Estimation pour 4 groupes, 400 à
    1 200 messages par jour : 1 à 4 $ par mois. Le modèle de understand-inbox
@@ -45,6 +45,8 @@ const MODELE = 'claude-haiku-5-5';
 /* Bornes de dépense : un paquet ne peut pas dépasser ce que le CRM envoie
    normalement. Un appel détourné ne fait pas tourner le compteur. */
 const PAQUET_MAX = 25;
+/* En dessous, un montant de VENTE est un frais ou un prix au m², pas un prix. */
+const PRIX_VENTE_MIN = 1000000;
 const MESSAGE_MAX = 4000;
 
 const CORS = {
@@ -87,6 +89,10 @@ const ANNONCE = {
     bedrooms: { type: ['integer', 'null'] },
     furnished: { type: ['boolean', 'null'], description: 'true seulement si le message dit meublé.' },
     contact: { type: ['string', 'null'], description: 'Numéro (et nom) cité DANS le message, s’il y en a un.' },
+    frais: {
+      type: ['string', 'null'],
+      description: "Les coûts ANNEXES cités, tels quels : « Signature 300 000 FCFA », « Commission 5 % », « Bornage à la charge de l'acheteur ». Jamais le prix du bien."
+    },
     manquant: { type: 'array', items: { type: 'string' } }
   },
   required: ['id', 'est_une_offre'],
@@ -115,6 +121,14 @@ Règles, dans l'ordre :
 3. Les prix sont en FCFA. « 350k » et « 350.000 » valent 350000 ; « 45 millions » vaut 45000000. Pour une location, retiens le loyer MENSUEL : un montant annuel ou trimestriel donne price: null, signalé dans « manquant ».
 
 4. Un terrain se vend souvent AU MÈTRE CARRÉ. « 140 mille le m² » va dans price_m2, pas dans price. Ne calcule jamais de total toi-même.
+
+4 bis. Distingue TROIS montants, qui ne se confondent jamais :
+   · price : le prix TOTAL du bien ;
+   · price_m2 : le prix AU MÈTRE CARRÉ ;
+   · frais : les coûts ANNEXES payés en plus aux intervenants du dossier — « signature », « frais de signature », « prix de signature », « frais de dossier », « commission », « frais d'agence », « bornage », « géomètre », « notaire », « mutation », « visite ». Ils vont dans frais, tels quels, et JAMAIS dans price ni dans price_m2.
+   Exemple : « Terrain 250 m² à Lendi, 300 mille le m², signature 300 mille » donne price_m2: 300000, price: null, frais: "Signature 300 000 FCFA".
+   Exemple : « Terrain 500 m², 25 millions, signature 500k » donne price: 25000000, frais: "Signature 500 000 FCFA".
+   Si un montant n'est clairement ni le total ni le prix au m², laisse price à null et ajoute « prix » à manquant plutôt que de deviner.
 
 5. district est le quartier seul, sans la ville. Quartiers fréquents : Bonapriso, Bali, Bonanjo, Bonamoussadi, Makepe, Logpom, Logbessou, Akwa, Deido, Kotto, Bonabéri, Yassa, Youpwe, Ndogbong, Nyalla, PK14.
 
@@ -227,12 +241,22 @@ Deno.serve(async (req) => {
         bedrooms: entier(a.bedrooms),
         furnished: a.furnished === true ? true : null,
         contact: texteOuNull(a.contact),
+        frais: texteOuNull(a.frais),
         manquant: Array.isArray(a.manquant) ? a.manquant.map(String) : []
       };
+      /* Garde-fou (06/11/2026) : un « prix total » de vente sous 1 million de
+         FCFA n'est pas un prix de vente à Douala — c'est presque toujours un
+         frais (signature, dossier) ou un prix au m² mal rangé. Constaté sur
+         un terrain de 250 m² à Lendi publié à « 300 000 FCFA ». On l'écarte
+         et on le signale plutôt que de le publier. */
+      if (bien.rent_sale === 'sale' && bien.price !== null && bien.price < PRIX_VENTE_MIN) {
+        bien.price = null;
+        if (!bien.manquant.includes('prix_douteux')) bien.manquant.push('prix_douteux');
+      }
       /* Le total d'un terrain vendu au m² : calculé ICI, jamais par le modèle. */
       if (bien.price === null && bien.surface_m2 && bien.price_m2) {
         bien.price = bien.surface_m2 * bien.price_m2;
-        bien.manquant = bien.manquant.filter(m => m !== 'price');
+        bien.manquant = bien.manquant.filter(m => m !== 'price' && m !== 'prix_douteux');
       }
       return { id, bien };
     });

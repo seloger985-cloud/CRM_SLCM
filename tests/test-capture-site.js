@@ -90,9 +90,11 @@ function run() {
     grab(/function looseKey[\s\S]*?\n}/, 'looseKey'),
     grab(/function quartierDeLaListe[\s\S]*?\n}/, 'quartierDeLaListe'),
     grab(/function similarProperties[\s\S]*?\n}/, 'similarProperties'),
+    grab(/const PRIX_VENTE_MIN = [^\n]*/, 'PRIX_VENTE_MIN'),
+    grab(/function prixPubliable[\s\S]*?\n}/, 'prixPubliable'),
     grab(/function raisonNonPubliable[\s\S]*?\n}/, 'raisonNonPubliable'),
     grab(/function trierPourPublication[\s\S]*?\n}/, 'trierPourPublication')
-  ].join('\n') + '\nreturn { raisonNonPubliable, trierPourPublication };')();
+  ].join('\n') + '\nreturn { raisonNonPubliable, trierPourPublication, prixPubliable };')();
   const QUARTIERS = ['Logpom', 'Makepe', 'Bonadiwoto (Grand Mall)', 'Deïdo'];
   const PORTEFEUILLE = [{ id: 7, district: 'Makepe', surface_m2: 400, price: 30000000, price_m2: null }];
   const v = (x) => Object.assign({ statut: 'analysee', rent_sale: 'sale', type: 'plots-of-land', price: 50000000, surface_m2: 500, district: 'Logpom' }, x);
@@ -100,7 +102,11 @@ function run() {
   ok('lot : une vente complète part', R({}) === null);
   ok('lot : une location ne part pas', R({ rent_sale: 'rent' }) === 'pas une vente');
   ok('lot : déjà transformée en fiche', R({ statut: 'promue' }) === 'déjà une fiche');
-  ok('lot : sans prix total, refusée', R({ price: null }) === 'sans prix total');
+  ok('lot : sans prix total, elle part quand même (en « sur demande »)', R({ price: null }) === null);
+  ok('prix : un vrai prix de vente est gardé', lot.prixPubliable(v({ price: 25000000 })) === 25000000);
+  ok('prix : « 300 000 » pour un terrain (frais de signature) → sur demande', lot.prixPubliable(v({ price: 300000 })) === null);
+  ok('prix : signalé douteux par l’analyse → sur demande', lot.prixPubliable(v({ price: 25000000, manquant: ['prix_douteux'] })) === null);
+  ok('prix : absent → sur demande', lot.prixPubliable(v({ price: null })) === null);
   ok('lot : terrain sans surface, refusé', R({ surface_m2: null }) === 'terrain sans surface');
   ok('lot : maison sans surface, acceptée', R({ type: 'house', surface_m2: null }) === null);
   ok('lot : quartier absent du site, refusé', R({ district: 'Nyalla' }) === 'quartier inconnu du site');

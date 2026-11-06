@@ -3627,6 +3627,21 @@ async function lancerAnalyse() {
    publie (visuel-terrain…?lot=…), avec une affiche d'illustration. */
 
 const LOT_MAX = 20;   /* un lot raisonnable : Google se méfie des rafales de pages semblables */
+/* En dessous, un montant de VENTE n'est pas un prix : c'est un frais
+   (signature, dossier) ou un prix au m² mal rangé — constaté le 06/11/2026
+   sur un terrain de 250 m² à Lendi publié à « 300 000 FCFA ». Même seuil
+   que capture-annonces (PRIX_VENTE_MIN). */
+const PRIX_VENTE_MIN = 1000000;
+
+/* Le prix qu'on peut afficher pour une vente captée, ou null. Choix de
+   l'utilisateur (06/11/2026) : un prix absent ou douteux part en « prix sur
+   demande », jamais avec un faux montant — et l'annonce n'est pas écartée. */
+function prixPubliable(a) {
+  const p = Number(a.price);
+  if (!(p >= PRIX_VENTE_MIN)) return null;
+  if ((a.manquant || []).includes('prix_douteux')) return null;
+  return p;
+}
 
 /* Pourquoi une vente ne peut pas partir, ou null si elle le peut. Pure.
    `quartiers` : la liste du site ; `portefeuille` : les fiches existantes. */
@@ -3634,7 +3649,6 @@ function raisonNonPubliable(a, quartiers, portefeuille) {
   if (a.statut !== 'analysee') return 'déjà une fiche';
   if (a.rent_sale !== 'sale') return 'pas une vente';
   if (!a.type) return 'type inconnu';
-  if (!(Number(a.price) > 0)) return 'sans prix total';
   if (a.type === 'plots-of-land' && !(Number(a.surface_m2) > 0)) return 'terrain sans surface';
   if (!a.district) return 'sans quartier';
   const q = quartierDeLaListe(quartiers, a.district);
@@ -3663,7 +3677,7 @@ function trierPourPublication(captures, quartiers, portefeuille) {
       return;
     }
     const q = quartierDeLaListe(quartiers, a.district);
-    const cle = [looseKey(q), Number(a.surface_m2) || '', Number(a.price)].join('|');
+    const cle = [looseKey(q), Number(a.surface_m2) || '', prixPubliable(a) || ''].join('|');
     if (vus.has(cle)) { refus['même bien, autre confrère'] = (refus['même bien, autre confrère'] || 0) + 1; return; }
     vus.add(cle);
     publiables.push(Object.assign({}, a, { _quartier: q }));
@@ -3691,7 +3705,7 @@ async function showPublicationLot() {
     return `<label class="list-item capture-card">
       <div><input type="checkbox" class="lot-choix" value="${Number(a.id)}" ${i < LOT_MAX ? 'checked' : ''}>
         <strong>${escHtml(titreCapture(a))}</strong></div>
-      <div class="item-meta">${escHtml(TYPE_FR[a.type] || a.type)} · ${escHtml(a._quartier)}${a.surface_m2 ? ' · ' + formatMoney(a.surface_m2) + ' m²' : ''} · <strong>${escHtml(formatMoney(a.price))} FCFA</strong></div>
+      <div class="item-meta">${escHtml(TYPE_FR[a.type] || a.type)} · ${escHtml(a._quartier)}${a.surface_m2 ? ' · ' + formatMoney(a.surface_m2) + ' m²' : ''} · <strong>${prixPubliable(a) ? escHtml(formatMoney(prixPubliable(a))) + ' FCFA' : 'Prix sur demande'}</strong></div>
       <div class="item-meta">${escHtml(c ? c.name : (a.auteur || 'auteur inconnu') + ' (confrère créé à la publication)')} · ${escHtml(formatDate(a.posted_at))}${a.groupe ? ' · ' + escHtml(a.groupe) : ''}</div>
     </label>`;
   };
@@ -3741,7 +3755,10 @@ async function creerFichesEtPublier() {
       }
       const { data, error } = await supabaseClient.from('properties').insert([{
         title: a.title || titreCapture(a), type: a.type, rent_sale: 'sale',
-        price: a.price, price_m2: a.price_m2, surface_m2: a.surface_m2,
+        /* Prix absent ou douteux : la fiche part en « sur demande ». Le
+           prix au m² est gardé dans la fiche, la publication le tait. */
+        price: prixPubliable(a), price_m2: a.price_m2, surface_m2: a.surface_m2,
+        prix_sur_demande: !prixPubliable(a),
         district: a._quartier, address: a.address, bedrooms: a.bedrooms, furnished: a.furnished,
         status: 'available', confrere_id: c.id,
         description: [a.message, 'Vu dans « ' + (a.groupe || 'un groupe') + ' » le ' + formatDate(a.posted_at)].join('\n\n'),
