@@ -3121,7 +3121,7 @@ const CAPTURE_STATUTS = {
 
 const capView = {
   rows: [], confreres: [], demands: [], clients: [], attente: 0, import: null, orphelins: [],
-  siteRecherches: [], recentes: [],
+  siteRecherches: [], recentes: [], lot: [],
   q: '', rs: '', type: '', prixMax: '', periode: '90', statut: 'offres',
   loaded: false, enCours: false, stop: false
 };
@@ -3254,6 +3254,7 @@ async function showCaptures(force) {
     <p class="item-meta">Tout ce qui circule dans les groupes de travail, publié ou non. Chaque semaine, exporte chaque groupe : WhatsApp → ⋮ Plus → Exporter la discussion → Sans médias, puis dépose les fichiers ici.</p>
     <div class="toolbar">
       <label for="capture-fichiers" class="btn btn-primary">Importer des exports</label>
+      <button onclick="showPublicationLot()" class="ghost-btn" title="Créer les fiches des ventes et les publier sur selogercm.com">Publier les ventes sur le site</button>
       <input type="file" id="capture-fichiers" accept=".txt,text/plain" multiple hidden>
       <input type="search" id="cap-search" class="search-input" placeholder="Rechercher : quartier, type, confrère, mot du message…" value="${escAttr(capView.q)}">
       <select id="cap-rs" class="search-select">
@@ -3613,6 +3614,158 @@ async function lancerAnalyse() {
       }
     }
   }
+}
+
+/* ─────────────── Publication en lot sur le site (06/11/2026) ───────────────
+
+   Les ventes captées dans les groupes vivaient dans le CRM, que Google ne
+   voit pas. Publiées sur selogercm.com, elles nourrissent les pages de vente.
+
+   Chaque annonce choisie devient d'abord une FICHE reliée à son confrère :
+   c'est ce qui lui donne sa référence CF26-DLA-…, celle que le client cite
+   et que le CRM sait ramener au confrère. Puis le générateur de visuels la
+   publie (visuel-terrain…?lot=…), avec une affiche d'illustration. */
+
+const LOT_MAX = 20;   /* un lot raisonnable : Google se méfie des rafales de pages semblables */
+
+/* Pourquoi une vente ne peut pas partir, ou null si elle le peut. Pure.
+   `quartiers` : la liste du site ; `portefeuille` : les fiches existantes. */
+function raisonNonPubliable(a, quartiers, portefeuille) {
+  if (a.statut !== 'analysee') return 'déjà une fiche';
+  if (a.rent_sale !== 'sale') return 'pas une vente';
+  if (!a.type) return 'type inconnu';
+  if (!(Number(a.price) > 0)) return 'sans prix total';
+  if (a.type === 'plots-of-land' && !(Number(a.surface_m2) > 0)) return 'terrain sans surface';
+  if (!a.district) return 'sans quartier';
+  const q = quartierDeLaListe(quartiers, a.district);
+  if (!q) return 'quartier inconnu du site';
+  if (similarProperties({ id: null, district: q, surface_m2: a.surface_m2, price: a.price, price_m2: a.price_m2 }, portefeuille).length) {
+    return 'déjà au portefeuille';
+  }
+  return null;
+}
+
+/* Les ventes publiables, une par bien (le même terrain posté par deux
+   confrères n'est gardé qu'une fois), et les refus comptés par raison. Pure. */
+function trierPourPublication(captures, quartiers, portefeuille) {
+  const publiables = [], refus = {}, inconnus = {};
+  const vus = new Set();
+  (captures || []).forEach(a => {
+    const r = raisonNonPubliable(a, quartiers, portefeuille);
+    if (r) {
+      refus[r] = (refus[r] || 0) + 1;
+      if (r === 'quartier inconnu du site') {
+        const nom = String(a.district).trim();
+        const k = looseKey(nom);
+        inconnus[k] = inconnus[k] || { nom, n: 0 };
+        inconnus[k].n++;
+      }
+      return;
+    }
+    const q = quartierDeLaListe(quartiers, a.district);
+    const cle = [looseKey(q), Number(a.surface_m2) || '', Number(a.price)].join('|');
+    if (vus.has(cle)) { refus['même bien, autre confrère'] = (refus['même bien, autre confrère'] || 0) + 1; return; }
+    vus.add(cle);
+    publiables.push(Object.assign({}, a, { _quartier: q }));
+  });
+  return { publiables, refus, inconnus: Object.values(inconnus).sort((x, y) => y.n - x.n) };
+}
+
+async function showPublicationLot() {
+  UI.showLoading();
+  let tri;
+  try {
+    const [recentes, quartiers, portefeuille, confreres] = await Promise.all([
+      chargerCapturesRecentes(), quartiersSite(), getAll('properties'), getAll('confreres')
+    ]);
+    capView.confreres = confreres;
+    tri = trierPourPublication(recentes.filter(a => a.rent_sale === 'sale'), quartiers, portefeuille);
+  } catch (e) {
+    UI.handleError(e);
+    return showCaptures();
+  }
+  capView.lot = tri.publiables;
+
+  const ligne = (a, i) => {
+    const c = confrereDeAuteur(a.auteur, capView.confreres);
+    return `<label class="list-item capture-card">
+      <div><input type="checkbox" class="lot-choix" value="${Number(a.id)}" ${i < LOT_MAX ? 'checked' : ''}>
+        <strong>${escHtml(titreCapture(a))}</strong></div>
+      <div class="item-meta">${escHtml(TYPE_FR[a.type] || a.type)} · ${escHtml(a._quartier)}${a.surface_m2 ? ' · ' + formatMoney(a.surface_m2) + ' m²' : ''} · <strong>${escHtml(formatMoney(a.price))} FCFA</strong></div>
+      <div class="item-meta">${escHtml(c ? c.name : (a.auteur || 'auteur inconnu') + ' (confrère créé à la publication)')} · ${escHtml(formatDate(a.posted_at))}${a.groupe ? ' · ' + escHtml(a.groupe) : ''}</div>
+    </label>`;
+  };
+  const refus = Object.entries(tri.refus);
+  mainContent.innerHTML = `
+    <h2>Publier les ventes sur le site</h2>
+    <p class="item-meta">Chaque vente cochée devient une fiche reliée à son confrère (référence CF26-DLA-…), puis part sur selogercm.com pour 30 jours avec une affiche d’illustration. Le contact affiché est celui de l’agence. Au plus ${LOT_MAX} par lot.</p>
+    <div class="toolbar">
+      <button onclick="creerFichesEtPublier()" class="btn btn-primary" ${tri.publiables.length ? '' : 'disabled'}>Créer les fiches et publier</button>
+      <button onclick="showCaptures()" class="ghost-btn">← Annonces des groupes</button>
+    </div>
+    ${tri.inconnus.length ? `<div class="alert alert-warning">
+      <strong>${tri.inconnus.length} quartier(s) inconnu(s) du site</strong> — leurs ventes ne peuvent pas partir tant qu’ils n’y sont pas ajoutés :
+      <p>${tri.inconnus.map(q => escHtml(q.nom) + ' (' + q.n + ')').join(', ')}</p>
+    </div>` : ''}
+    ${refus.length ? `<p class="item-meta">Écartées : ${refus.map(([r, n]) => escHtml(r) + ' ' + n).join(' · ')}.</p>` : ''}
+    <p class="item-meta">${tri.publiables.length} vente(s) publiable(s), offres de moins de ${CAPTURE_FRAICHEUR_JOURS} jours.</p>
+    <div class="list">${tri.publiables.length ? tri.publiables.map(ligne).join('') : '<p>Aucune vente publiable pour le moment.</p>'}</div>`;
+}
+
+async function creerFichesEtPublier() {
+  const choix = [...document.querySelectorAll('.lot-choix')].filter(c => c.checked).map(c => Number(c.value));
+  if (!choix.length) { UI.toast('Coche au moins une vente.', 'error'); return; }
+  if (choix.length > LOT_MAX) { UI.toast(`Au plus ${LOT_MAX} par lot : décoche-en ${choix.length - LOT_MAX}.`, 'error'); return; }
+  const ok = await UI.confirm(`Créer ${choix.length} fiche(s) et les publier sur selogercm.com pour 30 jours ?\n\nLe contact affiché sera celui de l’agence, jamais celui du confrère.`,
+    { title: 'Publier en lot', confirmLabel: 'Créer et publier', cancelLabel: 'Annuler' });
+  if (!ok) return;
+
+  UI.showLoading();
+  const fiches = [], echecs = [];
+  for (const id of choix) {
+    const a = capView.lot.find(x => x.id === id);
+    if (!a) continue;
+    try {
+      /* Le confrère : retrouvé par l'auteur de l'export, sinon créé avec
+         l'auteur comme alias — la référence sera alors bien « CF ». */
+      let c = confrereDeAuteur(a.auteur, capView.confreres);
+      if (!c) {
+        const numero = auteurEstNumero(a.auteur);
+        const { data, error } = await supabaseClient.from('confreres').insert([{
+          name: numero ? 'Confrère ' + a.auteur : (a.auteur || 'Confrère inconnu'),
+          phone: numero ? a.auteur : null, wa_alias: a.auteur || null
+        }]).select();
+        if (error) throw error;
+        c = data[0];
+        capView.confreres.push(c);
+      }
+      const { data, error } = await supabaseClient.from('properties').insert([{
+        title: a.title || titreCapture(a), type: a.type, rent_sale: 'sale',
+        price: a.price, price_m2: a.price_m2, surface_m2: a.surface_m2,
+        district: a._quartier, address: a.address, bedrooms: a.bedrooms, furnished: a.furnished,
+        status: 'available', confrere_id: c.id,
+        description: [a.message, 'Vu dans « ' + (a.groupe || 'un groupe') + ' » le ' + formatDate(a.posted_at)].join('\n\n'),
+        ...detecterEquipements(a.message)
+      }]).select();
+      if (error) throw error;
+      const fiche = data[0];
+      await supabaseClient.from('annonces_captees').update({ statut: 'promue', property_id: fiche.id }).eq('id', a.id);
+      fiches.push(fiche.id);
+    } catch (e) {
+      echecs.push(titreCapture(a) + ' : ' + ((e && e.message) || e));
+    }
+  }
+  propsView.loaded = false;
+  capView.loaded = false;
+  if (echecs.length) console.error('[publication lot]', echecs);
+  if (!fiches.length) {
+    UI.toast('Aucune fiche créée. ' + (echecs[0] || ''), 'error', 10000);
+    return showPublicationLot();
+  }
+  if (echecs.length) UI.toast(`${echecs.length} fiche(s) non créée(s) — détail dans la console.`, 'error', 8000);
+  /* Le générateur de visuels prend la suite : affiche, publication,
+     rattachement, une fiche après l'autre. */
+  window.location.href = 'visuel-terrain-bonapriso.html?lot=' + fiches.join(',');
 }
 
 /* ─────────────── Relier les auteurs ─────────────── */

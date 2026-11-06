@@ -774,6 +774,8 @@ input::placeholder, textarea::placeholder {
    dernière ligne de la fiche. */
 .list-item:has(> .capture-match) { flex-wrap: wrap; }
 .list-item > .capture-match { flex-basis: 100%; order: 99; margin: var(--space-2) 0 0; }
+/* Publication en lot : la case devant le titre, pas sur sa propre ligne. */
+.lot-choix { width: auto; margin: 0 var(--space-2) 0 0; vertical-align: middle; }
 
 .alert-actions {
   display: flex;

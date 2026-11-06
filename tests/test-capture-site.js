@@ -85,6 +85,34 @@ function run() {
   ok('message client : prix au m² quand il n’y a pas de total', /140.000 FCFA le m²/.test(msg2));
   ok('message client : jamais « undefined » ni « null »', !/undefined|null/.test(msg + msg2));
 
+  /* Publication en lot (06/11/2026) : ce qui peut partir sur le site. */
+  const lot = new Function([
+    grab(/function looseKey[\s\S]*?\n}/, 'looseKey'),
+    grab(/function quartierDeLaListe[\s\S]*?\n}/, 'quartierDeLaListe'),
+    grab(/function similarProperties[\s\S]*?\n}/, 'similarProperties'),
+    grab(/function raisonNonPubliable[\s\S]*?\n}/, 'raisonNonPubliable'),
+    grab(/function trierPourPublication[\s\S]*?\n}/, 'trierPourPublication')
+  ].join('\n') + '\nreturn { raisonNonPubliable, trierPourPublication };')();
+  const QUARTIERS = ['Logpom', 'Makepe', 'Bonadiwoto (Grand Mall)', 'Deïdo'];
+  const PORTEFEUILLE = [{ id: 7, district: 'Makepe', surface_m2: 400, price: 30000000, price_m2: null }];
+  const v = (x) => Object.assign({ statut: 'analysee', rent_sale: 'sale', type: 'plots-of-land', price: 50000000, surface_m2: 500, district: 'Logpom' }, x);
+  const R = (x) => lot.raisonNonPubliable(v(x), QUARTIERS, PORTEFEUILLE);
+  ok('lot : une vente complète part', R({}) === null);
+  ok('lot : une location ne part pas', R({ rent_sale: 'rent' }) === 'pas une vente');
+  ok('lot : déjà transformée en fiche', R({ statut: 'promue' }) === 'déjà une fiche');
+  ok('lot : sans prix total, refusée', R({ price: null }) === 'sans prix total');
+  ok('lot : terrain sans surface, refusé', R({ surface_m2: null }) === 'terrain sans surface');
+  ok('lot : maison sans surface, acceptée', R({ type: 'house', surface_m2: null }) === null);
+  ok('lot : quartier absent du site, refusé', R({ district: 'Nyalla' }) === 'quartier inconnu du site');
+  ok('lot : orthographe du site retrouvée (Deido → Deïdo, Bonadiwoto)', R({ district: 'Deido' }) === null && R({ district: 'bonadiwoto' }) === null);
+  ok('lot : même bien déjà au portefeuille, refusé', R({ district: 'Makepe', surface_m2: 400, price: 30000000 }) === 'déjà au portefeuille');
+  const tri = lot.trierPourPublication([
+    v({ id: 1 }), v({ id: 2, district: 'logpom' }), v({ id: 3, district: 'Nyalla' }), v({ id: 4, district: 'nyalla' }), v({ id: 5, rent_sale: 'rent' })
+  ], QUARTIERS, PORTEFEUILLE);
+  ok('lot : le même terrain posté deux fois ne part qu’une fois', tri.publiables.length === 1 && tri.refus['même bien, autre confrère'] === 1);
+  ok('lot : le quartier pris est celui du site', tri.publiables[0]._quartier === 'Logpom');
+  ok('lot : quartiers inconnus regroupés malgré la casse', tri.inconnus.length === 1 && tri.inconnus[0].n === 2);
+
   return { title: 'Demandes du site ↔ annonces des groupes', checks };
 }
 

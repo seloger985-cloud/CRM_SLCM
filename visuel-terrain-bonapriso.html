@@ -261,7 +261,7 @@
 
         <div class="badge" id="o-num">4</div>
 
-        <div class="label">Superficie :</div>
+        <div class="label" id="o-label">Superficie :</div>
         <div class="area"><b id="o-sup">591</b><span id="o-unit">m²</span></div>
 
         <div class="flag" id="o-statut">À VENDRE</div>
@@ -370,7 +370,7 @@
     try{
       const client=await window.SLCM_DB.getClient();
       const {data,error}=await client.from('properties')
-        .select('id,code,title,type,rent_sale,district,address,surface_m2,price,price_m2,listing_slug,prix_sur_demande')
+        .select('id,code,title,type,rent_sale,district,address,surface_m2,price,price_m2,listing_slug,prix_sur_demande,bedrooms')
         .order('created_at',{ascending:false}).limit(300);
       if(error) throw error;
       _biens=data||[];
@@ -381,6 +381,12 @@
       const id=new URLSearchParams(location.search).get('bien');
       if(id && _biens.some(b=>String(b.id)===id)){ sel.value=id; remplir(_biens.find(b=>String(b.id)===id)); }
       etatPublier();
+      const lot=(new URLSearchParams(location.search).get('lot')||'').split(',').filter(x=>/^\d+$/.test(x));
+      if(lot.length){
+        /* Retiré de l'adresse : un rechargement ne doit pas republier. */
+        history.replaceState(null,'',location.pathname);
+        publierLot(lot);
+      }
     }catch(err){
       sel.disabled=true;
       sel.options[0].textContent='Fiches indisponibles — saisie à la main ('+(err.message||err)+')';
@@ -484,6 +490,139 @@
   const etat=t=>{ document.getElementById('pub-etat').innerHTML=t; };
   const val=id=>document.getElementById(id).value.trim();
 
+  /* ── Fond d'illustration (annonces des groupes, 06/11/2026) ──
+     Les offres captées dans les groupes de confrères n'ont pas de photo.
+     Le grand panneau reçoit alors une affiche dessinée ici, aux couleurs de
+     l'agence : une parcelle bornée pour un terrain, une maison pour tout
+     bâti. Elle porte « Visuel d'illustration » : le visiteur ne doit pas la
+     prendre pour une photo du bien. Dessinée sur un canevas puis posée
+     comme une image ordinaire : html2canvas la reproduit sans surprise. */
+  function illustration(terrain){
+    const W=770, H=950, cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+    const g=cv.getContext('2d');
+    const fond=g.createLinearGradient(0,0,0,H); fond.addColorStop(0,'#24262e'); fond.addColorStop(1,'#15161b');
+    g.fillStyle=fond; g.fillRect(0,0,W,H);
+    /* trame discrète de lignes obliques */
+    g.strokeStyle='rgba(255,255,255,0.045)'; g.lineWidth=2;
+    for(let x=-H; x<W; x+=38){ g.beginPath(); g.moveTo(x,0); g.lineTo(x+H,H); g.stroke(); }
+    const O='#ff7a00', cx=W/2+40, cy=440;
+    g.lineJoin='round'; g.lineCap='round';
+    if(terrain){
+      /* parcelle en perspective, bornes aux angles, limites en pointillé */
+      const P=[[cx-250,cy+120],[cx+230,cy+150],[cx+170,cy-110],[cx-190,cy-130]];
+      g.fillStyle='rgba(255,122,0,0.12)';
+      g.beginPath(); P.forEach(([x,y],i)=>i?g.lineTo(x,y):g.moveTo(x,y)); g.closePath(); g.fill();
+      g.setLineDash([22,14]); g.strokeStyle=O; g.lineWidth=7;
+      g.beginPath(); P.forEach(([x,y],i)=>i?g.lineTo(x,y):g.moveTo(x,y)); g.closePath(); g.stroke();
+      g.setLineDash([]);
+      P.forEach(([x,y])=>{ g.fillStyle='#fff'; g.fillRect(x-7,y-46,14,46); g.fillStyle=O; g.fillRect(x-7,y-46,14,14); });
+      /* un arbre, pour l'échelle */
+      g.fillStyle='#3a3d47'; g.fillRect(cx+120,cy-215,12,70);
+      g.fillStyle='rgba(255,255,255,0.85)'; g.beginPath(); g.arc(cx+126,cy-235,44,0,Math.PI*2); g.fill();
+    }else{
+      /* maison : toit, façade, porte, fenêtres */
+      const L=cx-200, R=cx+200, B=cy+150, T=cy-60;
+      g.fillStyle='rgba(255,255,255,0.92)'; g.fillRect(L,T,R-L,B-T);
+      g.fillStyle=O; g.beginPath(); g.moveTo(L-40,T+6); g.lineTo(cx,cy-250); g.lineTo(R+40,T+6); g.closePath(); g.fill();
+      g.fillStyle='#24262e'; g.fillRect(cx-40,B-140,80,140);
+      g.fillStyle='#ff9a3d'; g.fillRect(L+45,T+45,95,80); g.fillRect(R-140,T+45,95,80);
+      g.strokeStyle='#24262e'; g.lineWidth=6;
+      [[L+45,T+45],[R-140,T+45]].forEach(([x,y])=>{ g.strokeRect(x,y,95,80); g.beginPath(); g.moveTo(x+47,y); g.lineTo(x+47,y+80); g.stroke(); });
+      g.fillStyle='#fff'; g.fillRect(R-90,cy-200,34,80);
+    }
+    /* sol */
+    g.strokeStyle='rgba(255,255,255,0.25)'; g.lineWidth=4;
+    g.beginPath(); g.moveTo(90,cy+190); g.lineTo(W-30,cy+190); g.stroke();
+    /* textes */
+    g.textAlign='center'; g.fillStyle='#fff';
+    g.font="800 76px Poppins, Arial, sans-serif"; g.fillText(terrain?'TERRAIN':'MAISON', cx, cy+300);
+    g.fillStyle=O; g.font="700 46px Poppins, Arial, sans-serif"; g.fillText('À VENDRE', cx, cy+362);
+    g.fillStyle='rgba(255,255,255,0.7)'; g.font="500 30px Poppins, Arial, sans-serif";
+    g.fillText("Visuel d'illustration", cx, H-60);
+    return cv.toDataURL('image/png');
+  }
+
+  /* La publication d'UNE fiche, partagée par le bouton et par le lot.
+     `illustration` : le visuel n'est pas une photo du bien — le site
+     l'accepte alors seul, même hors terrain, et le signale. */
+  async function publierFiche(b, illustration){
+    const canvas=await capturer();
+    const lieu=val('f-lieu');
+    const sup=Number(val('f-sup').replace(/\s/g,''))||b.surface_m2||null;
+    const terrain=estTerrain(b);
+    const corps={
+      code:b.code, type:b.type||'plots-of-land', rent_sale:b.rent_sale||'sale',
+      title:b.title||((terrain?'Terrain ':'Bien ')+(sup?sup+' m², ':'')+(b.district||'')),
+      price:b.prix_sur_demande?null:b.price, price_m2:b.prix_sur_demande?null:b.price_m2,
+      surface_m2:b.surface_m2||(terrain?sup:null), bedrooms:b.bedrooms||null,
+      prix_sur_demande:!!b.prix_sur_demande,
+      district:b.district||lieu.split(',')[0], city:'Douala',
+      repere:lieu.indexOf(',')>-1?lieu.slice(lieu.indexOf(',')+1).trim():lieu,
+      description:[lieu?'Situé : '+lieu+'.':'', val('f-l2'), val('f-l3'), val('f-mention')].filter(Boolean).join('\n'),
+      image:canvas.toDataURL('image/jpeg',0.88),
+      illustration:!!illustration
+    };
+    const client=await window.SLCM_DB.getClient();
+    const jeton=(await client.auth.getSession()).data.session?.access_token;
+    const r=await fetch(SITE_PUBLIER,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+jeton},body:JSON.stringify(corps)});
+    const j=await r.json().catch(()=>({}));
+    if(!(r.ok||r.status===409)) throw new Error(j.error||('HTTP '+r.status));
+    /* La fiche se rattache à l'annonce : la recherche par référence et le
+       bouton « Vendu » du CRM passent par ce lien. */
+    const {error}=await client.from('properties').update({listing_id:j.id,listing_slug:j.slug}).eq('id',b.id);
+    if(error) throw new Error('annonce en ligne, mais fiche non rattachée : '+error.message);
+    b.listing_slug=j.slug;
+    return { deja:r.status===409, url:'https://selogercm.com/annonce/'+encodeURIComponent(j.slug) };
+  }
+
+  /* Prépare la carte d'une fiche de groupe : champs propres (rien ne doit
+     rester de la fiche précédente), fond d'illustration, image décodée. */
+  async function preparerIllustration(b){
+    const terrain=estTerrain(b);
+    champ('f-sup',''); champ('f-unit','m²'); champ('f-prix',''); champ('f-punit',''); champ('f-mention','');
+    document.getElementById('o-label').textContent='Superficie :';
+    remplir(b);
+    if(!b.surface_m2 && !terrain && b.bedrooms){
+      champ('f-sup', String(b.bedrooms)); champ('f-unit', b.bedrooms>1?'chambres':'chambre');
+      document.getElementById('o-label').textContent='Chambres :';
+    }
+    if(!b.surface_m2 && !(!terrain && b.bedrooms)) champ('f-sup','—');
+    champ('f-l2', b.title||'');
+    champ('f-l3', 'Photos et visite sur demande');
+    imgs.photo=illustration(terrain); imgs.aerien=null;
+    document.getElementById('f-trace').checked=false;
+    placerImages();
+    const img=document.getElementById('photo-img');
+    if(img.decode){ try{ await img.decode(); }catch(e){} }
+  }
+
+  /* ── Publication EN LOT : visuel-terrain…?lot=12,13,14 ──
+     Ouvert par le CRM (Annonces des groupes → Publier sur le site), qui a
+     déjà créé une fiche par annonce. Une fiche après l'autre : affiche,
+     publication, rattachement. Un échec n'arrête pas le lot. */
+  async function publierLot(ids){
+    const res=[];
+    const ligne=x=>'<li>'+x.code+' — '+(x.ok?(x.deja?'déjà en ligne, rattachée : ':'✅ ')+'<a href="'+x.url+'" target="_blank" rel="noopener" style="color:inherit">'+x.url+'</a>':'❌ '+String(x.erreur).replace(/</g,'&lt;'))+'</li>';
+    await (document.fonts && document.fonts.ready);
+    for(let i=0;i<ids.length;i++){
+      const b=_biens.find(x=>String(x.id)===String(ids[i]));
+      if(!b||!b.code){ res.push({code:'#'+ids[i], ok:false, erreur:'fiche introuvable ou sans référence'}); continue; }
+      etat('Lot : '+(i+1)+' / '+ids.length+' — '+b.code+'…<ul>'+res.map(ligne).join('')+'</ul>');
+      document.getElementById('f-bien').value=String(b.id);
+      try{
+        await preparerIllustration(b);
+        const r=await publierFiche(b, true);
+        res.push({code:b.code, ok:true, deja:r.deja, url:r.url});
+      }catch(err){
+        res.push({code:b.code, ok:false, erreur:err.message||err});
+      }
+    }
+    const ok=res.filter(x=>x.ok).length;
+    etat('<b>Lot terminé : '+ok+' / '+res.length+' en ligne.</b><ul>'+res.map(ligne).join('')+'</ul>'
+      +'<a href="index.html" style="color:inherit">← Retour au CRM</a>');
+    etatPublier();
+  }
+
   document.getElementById('publier').onclick=async ()=>{
     const b=ficheChoisie(); if(!b||!b.code) return;
     if(!estTerrain(b)){ location.href='index.html?publier='+encodeURIComponent(b.id); return; }
@@ -491,31 +630,8 @@
     const btn=document.getElementById('publier'); btn.disabled=true;
     etat('Publication en cours…');
     try{
-      const canvas=await capturer();
-      const lieu=val('f-lieu');
-      const sup=Number(val('f-sup').replace(/\s/g,''))||b.surface_m2||null;
-      const corps={
-        code:b.code, type:b.type||'plots-of-land', rent_sale:b.rent_sale||'sale',
-        title:b.title||('Terrain '+(sup?sup+' m², ':'')+(b.district||'')),
-        price:b.prix_sur_demande?null:b.price, price_m2:b.prix_sur_demande?null:b.price_m2, surface_m2:sup,
-        prix_sur_demande:!!b.prix_sur_demande,
-        district:b.district||lieu.split(',')[0], city:'Douala',
-        repere:lieu.indexOf(',')>-1?lieu.slice(lieu.indexOf(',')+1).trim():lieu,
-        description:[lieu?'Situé : '+lieu+'.':'', val('f-l2'), val('f-l3'), val('f-mention')].filter(Boolean).join('\n'),
-        image:canvas.toDataURL('image/jpeg',0.88)
-      };
-      const client=await window.SLCM_DB.getClient();
-      const jeton=(await client.auth.getSession()).data.session?.access_token;
-      const r=await fetch(SITE_PUBLIER,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+jeton},body:JSON.stringify(corps)});
-      const j=await r.json().catch(()=>({}));
-      if(!(r.ok||r.status===409)) throw new Error(j.error||('HTTP '+r.status));
-      /* La fiche se rattache à l'annonce : la recherche par référence et le
-         bouton « Vendu » du CRM passent par ce lien. */
-      const {error}=await client.from('properties').update({listing_id:j.id,listing_slug:j.slug}).eq('id',b.id);
-      if(error) throw new Error('annonce en ligne, mais fiche non rattachée : '+error.message);
-      b.listing_slug=j.slug;
-      const url='https://selogercm.com/annonce/'+encodeURIComponent(j.slug);
-      etat((r.status===409?'Déjà en ligne, fiche rattachée : ':'✅ En ligne : ')+'<a href="'+url+'" target="_blank" rel="noopener" style="color:inherit">'+url+'</a>');
+      const r=await publierFiche(b, false);
+      etat((r.deja?'Déjà en ligne, fiche rattachée : ':'✅ En ligne : ')+'<a href="'+r.url+'" target="_blank" rel="noopener" style="color:inherit">'+r.url+'</a>');
     }catch(err){
       etat('❌ Publication impossible : '+String(err.message||err).replace(/</g,'&lt;'));
     }finally{
