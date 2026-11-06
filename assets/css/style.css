@@ -774,6 +774,13 @@ input::placeholder, textarea::placeholder {
    dernière ligne de la fiche. */
 .list-item:has(> .capture-match) { flex-wrap: wrap; }
 .list-item > .capture-match { flex-basis: 100%; order: 99; margin: var(--space-2) 0 0; }
+/* Annonces des groupes rangées par quartier : un titre par quartier. */
+.capture-quartier {
+  margin: var(--space-5) 0 var(--space-2);
+  padding-bottom: var(--space-2);
+  border-bottom: 2px solid var(--accent);
+}
+.capture-quartier:first-child { margin-top: 0; }
 /* Publication en lot : la case devant le titre, pas sur sa propre ligne. */
 .lot-choix { width: auto; margin: 0 var(--space-2) 0 0; vertical-align: middle; }
 

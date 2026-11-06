@@ -27,6 +27,9 @@ function run() {
     grab(/const TYPE_FR = \{[\s\S]*?\n\};/, 'TYPE_FR'),
     grab(/const SOURCE_DEMANDE = [^\n]*/, 'SOURCE_DEMANDE'),
     grab(/function demandeVersRecherche[\s\S]*?\n}/, 'demandeVersRecherche'),
+    grab(/function looseKey[\s\S]*?\n}/, 'looseKey'),
+    grab(/const SECTEURS = \{[\s\S]*?\n\};/, 'SECTEURS'),
+    grab(/function quartierEtSecteur[\s\S]*?\n}/, 'quartierEtSecteur'),
     grab(/function captureVersListing[\s\S]*?\n}/, 'captureVersListing'),
     grab(/function recherchesDuSite[\s\S]*?\n}/, 'recherchesDuSite'),
     grab(/function capturesPourRecherche[\s\S]*?\n}/, 'capturesPourRecherche'),
@@ -89,6 +92,8 @@ function run() {
   const lot = new Function([
     grab(/function looseKey[\s\S]*?\n}/, 'looseKey'),
     grab(/function quartierDeLaListe[\s\S]*?\n}/, 'quartierDeLaListe'),
+    grab(/const SECTEURS = \{[\s\S]*?\n\};/, 'SECTEURS'),
+    grab(/function quartierEtSecteur[\s\S]*?\n}/, 'quartierEtSecteur'),
     grab(/function similarProperties[\s\S]*?\n}/, 'similarProperties'),
     grab(/const PRIX_VENTE_MIN = [^\n]*/, 'PRIX_VENTE_MIN'),
     grab(/function prixPubliable[\s\S]*?\n}/, 'prixPubliable'),
@@ -118,6 +123,24 @@ function run() {
   ok('lot : le même terrain posté deux fois ne part qu’une fois', tri.publiables.length === 1 && tri.refus['même bien, autre confrère'] === 1);
   ok('lot : le quartier pris est celui du site', tri.publiables[0]._quartier === 'Logpom');
   ok('lot : quartiers inconnus regroupés malgré la casse', tri.inconnus.length === 1 && tri.inconnus[0].n === 2);
+  ok('lot : une vente à « Denver » part dans Bonamoussadi', lot.raisonNonPubliable(v({ district: 'Denver' }), QUARTIERS.concat('Bonamoussadi'), PORTEFEUILLE) === null
+    && lot.trierPourPublication([v({ id: 9, district: 'Denver' })], QUARTIERS.concat('Bonamoussadi'), PORTEFEUILLE).publiables[0]._quartier === 'Bonamoussadi');
+
+  /* Secteurs d'un quartier (06/11/2026) : Denver, Santa Barbara → Bonamoussadi. */
+  const qs = new Function([
+    grab(/function looseKey[\s\S]*?\n}/, 'looseKey'),
+    grab(/const SECTEURS = \{[\s\S]*?\n\};/, 'SECTEURS'),
+    grab(/function quartierEtSecteur[\s\S]*?\n}/, 'quartierEtSecteur')
+  ].join('\n') + '\nreturn quartierEtSecteur;')();
+  const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  ok('secteur lu comme quartier : « Denver » → Bonamoussadi (Denver)', eq(qs({ district: 'Denver' }), { quartier: 'Bonamoussadi', secteur: 'Denver' }));
+  ok('secteur : casse et accents indifférents (« cité chirac » → Yassa)', qs({ district: 'cité chirac' }).quartier === 'Yassa');
+  ok('secteur : « Santa Barbara » → Bonamoussadi', qs({ district: 'Santa Barbara' }).quartier === 'Bonamoussadi');
+  ok('secteur dans l’adresse, quartier juste : gardé, secteur relevé', eq(qs({ district: 'Bonamoussadi', address: 'Bonamoussadi (Denver), à pied du goudron' }), { quartier: 'Bonamoussadi', secteur: 'Denver' }));
+  ok('secteur dans l’adresse, sans quartier : le quartier est déduit', qs({ district: null, address: 'Cité Chirac, derrière la pharmacie' }).quartier === 'Yassa');
+  ok('quartier ordinaire : inchangé, sans secteur', eq(qs({ district: 'Logpom' }), { quartier: 'Logpom', secteur: null }));
+  ok('pas de faux secteur dans un mot plus long (« Denverland »)', qs({ district: 'Denverland' }).secteur === null);
+  ok('rien du tout : rien d’inventé', eq(qs({}), { quartier: null, secteur: null }));
 
   return { title: 'Demandes du site ↔ annonces des groupes', checks };
 }

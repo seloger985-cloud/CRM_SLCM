@@ -3113,7 +3113,11 @@ const CAPTURE_STATUT_FR = {
   erreur: 'Échec d’analyse', promue: 'Fiche créée', ecartee: 'Écartée'
 };
 const CAPTURE_STATUTS = {
-  offres: ['analysee', 'promue'],
+  /* « Offres » : ce qui reste à traiter. Une annonce devenue fiche (publiée
+     ou non) sort de la liste — choix du 06/11/2026 — et se retrouve sous
+     « Devenues fiches ». */
+  offres: ['analysee'],
+  fiches: ['promue'],
   attente: ['a_analyser', 'erreur'],
   ecartees: ['pas_un_bien', 'ecartee'],
   toutes: null
@@ -3150,11 +3154,40 @@ function confrereDeAuteur(auteur, confreres) {
   }) || null;
 }
 
+/* ── Secteurs d'un quartier (06/11/2026) ──
+   Les confrères situent souvent un bien par son SECTEUR — « Denver »,
+   « Santa Barbara », « Cité Chirac » — qui n'est pas un quartier du site.
+   Le quartier est ce qui sert au rangement, au rapprochement et à la
+   publication ; le secteur reste visible à côté, comme repère.
+   La table s'enrichit au fil des annonces : une ligne par secteur, écrit
+   en minuscules sans accents. Même liste dans capture-annonces. */
+const SECTEURS = {
+  'denver': 'Bonamoussadi',
+  'santa barbara': 'Bonamoussadi',
+  'cite chirac': 'Yassa'
+};
+
+/* Le quartier et le secteur d'une annonce. Le secteur est cherché dans le
+   quartier lu par l'analyse (« Denver ») puis dans l'adresse (« Bonamoussadi
+   (Denver) »). Pure. */
+function quartierEtSecteur(a) {
+  const district = String((a && a.district) || '').trim();
+  const cle = looseKey(district).replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (SECTEURS[cle]) return { quartier: SECTEURS[cle], secteur: district };
+  const texte = ' ' + looseKey([district, a && a.address].filter(Boolean).join(' ')).replace(/[^a-z0-9]+/g, ' ') + ' ';
+  const trouve = Object.keys(SECTEURS).find(k => texte.includes(' ' + k + ' '));
+  if (trouve) {
+    const nom = trouve.replace(/\b\w/g, c => c.toUpperCase()).replace(/^Cite /, 'Cité ');
+    return { quartier: district && looseKey(district) !== trouve ? district : SECTEURS[trouve], secteur: nom };
+  }
+  return { quartier: district || null, secteur: null };
+}
+
 /* Une annonce captée, à la forme qu'attend le moteur de rapprochement. */
 function captureVersListing(a) {
   return {
     id: 'cap-' + a.id, title: a.title, status: 'active',
-    rent_sale: a.rent_sale || null, type: a.type || null, district: a.district || null,
+    rent_sale: a.rent_sale || null, type: a.type || null, district: quartierEtSecteur(a).quartier,
     city: null, price: a.price, bedrooms: a.bedrooms, furnished: a.furnished,
     created_at: a.posted_at || a.created_at
   };
@@ -3198,7 +3231,9 @@ function capturesPourRecherche(recherche, captures) {
 async function chargerCapturesRecentes() {
   const depuis = new Date(Date.now() - CAPTURE_FRAICHEUR_JOURS * 86400000).toISOString();
   const { data, error } = await supabaseClient.from('annonces_captees').select(TABLE_COLS.annonces_captees)
-    .in('statut', CAPTURE_STATUTS.offres).gte('posted_at', depuis)
+    /* Le rapprochement, lui, garde les deux : une offre devenue fiche
+       intéresse toujours un client. */
+    .in('statut', ['analysee', 'promue']).gte('posted_at', depuis)
     .order('posted_at', { ascending: false }).limit(1000);
   if (error) throw error;
   return data || [];
@@ -3268,7 +3303,7 @@ async function showCaptures(force) {
         ${opt('30', capView.periode, '30 derniers jours')}${opt('90', capView.periode, '3 derniers mois')}${opt('365', capView.periode, '12 derniers mois')}${opt('tout', capView.periode, 'Depuis le début')}
       </select>
       <select id="cap-statut" class="search-select">
-        ${opt('offres', capView.statut, 'Offres')}${opt('attente', capView.statut, 'À analyser')}${opt('ecartees', capView.statut, 'Écartées')}${opt('toutes', capView.statut, 'Tout')}
+        ${opt('offres', capView.statut, 'Offres')}${opt('fiches', capView.statut, 'Devenues fiches')}${opt('attente', capView.statut, 'À analyser')}${opt('ecartees', capView.statut, 'Écartées')}${opt('toutes', capView.statut, 'Tout')}
       </select>
       <button onclick="showCaptures(true)" class="ghost-btn" title="Recharger">↻</button>
       <button onclick="showProperties()" class="ghost-btn">← Biens</button>
@@ -3326,8 +3361,21 @@ function renderCaptures() {
   });
   const compteur = document.getElementById('cap-count');
   if (compteur) compteur.textContent = rows.length + ' annonce(s)' + (rows.length > 300 ? ' — les 300 plus récentes affichées' : '');
+  /* Rangées par quartier (06/11/2026), les quartiers les plus fournis
+     d'abord, les plus récentes en tête de chaque quartier. */
+  const groupes = new Map();
+  rows.slice(0, 300).forEach(a => {
+    const q = quartierEtSecteur(a).quartier || 'Quartier non précisé';
+    const k = looseKey(q);
+    if (!groupes.has(k)) groupes.set(k, { nom: q, annonces: [] });
+    groupes.get(k).annonces.push(a);
+  });
+  const ordre = [...groupes.values()].sort((x, y) =>
+    (x.nom === 'Quartier non précisé') - (y.nom === 'Quartier non précisé')
+    || y.annonces.length - x.annonces.length || x.nom.localeCompare(y.nom, 'fr'));
   liste.innerHTML = rows.length
-    ? rows.slice(0, 300).map(captureCard).join('')
+    ? ordre.map(g => `<h3 class="capture-quartier">${escHtml(g.nom)} <span class="item-meta">${g.annonces.length}</span></h3>`
+        + g.annonces.map(captureCard).join('')).join('')
     : '<p>Aucune annonce pour ces critères.</p>';
 }
 
@@ -3373,7 +3421,7 @@ function captureCard(a) {
     TYPE_FR[a.type] || '',
     a.surface_m2 ? formatMoney(a.surface_m2) + ' m²' : '',
     a.bedrooms ? a.bedrooms + ' ch.' : '',
-    a.district || a.address || ''
+    (() => { const qs = quartierEtSecteur(a); return qs.quartier ? qs.quartier + (qs.secteur ? ' (' + qs.secteur + ')' : '') : (a.address || ''); })()
   ].filter(Boolean).join(' · ');
   const interesses = clientsInteresses(a);
   const id = Number(a.id);
@@ -3650,8 +3698,9 @@ function raisonNonPubliable(a, quartiers, portefeuille) {
   if (a.rent_sale !== 'sale') return 'pas une vente';
   if (!a.type) return 'type inconnu';
   if (a.type === 'plots-of-land' && !(Number(a.surface_m2) > 0)) return 'terrain sans surface';
-  if (!a.district) return 'sans quartier';
-  const q = quartierDeLaListe(quartiers, a.district);
+  const qs = quartierEtSecteur(a);
+  if (!qs.quartier) return 'sans quartier';
+  const q = quartierDeLaListe(quartiers, qs.quartier);
   if (!q) return 'quartier inconnu du site';
   if (similarProperties({ id: null, district: q, surface_m2: a.surface_m2, price: a.price, price_m2: a.price_m2 }, portefeuille).length) {
     return 'déjà au portefeuille';
@@ -3669,14 +3718,14 @@ function trierPourPublication(captures, quartiers, portefeuille) {
     if (r) {
       refus[r] = (refus[r] || 0) + 1;
       if (r === 'quartier inconnu du site') {
-        const nom = String(a.district).trim();
+        const nom = String(quartierEtSecteur(a).quartier).trim();
         const k = looseKey(nom);
         inconnus[k] = inconnus[k] || { nom, n: 0 };
         inconnus[k].n++;
       }
       return;
     }
-    const q = quartierDeLaListe(quartiers, a.district);
+    const q = quartierDeLaListe(quartiers, quartierEtSecteur(a).quartier);
     const cle = [looseKey(q), Number(a.surface_m2) || '', prixPubliable(a) || ''].join('|');
     if (vus.has(cle)) { refus['même bien, autre confrère'] = (refus['même bien, autre confrère'] || 0) + 1; return; }
     vus.add(cle);
@@ -3759,7 +3808,11 @@ async function creerFichesEtPublier() {
            prix au m² est gardé dans la fiche, la publication le tait. */
         price: prixPubliable(a), price_m2: a.price_m2, surface_m2: a.surface_m2,
         prix_sur_demande: !prixPubliable(a),
-        district: a._quartier, address: a.address, bedrooms: a.bedrooms, furnished: a.furnished,
+        /* Le secteur (« Denver ») rejoint l'adresse : il devient le repère
+           de l'annonce publiée (« Bonamoussadi, Denver »). */
+        district: a._quartier,
+        address: [quartierEtSecteur(a).secteur, a.address].filter((x, i, t) => x && t.indexOf(x) === i).join(', ') || null,
+        bedrooms: a.bedrooms, furnished: a.furnished,
         status: 'available', confrere_id: c.id,
         description: [a.message, 'Vu dans « ' + (a.groupe || 'un groupe') + ' » le ' + formatDate(a.posted_at)].join('\n\n'),
         ...detecterEquipements(a.message)

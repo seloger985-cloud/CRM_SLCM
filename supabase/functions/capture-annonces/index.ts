@@ -35,7 +35,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.49.0';
 
 /* À incrémenter dès qu'on touche ce fichier. Voir README, « Vérifier QUELLE
    version tourne ». */
-const VERSION = '2026-11-06-a';
+const VERSION = '2026-11-06-b';
 
 /* Choix du 02/11/2026 : le modèle léger. Estimation pour 4 groupes, 400 à
    1 200 messages par jour : 1 à 4 $ par mois. Le modèle de understand-inbox
@@ -130,7 +130,11 @@ Règles, dans l'ordre :
    Exemple : « Terrain 500 m², 25 millions, signature 500k » donne price: 25000000, frais: "Signature 500 000 FCFA".
    Si un montant n'est clairement ni le total ni le prix au m², laisse price à null et ajoute « prix » à manquant plutôt que de deviner.
 
-5. district est le quartier seul, sans la ville. Quartiers fréquents : Bonapriso, Bali, Bonanjo, Bonamoussadi, Makepe, Logpom, Logbessou, Akwa, Deido, Kotto, Bonabéri, Yassa, Youpwe, Ndogbong, Nyalla, PK14.
+5. district est le QUARTIER seul, sans la ville. Quartiers fréquents : Bonapriso, Bali, Bonanjo, Bonamoussadi, Makepe, Logpom, Logbessou, Akwa, Deido, Kotto, Bonabéri, Yassa, Youpwe, Ndogbong, Nyalla, Lendi, PK14.
+   Un SECTEUR n'est pas un quartier : c'est une partie d'un quartier. Secteurs connus : Denver et Santa Barbara (à Bonamoussadi), Cité Chirac (à Yassa). Pour un secteur, district reçoit le QUARTIER et address commence par le secteur.
+   Exemple : « Terrain à Denver » donne district: "Bonamoussadi", address: "Denver".
+   Exemple : « Villa Cité Chirac, Yassa » donne district: "Yassa", address: "Cité Chirac".
+   Un lieu que tu ne sais pas rattacher à un quartier va dans address, et district reste null — ne devine pas le quartier.
 
 6. Un message qui propose PLUSIEURS biens : décris le premier, et ajoute « plusieurs_biens » à « manquant ».
 
