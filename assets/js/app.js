@@ -3731,7 +3731,51 @@ function trierPourPublication(captures, quartiers, portefeuille) {
     vus.add(cle);
     publiables.push(Object.assign({}, a, { _quartier: q }));
   });
+  marquerDoublonsProbables(publiables, portefeuille);
   return { publiables, refus, inconnus: Object.values(inconnus).sort((x, y) => y.n - x.n) };
+}
+
+/* Doublons PROBABLES (08/11/2026). Le même terrain circule chez plusieurs
+   confrères à des prix différents — constaté à Akwa : 806 m² au marché
+   Congo, à 900 et à 725,4 millions, publiés deux fois dans le même lot.
+   Le contrôle exact (quartier + surface + prix) ne pouvait pas le voir.
+
+   Même quartier ET même surface suffisent donc à SIGNALER : dans le lot,
+   l'offre la moins chère reste cochée (choix de l'utilisateur), les autres
+   sont décochées avec la raison ; une offre qui ressemble à une fiche du
+   portefeuille l'est aussi. Rien n'est écarté d'office : des lots de
+   500 m² identiques existent dans un même morcellement, l'agent tranche. */
+function marquerDoublonsProbables(publiables, portefeuille) {
+  const cle = (quartier, surface) => Number(surface) > 0 ? looseKey(quartier) + '|' + Number(surface) : null;
+  const groupes = new Map();
+  publiables.forEach(a => {
+    const k = cle(a._quartier, a.surface_m2);
+    if (!k) return;
+    if (!groupes.has(k)) groupes.set(k, []);
+    groupes.get(k).push(a);
+  });
+  groupes.forEach(liste => {
+    if (liste.length < 2) return;
+    /* La moins chère d'abord ; un prix sur demande passe après les prix connus. */
+    liste.sort((x, y) => (prixPubliable(x) || Infinity) - (prixPubliable(y) || Infinity));
+    liste.slice(1).forEach(a => {
+      a._doublon = 'même quartier et même surface qu’une offre moins chère du lot ('
+        + (prixPubliable(liste[0]) ? formatMoney(prixPubliable(liste[0])) + ' FCFA' : 'prix sur demande') + ')';
+    });
+  });
+  const fiches = new Map();
+  (portefeuille || []).forEach(p => {
+    const k = cle(p.district, p.surface_m2);
+    if (k && !fiches.has(k)) fiches.set(k, p);
+  });
+  publiables.forEach(a => {
+    const f = fiches.get(cle(a._quartier, a.surface_m2));
+    if (f && !a._doublon) a._doublon = 'même quartier et même surface que la fiche ' + (f.code || '#' + f.id);
+  });
+  /* Les doublons probables en fin de liste : les cases cochées d'office
+     (les LOT_MAX premières) restent des offres sans soupçon. */
+  publiables.sort((x, y) => (!!x._doublon) - (!!y._doublon));
+  return publiables;
 }
 
 async function showPublicationLot() {
@@ -3752,8 +3796,9 @@ async function showPublicationLot() {
   const ligne = (a, i) => {
     const c = confrereDeAuteur(a.auteur, capView.confreres);
     return `<label class="list-item capture-card">
-      <div><input type="checkbox" class="lot-choix" value="${Number(a.id)}" ${i < LOT_MAX ? 'checked' : ''}>
+      <div><input type="checkbox" class="lot-choix" value="${Number(a.id)}" ${i < LOT_MAX && !a._doublon ? 'checked' : ''}>
         <strong>${escHtml(titreCapture(a))}</strong></div>
+      ${a._doublon ? `<div class="item-meta"><strong>Doublon probable</strong> : ${escHtml(a._doublon)}. Décochée — coche-la si ce n’est pas le même terrain.</div>` : ''}
       <div class="item-meta">${escHtml(TYPE_FR[a.type] || a.type)} · ${escHtml(a._quartier)}${a.surface_m2 ? ' · ' + formatMoney(a.surface_m2) + ' m²' : ''} · <strong>${prixPubliable(a) ? escHtml(formatMoney(prixPubliable(a))) + ' FCFA' : 'Prix sur demande'}</strong></div>
       <div class="item-meta">${escHtml(c ? c.name : (a.auteur || 'auteur inconnu') + ' (confrère créé à la publication)')} · ${escHtml(formatDate(a.posted_at))}${a.groupe ? ' · ' + escHtml(a.groupe) : ''}</div>
     </label>`;

@@ -98,6 +98,8 @@ function run() {
     grab(/const PRIX_VENTE_MIN = [^\n]*/, 'PRIX_VENTE_MIN'),
     grab(/function prixPubliable[\s\S]*?\n}/, 'prixPubliable'),
     grab(/function raisonNonPubliable[\s\S]*?\n}/, 'raisonNonPubliable'),
+    grab(/function formatMoney[\s\S]*?\n}/, 'formatMoney'),
+    grab(/function marquerDoublonsProbables[\s\S]*?\n}/, 'marquerDoublonsProbables'),
     grab(/function trierPourPublication[\s\S]*?\n}/, 'trierPourPublication')
   ].join('\n') + '\nreturn { raisonNonPubliable, trierPourPublication, prixPubliable };')();
   const QUARTIERS = ['Logpom', 'Makepe', 'Bonadiwoto (Grand Mall)', 'Deïdo'];
@@ -123,6 +125,20 @@ function run() {
   ok('lot : le même terrain posté deux fois ne part qu’une fois', tri.publiables.length === 1 && tri.refus['même bien, autre confrère'] === 1);
   ok('lot : le quartier pris est celui du site', tri.publiables[0]._quartier === 'Logpom');
   ok('lot : quartiers inconnus regroupés malgré la casse', tri.inconnus.length === 1 && tri.inconnus[0].n === 2);
+  /* Le cas d'Akwa (08/11/2026) : même terrain, deux confrères, deux prix. */
+  const QA = QUARTIERS.concat('Akwa');
+  const akwa = lot.trierPourPublication([
+    v({ id: 186, district: 'Akwa', surface_m2: 806, price: 900000000 }),
+    v({ id: 188, district: 'Akwa', surface_m2: 806, price: 725400000 }),
+    v({ id: 190, district: 'Akwa', surface_m2: 510, price: 400000000 })
+  ], QA, PORTEFEUILLE).publiables;
+  const parId = (id) => akwa.find(a => a.id === id);
+  ok('doublon : même quartier + même surface, prix différents → signalé', !!parId(186)._doublon);
+  ok('doublon : la moins chère reste sans soupçon (choix de l’utilisateur)', !parId(188)._doublon);
+  ok('doublon : une autre surface n’est pas un doublon', !parId(190)._doublon);
+  ok('doublon : rien n’est écarté d’office, les doublons passent en fin de liste', akwa.length === 3 && akwa[2].id === 186);
+  const vsFiche = lot.trierPourPublication([v({ id: 7, district: 'Makepe', surface_m2: 400, price: 41000000 })], QUARTIERS, PORTEFEUILLE).publiables;
+  ok('doublon : même surface qu’une fiche du portefeuille, autre prix → signalé', vsFiche.length === 1 && /fiche/.test(vsFiche[0]._doublon || ''));
   ok('lot : une vente à « Denver » part dans Bonamoussadi', lot.raisonNonPubliable(v({ district: 'Denver' }), QUARTIERS.concat('Bonamoussadi'), PORTEFEUILLE) === null
     && lot.trierPourPublication([v({ id: 9, district: 'Denver' })], QUARTIERS.concat('Bonamoussadi'), PORTEFEUILLE).publiables[0]._quartier === 'Bonamoussadi');
 
