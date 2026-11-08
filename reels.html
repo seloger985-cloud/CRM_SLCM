@@ -62,6 +62,14 @@
   .rs-travail{border:1px solid var(--border);border-radius:11px;padding:10px;margin-bottom:8px;
       background:var(--bg-input);font-size:.83rem}
   .rs-travail b{display:block;margin-bottom:3px}
+  .rs-etat.off{background:var(--bg-0,#eee);color:var(--text-2,#777);border:1px solid var(--border)}
+  .rs-travail .rs-ligne{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .rs-action{margin-left:auto;padding:6px 11px;border-radius:8px;border:1px solid var(--border);
+      background:var(--bg-0,#fff);color:inherit;cursor:pointer;font-size:.78rem;font-weight:600}
+  .rs-action.retirer{color:#dc2626;border-color:#f3c4c4}
+  .rs-action:disabled{opacity:.5}
+  .rs-section{font-size:.74rem;text-transform:uppercase;letter-spacing:.04em;
+      color:var(--text-2,#777);margin:14px 2px 6px}
 </style>
 </head>
 <body>
@@ -148,6 +156,7 @@
       + biens.filter(function (b) { return !b.reel_url; }).length + ')</button>'
       + '<button data-f="fait" class="' + (filtre === 'fait' ? 'on' : '') + '">Déjà montés ('
       + biens.filter(function (b) { return !!b.reel_url; }).length + ')</button>'
+      + '<button data-f="file">File</button>'
       + '</div>';
     if (!liste.length) {
       h += '<div class="rs-vide">Rien ici.</div>';
@@ -164,7 +173,10 @@
     }
     vue.innerHTML = h;
     vue.querySelectorAll('.rs-onglets button').forEach(function (x) {
-      x.onclick = function () { filtre = x.dataset.f; dessinerListe(); };
+      x.onclick = function () {
+        if (x.dataset.f === 'file') { montrerFile(); return; }
+        filtre = x.dataset.f; dessinerListe();
+      };
     });
     vue.querySelectorAll('.rs-bien').forEach(function (x) {
       x.onclick = function () { ouvrir(x.dataset.slug); };
@@ -334,30 +346,91 @@
     }
   }
 
-  /* ── La file ────────────────────────────────────────────────── */
+  /* ── La file ────────────────────────────────────────────────────
+     « Retirer » ne supprime pas la ligne : il la passe en « annule ».
+     Effacée, elle sortirait de la mémoire de l'ouvrier, qui inspecte le
+     site toutes les 10 minutes et reposerait aussitôt le Réel d'une vidéo
+     sans Réel. Annulée, elle n'est jamais prise (l'ouvrier ne prend que
+     « en_attente ») ni reposée. Un travail déjà « en cours » ne peut plus
+     être retiré : le montage tourne, il irait au bout quand même.
+     Statut « annule » : sql/06_statut_annule.sql du dépôt selogercm-reels. */
   var minuterieFile = null;
+  var ETAT = { en_attente: 'en attente', en_cours: 'en cours…', fait: 'fait',
+               echec: 'échec', annule: 'retiré' };
+
+  function carteTravail(j) {
+    var classe = j.statut === 'fait' ? 'fait' : (j.statut === 'annule' ? 'off' : 'todo');
+    var action = j.statut === 'en_attente'
+      ? '<button class="rs-action retirer" data-retirer="' + esc(j.id) + '">Retirer</button>'
+      : (j.statut === 'annule'
+          ? '<button class="rs-action" data-remettre="' + esc(j.id) + '">Remettre</button>' : '');
+    return '<div class="rs-travail"><b>' + esc(j.listing_titre || j.listing_slug) + '</b>'
+      + '<div class="rs-ligne"><span class="rs-etat ' + classe + '">'
+      + esc(ETAT[j.statut] || j.statut) + '</span> <span>' + esc(j.mode) + '</span>' + action + '</div>'
+      + (j.message ? '<div style="margin-top:5px;color:var(--text-2,#777)">'
+          + esc(String(j.message).slice(0, 220)) + '</div>' : '')
+      + '</div>';
+  }
+
   async function montrerFile() {
     courant = null;
     retour.style.display = '';
     titre.textContent = 'File';
-    var { data } = await db().from('reel_jobs')
-      .select('*').order('cree_le', { ascending: false }).limit(30);
-    var ETAT = { en_attente: 'en attente', en_cours: 'en cours…', fait: 'fait', echec: 'échec' };
-    vue.innerHTML = (data && data.length)
-      ? data.map(function (j) {
-          return '<div class="rs-travail"><b>' + esc(j.listing_titre || j.listing_slug) + '</b>'
-            + '<span class="rs-etat ' + (j.statut === 'fait' ? 'fait' : 'todo') + '">'
-            + (ETAT[j.statut] || j.statut) + '</span> · ' + esc(j.mode)
-            + (j.message ? '<div style="margin-top:5px;color:var(--text-2,#777)">'
-                + esc(String(j.message).slice(0, 220)) + '</div>' : '')
-            + '</div>';
-        }).join('')
-      : '<div class="rs-vide">La file est vide.</div>';
     clearTimeout(minuterieFile);
-    if (data && data.some(function (j) { return j.statut === 'en_cours' || j.statut === 'en_attente'; })) {
-      minuterieFile = setTimeout(montrerFile, 8000);
+    /* Tout ce qui reste à faire, dans l'ordre où l'ouvrier le prendra ;
+       puis les 20 derniers terminés. Une seule requête limitée à 30
+       cachait une partie de la file quand elle dépassait 30 travaux. */
+    var actifs = await db().from('reel_jobs').select('*')
+      .in('statut', ['en_cours', 'en_attente'])
+      .order('statut', { ascending: false }).order('cree_le', { ascending: true });
+    var recents = await db().from('reel_jobs').select('*')
+      .in('statut', ['fait', 'echec', 'annule'])
+      .order('maj_le', { ascending: false, nullsFirst: false }).limit(20);
+    if (actifs.error || recents.error) {
+      vue.innerHTML = '<div class="rs-vide">Lecture impossible : '
+        + esc((actifs.error || recents.error).message) + '</div>';
+      return;
     }
+    var a = actifs.data || [], t = recents.data || [];
+    vue.innerHTML = (a.length || t.length)
+      ? (a.length ? '<div class="rs-section">À faire (' + a.length + ')</div>' + a.map(carteTravail).join('') : '')
+        + (t.length ? '<div class="rs-section">Terminés récemment</div>' + t.map(carteTravail).join('') : '')
+      : '<div class="rs-vide">La file est vide.</div>';
+    if (a.length) minuterieFile = setTimeout(montrerFile, 8000);
   }
+
+  async function changerStatut(bouton, id, depuis, vers, texteOk) {
+    clearTimeout(minuterieFile);
+    bouton.disabled = true;
+    var { data, error } = await db().from('reel_jobs')
+      .update({ statut: vers, message: vers === 'annule' ? 'Retiré de la file depuis le CRM' : null })
+      .eq('id', id).eq('statut', depuis).select('id');
+    if (error) {
+      window.UI.toast(error.code === '23514'
+        ? 'Statut « retiré » inconnu de la base : passer sql/06_statut_annule.sql dans le projet CRM.'
+        : error.code === '23505' ? 'Ce bien est déjà dans la file.'
+        : 'Échec : ' + error.message, 'error');
+    } else if (!data || !data.length) {
+      /* La condition sur le statut n'a rien trouvé : l'ouvrier l'a pris
+         entre l'affichage et le clic. */
+      window.UI.toast('Trop tard : l\'ouvrier a déjà commencé ce montage.', 'error');
+    } else {
+      window.UI.toast(texteOk, 'success');
+    }
+    montrerFile();
+  }
+
+  vue.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-retirer],[data-remettre]');
+    if (!b) return;
+    e.stopPropagation();
+    if (b.dataset.retirer) {
+      if (!confirm('Retirer ce Réel de la file ? L\'ouvrier ne le montera pas.')) return;
+      changerStatut(b, b.dataset.retirer, 'en_attente', 'annule', 'Retiré de la file.');
+    } else {
+      changerStatut(b, b.dataset.remettre, 'annule', 'en_attente', 'Remis dans la file.');
+    }
+  });
 
   retour.onclick = function () { clearTimeout(minuterieFile); biens = []; montrerListe(); };
   document.addEventListener('slcm:auth-ready', montrerListe);
