@@ -33,7 +33,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.49.0';
 
 /* À incrémenter dès qu'on touche ce fichier. Voir README, « Vérifier QUELLE
    version tourne ». */
-const VERSION = '2026-11-10-a';
+const VERSION = '2026-11-10-b';
 
 /* Le modèle léger : quelques champs dans trois phrases. */
 const MODELE = 'claude-haiku-5-5';
@@ -44,7 +44,9 @@ const NOTE_MAX = 2000;
 
 /* Les vocabulaires de la base (activities_type_check, OUTCOME_FR dans
    app.js). Une valeur hors liste est écartée, pas corrigée. */
-const TYPES = ['visit', 'call', 'meeting', 'email'] as const;
+/* Même liste, dans le même ordre, que QUICK_TYPES dans app.js
+   (tests/test-saisie-rapide.js le vérifie). « whatsapp » depuis sql/17. */
+const TYPES = ['visit', 'call', 'whatsapp', 'meeting', 'email'] as const;
 const ISSUES = ['done', 'pending', 'failed', 'no_show'] as const;
 const JOURS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
 
@@ -69,7 +71,7 @@ const OUTIL = {
       name: { type: ['string', 'null'], description: 'Le nom de la personne rencontrée, tel que dit.' },
       phone: { type: ['string', 'null'], description: 'Son numéro, chiffres tels que dits.' },
       type: { type: ['string', 'null'], enum: [...TYPES, null],
-        description: 'visit = visite d’un bien ; call = appel ; meeting = rendez-vous sans visite ; email = e-mail.' },
+        description: 'visit = visite d’un bien ; call = appel ; whatsapp = échange par WhatsApp ; meeting = rendez-vous sans visite ; email = e-mail.' },
       outcome: { type: ['string', 'null'], enum: [...ISSUES, null],
         description: 'done = abouti ; pending = attend un retour ; failed = n’a pas abouti ; no_show = ne s’est pas tenu.' },
       next_step: { type: ['string', 'null'], description: 'Ce que l’agent doit faire ensuite, en quelques mots, à l’infinitif.' },
@@ -89,9 +91,9 @@ Règles :
 
 1. N'INVENTE RIEN. Un champ que la note ne donne pas vaut null, et son nom va dans « manquant ». Ne déduis pas un nom d'un quartier, ni un numéro d'un autre.
 
-2. type : « visité », « fait visiter », « montré le bien » → visit. « appelé », « au téléphone » → call. « rendez-vous », « rencontré au bureau » sans visite → meeting. Dans le doute, null.
+2. type : « visité », « fait visiter », « montré le bien » → visit. « appelé », « au téléphone » → call. « m'a écrit sur WhatsApp », « échangé sur WhatsApp », « message WhatsApp » → whatsapp. « rendez-vous », « rencontré au bureau » sans visite → meeting. Dans le doute, null.
 
-3. outcome seulement si la note le dit : « il prend », « signé » → done ; « il réfléchit », « doit en parler », « attend » → pending ; « pas intéressé », « trop cher, il laisse » → failed ; « pas venu », « annulé » → no_show.
+3. outcome seulement si la note le dit : « il prend », « signé » → done ; « il réfléchit », « doit en parler », « attend », « je vous reviens », « il revient vers moi » → pending ; « pas intéressé », « trop cher, il laisse » → failed ; « pas venu », « annulé » → no_show.
 
 4. next_step : l'action de l'AGENT, pas celle du client. « Il doit en parler à sa femme, je le rappelle jeudi » donne next_step « Rappeler pour avoir sa réponse ».
 

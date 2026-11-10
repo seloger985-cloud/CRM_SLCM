@@ -40,6 +40,7 @@ function run() {
     grab(/const ICON_PAYMENT = '[^']*';/, 'ICON_PAYMENT'),
     grab(/const ICON_WHATSAPP = '[^']*';/, 'ICON_WHATSAPP'),
     grab(/const ICON_RELANCE = '[^']*';/, 'ICON_RELANCE'),
+    grab(/const ICON_PHONE = '[^']*';/, 'ICON_PHONE'),
     grab(/const WHATSAPP_BUSINESS_NUMBER = '[^']*';/, 'WHATSAPP_BUSINESS_NUMBER'),
     grab(/function normalizePhone[\s\S]*?\n}/, 'normalizePhone'),
     grab(/function getWhatsApp[\s\S]*?\n}/, 'getWhatsApp'),

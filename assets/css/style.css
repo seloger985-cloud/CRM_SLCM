@@ -1690,6 +1690,10 @@ input::placeholder, textarea::placeholder {
 
 @media (max-width: 768px) {
   .quick-form input, .quick-form select, .quick-form textarea { font-size: 16px; }
+  /* Le bouton Appeler (10/11/2026) porte à sept les actions d'une ligne
+     client : sur 375 px, la dernière — Modifier — sortait de la carte. Les
+     actions passent à la ligne plutôt que de déborder. */
+  .list-item > div:last-child { flex-wrap: wrap; flex-shrink: 1; }
   .quick-form { padding: var(--space-4); }
 }
 
