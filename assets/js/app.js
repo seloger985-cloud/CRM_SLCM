@@ -1569,6 +1569,86 @@ function openFollowUps(activities) {
     .sort((a, b) => (a.next_date || '9999').localeCompare(b.next_date || '9999'));
 }
 
+/* ═══════════════ LA DATE DU JOUR, À DOUALA ═══════════════
+
+   `new Date().toISOString().slice(0, 10)` donne la date UTC. Douala vit à
+   UTC+1 : entre minuit et une heure du matin, ce calcul rend HIER. Une
+   visite notée à 00h30 serait datée de la veille, et sa relance « pour
+   demain » tomberait le jour même. Le code nouveau passe par ces deux
+   fonctions ; l'existant n'est pas refondu sans nécessité. */
+const FUSEAU_AGENCE = 'Africa/Douala';
+
+/** La date du jour à Douala, AAAA-MM-JJ. `now` se passe en test : la
+    fonction reçoit l'instant, elle ne le lit que s'il manque. */
+function dateLocale(now) {
+  const d = now instanceof Date ? now : new Date();
+  try {
+    /* formatToParts plutôt que format : le motif d'une locale (« en-CA »
+       rend AAAA-MM-JJ) a déjà changé d'une version de navigateur à
+       l'autre, les morceaux nommés, jamais. */
+    const p = {};
+    new Intl.DateTimeFormat('en-US', { timeZone: FUSEAU_AGENCE,
+      year: 'numeric', month: '2-digit', day: '2-digit' })
+      .formatToParts(d).forEach(x => { p[x.type] = x.value; });
+    if (p.year && p.month && p.day) return p.year + '-' + p.month + '-' + p.day;
+  } catch (e) { /* navigateur sans base de fuseaux : repli ci-dessous */ }
+  /* Douala ne connaît pas l'heure d'été : UTC+1 fixe est exact toute l'année. */
+  return new Date(d.getTime() + 3600000).toISOString().slice(0, 10);
+}
+
+/** AAAA-MM-JJ décalé de n jours. Calcul à midi UTC : à minuit, un
+    changement d'heure suffirait à sauter ou doubler une journée. */
+function ajouterJours(ymd, n) {
+  const t = Date.parse(String(ymd || '').slice(0, 10) + 'T12:00:00Z');
+  if (!Number.isFinite(t)) return null;
+  return new Date(t + n * 86400000).toISOString().slice(0, 10);
+}
+
+/* ═══════════════ UNE VISITE APPELLE UNE SUITE ═══════════════
+
+   Le 09/11/2026, un gros client a été perdu : rencontré en visite, jamais
+   relancé. Le formulaire acceptait une visite sans rien prévoir après, et
+   rien ne l'a rappelé. Pour une visite ou un rendez-vous, l'absence de
+   suite est désormais un CHOIX — la case « Aucune suite nécessaire » —
+   jamais un oubli.
+
+   Appel et e-mail restent libres : beaucoup se suffisent à eux-mêmes, et
+   une règle qu'il faut contourner à chaque saisie finit cochée par réflexe,
+   ce qui la rend muette là où elle compte.
+
+   Ces noms et ce texte par défaut sont repris tels quels par la fonction
+   Edge `daily-digest` (lot 5) : changer l'un, c'est changer l'autre. */
+const TYPES_SUITE_REQUISE = ['visit', 'meeting'];
+const SUITE_VISITE_DEFAUT = 'Relancer pour avoir son retour';
+
+/** Vrai si ce type d'activité ne peut pas s'enregistrer sans suite décidée. */
+function suiteRequise(type) {
+  return TYPES_SUITE_REQUISE.includes(type);
+}
+
+/** La suite proposée d'office à une NOUVELLE activité. Seule la visite en a
+    une : le lendemain, on demande son retour au client. Tout reste éditable. */
+function suiteParDefaut(type, today) {
+  if (type !== 'visit') return { next_step: '', next_date: '' };
+  return { next_step: SUITE_VISITE_DEFAUT, next_date: ajouterJours(today, 1) || '' };
+}
+
+/** null si l'activité peut s'enregistrer, sinon la phrase à montrer.
+    La date est exigée aussi : une suite sans date ne passe jamais « en
+    retard », elle reste en bas de la liste — c'est un oubli différé. */
+function verifierSuite(a, aucuneSuite) {
+  if (!a || !suiteRequise(a.type) || aucuneSuite) return null;
+  const quoi = a.type === 'visit' ? 'Une visite' : 'Un rendez-vous';
+  if (!String(a.next_step || '').trim()) {
+    return quoi + ' appelle une suite : notez ce qu’il reste à faire et pour quand, '
+      + 'ou cochez « Aucune suite nécessaire ».';
+  }
+  if (!a.next_date) {
+    return 'Indiquez pour quand est la suite : sans date, elle ne passera jamais en retard.';
+  }
+  return null;
+}
+
 /** Marque une suite comme faite. Rien ne se supprime : on horodate. */
 async function closeFollowUp(id, back) {
   try {
@@ -4072,6 +4152,11 @@ function showActivityForm(activity = null, draft = null, back = null) {
   const v = activity || draft || {};
   const editing = !!activity;
   const defType = v.type || (editing ? '' : lastChoice('activity-type', 'call'));
+  /* La suite par défaut ne s'applique qu'à une création : en modification,
+     elle remplacerait ce qui a été écrit par une habitude. */
+  const defSuite = editing ? { next_step: '', next_date: '' } : suiteParDefaut(defType, dateLocale());
+  const nextStep = v.next_step || defSuite.next_step;
+  const nextDate = v.next_date || (v.next_step ? '' : defSuite.next_date);
   mainContent.innerHTML = `
     <h2>${editing ? 'Modifier' : 'Ajouter'} une activité</h2>
     <form id="activity-form">
@@ -4104,7 +4189,7 @@ function showActivityForm(activity = null, draft = null, back = null) {
       </div>
       <div class="form-group">
         <label>Date:</label>
-        <input type="date" id="activity-date" value="${escAttr(v.date || new Date().toISOString().split('T')[0])}" required>
+        <input type="date" id="activity-date" value="${escAttr(v.date || dateLocale())}" required>
       </div>
       <fieldset class="demand-block">
         <legend>Suite <span class="item-meta">— ce que le CRM doit retenir</span></legend>
@@ -4116,13 +4201,16 @@ function showActivityForm(activity = null, draft = null, back = null) {
           </select>
         </div>
         <div class="form-group">
-          <label>À faire ensuite <span class="item-meta">— laisser vide s'il n'y a rien</span></label>
-          <input type="text" id="activity-next-step" value="${escAttr(v.next_step || '')}"
+          <label>À faire ensuite <span class="item-meta" id="activity-next-hint">${suiteRequise(defType) ? '— obligatoire pour une visite ou un rendez-vous' : '— laisser vide s’il n’y a rien'}</span></label>
+          <input type="text" id="activity-next-step" value="${escAttr(nextStep)}"
                  placeholder="Proposer Bonapriso à la place" autocomplete="off">
         </div>
         <div class="form-group">
           <label>Pour quand:</label>
-          <input type="date" id="activity-next-date" value="${escAttr(v.next_date || '')}">
+          <input type="date" id="activity-next-date" value="${escAttr(nextDate)}">
+        </div>
+        <div class="form-group" id="activity-no-suite-row" style="${suiteRequise(defType) ? '' : 'display:none'}">
+          <label><input type="checkbox" id="activity-no-suite"> Aucune suite nécessaire</label>
         </div>
       </fieldset>
       <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Ajouter'}</button>
@@ -4133,6 +4221,33 @@ function showActivityForm(activity = null, draft = null, back = null) {
   // Options + sélection courante, posées ensemble une fois les données là
   populateSelect('activity-client', 'clients', 'name', v.client_id);
   populateSelect('activity-property', 'properties', 'title', v.property_id);
+
+  /* Le type décide de ce que la suite exige : on le suit en direct, pour
+     que la case et la consigne correspondent toujours au type choisi. */
+  const typeEl = document.getElementById('activity-type');
+  const stepEl = document.getElementById('activity-next-step');
+  const dateEl = document.getElementById('activity-next-date');
+  const aucuneEl = document.getElementById('activity-no-suite');
+  const majSuite = () => {
+    const requise = suiteRequise(typeEl.value);
+    document.getElementById('activity-no-suite-row').style.display = requise ? '' : 'none';
+    document.getElementById('activity-next-hint').textContent = requise
+      ? '— obligatoire pour une visite ou un rendez-vous' : '— laisser vide s’il n’y a rien';
+    if (!requise && aucuneEl.checked) { aucuneEl.checked = false; majAucune(); }
+    /* On ne réécrit que la suite proposée d'office, jamais un texte tapé. */
+    if (!editing && (!stepEl.value || stepEl.value === SUITE_VISITE_DEFAUT)) {
+      const d = suiteParDefaut(typeEl.value, dateLocale());
+      stepEl.value = d.next_step;
+      dateEl.value = d.next_date;
+    }
+  };
+  /* Cocher « Aucune suite » grise les champs : un texte proposé d'office
+     qui resterait affiché laisserait croire qu'une relance est prévue. */
+  const majAucune = () => {
+    stepEl.disabled = dateEl.disabled = !!aucuneEl.checked;
+  };
+  typeEl.addEventListener('change', majSuite);
+  aucuneEl.addEventListener('change', majAucune);
 
   document.getElementById('activity-form').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -4153,6 +4268,18 @@ async function saveActivity(id, back) {
     next_date: document.getElementById('activity-next-step').value
       ? (document.getElementById('activity-next-date').value || null) : null
   };
+
+  /* La case n'est pas stockée : elle autorise l'absence de suite, rien de
+     plus. Cochée, elle l'emporte sur ce que les champs grisés contiennent. */
+  const aucuneSuite = suiteRequise(activity.type)
+    && !!document.getElementById('activity-no-suite').checked;
+  if (aucuneSuite) { activity.next_step = null; activity.next_date = null; }
+  const manque = verifierSuite(activity, aucuneSuite);
+  if (manque) {
+    UI.toast(manque, 'error');
+    document.getElementById(activity.next_step ? 'activity-next-date' : 'activity-next-step').focus();
+    return;
+  }
 
   try {
     if (id) {
