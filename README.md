@@ -258,6 +258,19 @@ La borne de 30 jours est voulue : sans elle, les visites notées avant que
 l'issue existe (31/08/2026) rempliraient l'écran. Au-delà, le client apparaît
 dans les refroidis.
 
+## Les rappels viennent à l'agent
+
+Tout ce qui précède ne sert que si l'on ouvre le CRM. Depuis le 10/11/2026,
+un bot **Telegram** envoie deux messages : à 07h30 du lundi au samedi (la
+dernière journée, les clients sans suite, le retard, le jour) et à 18h00 du
+lundi au vendredi (« Qui as-tu vu aujourd'hui ? », les visites du jour sans
+issue). Chacun porte le lien qui ouvre le bon écran.
+
+Pas de notification de navigateur : le CRM n'a ni manifeste ni service
+worker, et elles sont capricieuses sur iPhone. Pas de numéro, de montant
+ni de note dans les messages : un bot Telegram n'est pas chiffré de bout en
+bout. Mise en route : `supabase/functions/README.md`, « Rappels Telegram ».
+
 ## Le journal des contacts
 
 Les boutons WhatsApp de la liste Clients, le nouveau bouton **Appeler**, les
