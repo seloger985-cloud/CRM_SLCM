@@ -66,6 +66,11 @@ const ECRANS = [
   ['showActivityForm', [null, { type: 'visit', client_id: 1 }, 'clients']],
   ['showActivityForm', [null, { type: 'meeting' }]],
   ['showActivityForm', [{ id: 6, type: 'visit', notes: 'x', date: '2026-11-09', next_step: 'Rappeler', next_date: '2026-11-10' }]],
+  /* Saisie rapide (lot 2) : l'écran, et le bandeau de doublons — un nom
+     de client y entre dans du HTML. */
+  ['showSaisieRapide', []],
+  ['showSaisieRapide', [{ type: 'call' }]],
+  ['afficherDoublonsRapide', [[{ client: { id: 1, name: 'Ets <Nkolo> & Fils' }, raison: 'même numéro' }]]],
   ['showTaskForm', []],
   ['showTaskForm', [{ id: 4, title: 'x', status: 'pending' }]],
   ['showPaymentForm', []],

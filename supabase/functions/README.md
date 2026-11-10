@@ -4,11 +4,12 @@ Le CRM est un site statique : tout s'exécute chez l'agent. Une seule chose ne
 le peut pas — appeler l'API Anthropic, qui exige une clé secrète. Une clé
 placée dans `assets/js/` serait servie à chaque visiteur.
 
-D'où ce dossier. **Deux fonctions**, déployées chacune à part.
+D'où ce dossier. **Trois fonctions**, déployées chacune à part.
 
 | Fonction | Rôle |
 |---|---|
 | `understand-inbox` | Un message reçu d'un confrère devient une proposition de fiche bien. N'écrit rien. |
+| `understand-note` | Une note dictée après une visite devient une proposition de saisie rapide : nom, téléphone, type, issue, suite, date. Modèle léger `claude-haiku-5-5`. N'écrit rien ; le CRM ne remplit que les champs laissés vides. Mêmes secrets, même réglage « Verify JWT » désactivé. Facultative : sans elle, seul le bouton « Remplir depuis ma note » échoue. |
 | `capture-annonces` | Un paquet de 25 messages de groupe (export WhatsApp) : offre ou non, et la fiche de chaque offre. Modèle léger `claude-haiku-5-5`. N'écrit rien : le CRM range le résultat dans `annonces_captees`. Mêmes secrets, même réglage « Verify JWT » désactivé. |
 
 ## Vérifier QUELLE version tourne
