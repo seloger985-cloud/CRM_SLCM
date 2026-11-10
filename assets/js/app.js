@@ -44,6 +44,8 @@ dashboardBtn.addEventListener('click', navTo(dashboardBtn, showDashboard));
 /* Saisie rapide : en deuxième position, parce que c'est l'écran du terrain.
    Sur téléphone, la navigation défile — les premières entrées sont les
    seules visibles sans geste. */
+const bilanBtn = document.getElementById('bilan-btn');
+bilanBtn.addEventListener('click', navTo(bilanBtn, () => showBilanSemaine()));
 const todayBtn = document.getElementById('today-btn');
 todayBtn.addEventListener('click', navTo(todayBtn, showAujourdhui));
 const quickBtn = document.getElementById('quick-btn');
@@ -128,7 +130,9 @@ const ECRANS_FRAGMENT = {
   /* Les cartes du tableau de bord sont des liens vers ces écrans. */
   'activites': () => navTo(activitiesBtn, showActivities)(),
   'clients': () => navTo(clientsBtn, showClients)(),
-  'pipeline': () => navTo(pipelineBtn, showPipeline)()
+  'pipeline': () => navTo(pipelineBtn, showPipeline)(),
+  /* Le bilan Telegram du samedi y renvoie. */
+  'bilan': () => showBilanSemaine()
 };
 
 /** Le nom d'écran porté par un fragment d'adresse, s'il en désigne un. */
@@ -2472,6 +2476,146 @@ async function terminerTache(id, back) {
   } catch (error) {
     UI.handleError(error);
   }
+}
+
+/* ═══════════════ BILAN DE LA SEMAINE ═══════════════
+
+   Le samedi, Armand veut compiler la semaine : combien d'interactions, quoi
+   de neuf dans le portefeuille, ce qui a abouti, ce qui traîne, et ce qu'il
+   faut reprendre lundi. Le même bilan part sur Telegram le samedi à 18h00
+   (fonction `daily-digest`, kind « semaine », qui en recopie un
+   sous-ensemble avec les mêmes règles — tests/test-digest.js compare).
+
+   La semaine va du lundi au samedi : le dimanche n'est pas travaillé, et
+   un bilan publié le samedi soir ne peut pas l'inclure. */
+
+/** Une date AAAA-MM-JJ à Douala, depuis un horodatage de la base. Les
+    colonnes `timestamp without time zone` (clients.created_at) sont en UTC
+    mais sans le dire : lues telles quelles, un navigateur les prendrait
+    pour de l'heure locale. On ajoute le Z qui manque. */
+function dateDeHorodatage(ts) {
+  if (!ts) return null;
+  let s = String(ts).replace(' ', 'T');
+  if (/T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += 'Z';
+  const d = new Date(s);
+  return Number.isFinite(d.getTime()) ? dateLocale(d) : null;
+}
+
+/**
+ * Le bilan d'une semaine. Fonction PURE : elle reçoit le lundi et la date
+ * du jour (pour dire ce qui est « en retard » à ce jour).
+ */
+function bilanSemaine(activities, clients, payments, lundi, today) {
+  const acts = activities || [];
+  const samedi = ajouterJours(lundi, 5);
+  /* Pour la semaine en cours, on arrête le compte à aujourd'hui. */
+  const ref = today && today < samedi ? today : samedi;
+  const dans = (d) => !!d && d >= lundi && d <= samedi;
+
+  const reelles = acts.filter(a => dans(a.date) && !estLigneAutomatique(a));
+  const parType = {};
+  reelles.forEach(a => { parType[a.type] = (parType[a.type] || 0) + 1; });
+  /* Les contacts lancés depuis le CRM (lot 3) sont comptés À PART : une
+     conversation notée après un clic serait sinon comptée deux fois. */
+  const contactsCrm = acts.filter(a => dans(a.date) && String(a.notes || '').indexOf(JOURNAL_AUTO_NOTE) === 0).length;
+
+  const nouveauxClients = (clients || []).filter(c => dans(dateDeHorodatage(c.created_at)));
+
+  const vis = reelles.filter(a => a.type === 'visit');
+  const visites = {
+    total: vis.length,
+    abouties: vis.filter(a => a.outcome === 'done').length,
+    enAttente: vis.filter(a => a.outcome === 'pending').length,
+    echouees: vis.filter(a => a.outcome === 'failed' || a.outcome === 'no_show').length,
+    sansIssue: vis.filter(a => !a.outcome).length
+  };
+
+  /* Les suites qui tombaient cette semaine : faites, ou encore ouvertes. */
+  const dues = acts.filter(a => a.next_step && dans(a.next_date));
+  const suites = {
+    dues: dues.length,
+    fermees: dues.filter(a => a.next_done_at).length,
+    ouvertes: dues.filter(hasOpenFollowUp).length,
+    enRetard: dues.filter(a => hasOpenFollowUp(a) && a.next_date < ref).length
+  };
+
+  /* Une signature n'a pas de date propre en base : c'est le passage en
+     colonne « signé » du pipeline, que le CRM note en activité. */
+  const signatures = acts.filter(a => dans(a.date) && /^Progression pipeline:\s*signé/.test(String(a.notes || '')))
+    .map(a => a.client_id);
+
+  const payes = (payments || []).filter(p => p.status === 'paid' && dans(p.payment_date));
+  const encaissements = { nombre: payes.length, total: payes.reduce((s, p) => s + (Number(p.amount) || 0), 0) };
+
+  const refroidis = clientsRefroidis(clients, acts.filter(a => a.date && a.date <= ref), ref);
+
+  /* À reprendre lundi : ce que l'écran « Aujourd'hui » dira lundi matin. */
+  const lundiSuivant = ajouterJours(lundi, 7);
+  const b = briefingDuJour(acts, clients, [], lundiSuivant);
+  const aReprendre = { suites: b.enRetard.concat(b.aujourdhui), sansSuite: b.sansSuite };
+
+  return { lundi, samedi, interactions: reelles.length, parType, contactsCrm, nouveauxClients,
+           visites, suites, signatures, encaissements, refroidis, aReprendre };
+}
+
+async function showBilanSemaine(lundi) {
+  setActiveNav(document.getElementById('bilan-btn'));
+  const cette = debutSemaine(dateLocale());
+  const debut = lundi && lundi <= cette ? lundi : cette;
+  UI.showLoading();
+  const [activities, clients, payments] = await Promise.all([
+    getAll('activities'), getAll('clients'), getAll('payments')
+  ]);
+  const b = bilanSemaine(activities, clients, payments, debut, dateLocale());
+  const nom = (id) => { const c = clients.find(x => String(x.id) === String(id)); return c ? c.name : 'client inconnu'; };
+  const carte = (titre, valeur, detail) => `<div class="card"><h3>${titre}</h3><p class="metric">${valeur}</p>${detail ? `<small>${detail}</small>` : ''}</div>`;
+  const types = ['visit', 'call', 'whatsapp', 'meeting', 'email'].filter(t => b.parType[t]);
+
+  mainContent.innerHTML = `
+    <h2>Bilan de la semaine <span class="item-meta">— du ${escHtml(jourEnLettres(b.lundi))} au ${escHtml(jourEnLettres(b.samedi))}</span></h2>
+    <div class="bilan-nav">
+      <button onclick="showBilanSemaine('${escAttr(ajouterJours(b.lundi, -7))}')" class="btn btn-outline">← Semaine précédente</button>
+      ${b.lundi < cette ? `<button onclick="showBilanSemaine('${escAttr(ajouterJours(b.lundi, 7))}')" class="btn btn-outline">Semaine suivante →</button>` : ''}
+    </div>
+
+    <div class="dashboard">
+      ${carte('Interactions', b.interactions, types.length
+        ? types.map(t => b.parType[t] + ' ' + escHtml(t === 'whatsapp' ? 'WhatsApp' : getActivityLabel(t).toLowerCase())
+            + (b.parType[t] > 1 && (t === 'visit' || t === 'call' || t === 'email') ? 's' : '')).join(' · ')
+          + (b.contactsCrm ? ' · et ' + b.contactsCrm + ' contact' + (b.contactsCrm > 1 ? 's' : '') + ' lancé' + (b.contactsCrm > 1 ? 's' : '') + ' depuis le CRM' : '')
+        : 'Aucune interaction notée')}
+      ${carte('Nouveaux clients', b.nouveauxClients.length, b.nouveauxClients.slice(0, 4).map(c => escHtml(c.name)).join(', ')
+        + (b.nouveauxClients.length > 4 ? '…' : ''))}
+      ${carte('Visites', b.visites.total, b.visites.total
+        ? b.visites.abouties + (b.visites.abouties > 1 ? ' abouties' : ' aboutie') + ' · ' + b.visites.enAttente + ' en attente · '
+          + b.visites.echouees + (b.visites.echouees > 1 ? ' échouées ou non tenues' : ' échouée ou non tenue') + ' · ' + b.visites.sansIssue + ' sans issue'
+        : '')}
+      ${carte('Suites prévues', b.suites.dues, b.suites.dues
+        ? b.suites.fermees + (b.suites.fermees > 1 ? ' faites' : ' faite') + ' · ' + b.suites.ouvertes + (b.suites.ouvertes > 1 ? ' encore ouvertes' : ' encore ouverte')
+          + (b.suites.enRetard ? ', dont ' + b.suites.enRetard + ' en retard' : '')
+        : 'Aucune suite ne tombait cette semaine')}
+      ${carte('Signatures', b.signatures.length, b.signatures.map(id => escHtml(nom(id))).join(', '))}
+      ${carte('Encaissements', b.encaissements.nombre, b.encaissements.nombre ? formatMoney(b.encaissements.total) + ' FCFA' : '')}
+    </div>
+
+    <section class="today-section${b.aReprendre.suites.length + b.aReprendre.sansSuite.length ? ' has-items' : ''}">
+      <h3>À reprendre lundi <span class="today-count">${b.aReprendre.suites.length + b.aReprendre.sansSuite.length}</span></h3>
+      <div class="list">
+        ${b.aReprendre.suites.map(x => `<div class="list-item"><div><strong>${escHtml(x.quoi)}</strong>${x.client_id != null ? ' — ' + escHtml(nom(x.client_id)) : ''}
+          <div class="item-meta">${escHtml(jourEnLettres(x.quand))}</div></div></div>`).join('')}
+        ${b.aReprendre.sansSuite.map(({ client: c, activite: a }) => `<div class="list-item"><div><strong>${escHtml(c.name)}</strong> — sans suite
+          <div class="item-meta">${escHtml(getActivityLabel(a.type))} du ${escHtml(jourEnLettres(a.date))}</div></div></div>`).join('')}
+        ${b.aReprendre.suites.length + b.aReprendre.sansSuite.length ? '' : '<p class="item-meta">Rien en suspens : la semaine prochaine part de zéro.</p>'}
+      </div>
+    </section>
+
+    <section class="today-section${b.refroidis.length ? ' has-items' : ''}">
+      <h3>Clients refroidis <span class="today-count">${b.refroidis.length}</span></h3>
+      <div class="list">${b.refroidis.length
+        ? b.refroidis.slice(0, 10).map(({ client: c, jours }) => `<div class="list-item"><div><strong>${escHtml(c.name)}</strong> <span class="item-meta">— ${Number(jours)} jours sans activité</span></div></div>`).join('')
+        : '<p class="item-meta">Personne ne refroidit.</p>'}</div>
+    </section>
+  `;
 }
 
 /* ═══════════════ LES RECHERCHES D'UN CLIENT ═══════════════

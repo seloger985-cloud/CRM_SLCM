@@ -17,6 +17,7 @@ lit les annonces en direct — sans jamais les recopier.
 | **Clients** | Fiches, statut dans le pipeline, contact WhatsApp ou appel — **noté au journal automatiquement** — et leurs **recherches**. |
 | **Biens** | Les annonces publiées sur le site *et* les saisies internes, fusionnées. Un message reçu d'un confrère devient une fiche en un collage. |
 | **Annonces des groupes** | (depuis Biens) La mémoire de tout ce qui circule dans les groupes WhatsApp de travail : l'export hebdomadaire de chaque groupe est découpé, trié, analysé, et chaque offre reste cherchable, rapprochée des demandes clients, transformable en fiche. Voir `sql/16_annonces_captees.sql`. |
+| **Bilan de la semaine** | Du lundi au samedi : interactions par type, nouveaux clients, visites et leur issue, suites faites ou en souffrance, signatures, encaissements, clients refroidis, et **ce qu'il faut reprendre lundi**. Navigation vers les semaines précédentes. Le même bilan, sans montant, part sur Telegram le samedi à 18h00. Lien direct `index.html#bilan`. |
 | **Activités** | Journal des appels, rendez-vous, e-mails, visites et conversations WhatsApp. Une visite, un rendez-vous ou un WhatsApp ne s'enregistre pas sans suite décidée. |
 | **Paiements** | Encaissements rattachés à un client et à un bien. |
 | **Factures** | Page dédiée (`facture.html`), numérotation automatique, export PDF. |
@@ -261,10 +262,11 @@ dans les refroidis.
 ## Les rappels viennent à l'agent
 
 Tout ce qui précède ne sert que si l'on ouvre le CRM. Depuis le 10/11/2026,
-un bot **Telegram** envoie deux messages : à 07h30 du lundi au samedi (la
-dernière journée, les clients sans suite, le retard, le jour) et à 18h00 du
-lundi au vendredi (« Qui as-tu vu aujourd'hui ? », les visites du jour sans
-issue). Chacun porte le lien qui ouvre le bon écran.
+un bot **Telegram** envoie trois sortes de messages : à 07h30 du lundi au
+samedi (la dernière journée, les clients sans suite, le retard, le jour), à
+18h00 du lundi au vendredi (« Qui as-tu vu aujourd'hui ? », les visites du
+jour sans issue), et le samedi à 18h00 le **bilan de la semaine**. Chacun
+porte le lien qui ouvre le bon écran.
 
 Pas de notification de navigateur : le CRM n'a ni manifeste ni service
 worker, et elles sont capricieuses sur iPhone. Pas de numéro, de montant

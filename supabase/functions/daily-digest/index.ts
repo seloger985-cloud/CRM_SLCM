@@ -48,7 +48,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.49.0';
 
 /* À incrémenter dès qu'on touche ce fichier. Voir README, « Vérifier QUELLE
    version tourne ». */
-const VERSION = '2026-11-10-a';
+const VERSION = '2026-11-10-b';
 
 // ── RÈGLES (JavaScript pur — exécuté par tests/test-digest.js) ──
 
@@ -170,11 +170,17 @@ function liste(items, ligne) {
   return out.join('\n');
 }
 
+/* « 1 visite », « 2 visites » ; « rendez-vous » et « WhatsApp » ne
+   prennent pas de s. Un message mal accordé se lit comme un message
+   automatique, et finit par ne plus être lu du tout. */
+const TYPE_PLURIEL = { visit: ['visite', 'visites'], call: ['appel', 'appels'], meeting: ['rendez-vous', 'rendez-vous'],
+  email: ['e-mail', 'e-mails'], whatsapp: ['WhatsApp', 'WhatsApp'] };
+function accord(n, singulier, pluriel) { return n + ' ' + (n > 1 ? pluriel : singulier); }
+
 function compteParType(acts) {
   const n = {};
   acts.forEach((a) => { n[a.type] = (n[a.type] || 0) + 1; });
-  /* « WhatsApp » garde sa majuscule : c'est un nom propre. */
-  return Object.keys(n).map((t) => n[t] + ' ' + (t === 'whatsapp' ? 'WhatsApp' : (TYPE_FR[t] || t).toLowerCase())).join(', ');
+  return Object.keys(n).map((t) => accord(n[t], ...(TYPE_PLURIEL[t] || [t, t]))).join(', ');
 }
 
 /* Coupe un message trop long à la dernière ligne entière, avec le lien
@@ -228,6 +234,80 @@ function messageSoir(b, nomDe, crmUrl, today) {
   return borner(parts.join('\n\n'), esc(crmUrl + '/index.html#saisie-rapide'));
 }
 
+// ── Bilan de la semaine (kind « semaine ») — copie de bilanSemaine(),
+//    app.js, section « BILAN DE LA SEMAINE ». Sans montant ni refroidis :
+//    le message ne porte aucun chiffre d'argent, et les refroidis exigent
+//    tout l'historique, que la fonction ne lit pas.
+
+function debutSemaine(ymd) {
+  const t = Date.parse(String(ymd).slice(0, 10) + 'T12:00:00Z');
+  return Number.isFinite(t) ? ajouterJours(ymd, -((new Date(t).getUTCDay() + 6) % 7)) : null;
+}
+
+function dateDeHorodatage(ts) {
+  if (!ts) return null;
+  let s = String(ts).replace(' ', 'T');
+  if (/T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += 'Z';
+  const d = new Date(s);
+  return Number.isFinite(d.getTime()) ? dateLocale(d) : null;
+}
+
+function reglesBilan(activities, clients, payments, lundi, today) {
+  const acts = activities || [];
+  const samedi = ajouterJours(lundi, 5);
+  const ref = today && today < samedi ? today : samedi;
+  const dans = (d) => !!d && d >= lundi && d <= samedi;
+  const reelles = acts.filter((a) => dans(a.date) && !estLigneAutomatique(a));
+  const parType = {};
+  reelles.forEach((a) => { parType[a.type] = (parType[a.type] || 0) + 1; });
+  const vis = reelles.filter((a) => a.type === 'visit');
+  const dues = acts.filter((a) => a.next_step && dans(a.next_date));
+  const b = reglesDigest(acts, clients, [], ajouterJours(lundi, 7));
+  return {
+    lundi, samedi,
+    interactions: reelles.length, parType,
+    contactsCrm: acts.filter((a) => dans(a.date) && String(a.notes || '').indexOf(JOURNAL_AUTO_NOTE) === 0).length,
+    nouveauxClients: (clients || []).filter((c) => dans(dateDeHorodatage(c.created_at))).length,
+    visites: {
+      total: vis.length,
+      abouties: vis.filter((a) => a.outcome === 'done').length,
+      enAttente: vis.filter((a) => a.outcome === 'pending').length,
+      echouees: vis.filter((a) => a.outcome === 'failed' || a.outcome === 'no_show').length,
+      sansIssue: vis.filter((a) => !a.outcome).length
+    },
+    suites: {
+      dues: dues.length,
+      fermees: dues.filter((a) => a.next_done_at).length,
+      ouvertes: dues.filter(suiteOuverte).length,
+      enRetard: dues.filter((a) => suiteOuverte(a) && a.next_date < ref).length
+    },
+    signatures: acts.filter((a) => dans(a.date) && /^Progression pipeline:\s*signé/.test(String(a.notes || ''))).length,
+    encaissements: (payments || []).filter((p) => p.status === 'paid' && dans(p.payment_date)).length,
+    aReprendre: { suites: b.enRetard.concat(b.aujourdhui), sansSuite: b.sansSuite }
+  };
+}
+
+function messageSemaine(b, nomDe, crmUrl) {
+  const v = b.visites, s = b.suites;
+  const parts = ['<b>Bilan de la semaine — du ' + esc(jourEnLettres(b.lundi)) + ' au ' + esc(jourEnLettres(b.samedi)) + '</b>'];
+  parts.push(b.interactions + ' interaction' + (b.interactions > 1 ? 's' : '') + ' notée' + (b.interactions > 1 ? 's' : '')
+    + (b.interactions ? ' (' + esc(compteParType(Object.keys(b.parType).flatMap((t) => Array(b.parType[t]).fill({ type: t })))) + ')' : '')
+    + (b.contactsCrm ? ', et ' + b.contactsCrm + ' contact' + (b.contactsCrm > 1 ? 's' : '') + ' lancé' + (b.contactsCrm > 1 ? 's' : '') + ' depuis le CRM' : '') + '.\n'
+    + '• Nouveaux clients : ' + b.nouveauxClients + '\n'
+    + '• Visites : ' + v.total + (v.total ? ' — ' + accord(v.abouties, 'aboutie', 'abouties') + ', ' + v.enAttente + ' en attente, '
+      + accord(v.echouees, 'échouée', 'échouées') + ', ' + v.sansIssue + ' sans issue' : '') + '\n'
+    + '• Suites de la semaine : ' + accord(s.fermees, 'faite', 'faites') + ', ' + accord(s.ouvertes, 'ouverte', 'ouvertes')
+      + (s.enRetard ? ' dont ' + s.enRetard + ' en retard' : '') + '\n'
+    + '• Signatures : ' + b.signatures + ' · Encaissements : ' + b.encaissements);
+  const n = b.aReprendre.suites.length + b.aReprendre.sansSuite.length;
+  parts.push(n
+    ? '<b>À reprendre lundi (' + n + ')</b>\n'
+      + liste(b.aReprendre.suites.map((x) => esc(nettoyer(x.quoi) + (x.client_id != null ? ' — ' + nomCourt(nomDe(x.client_id)) : '')))
+        .concat(b.aReprendre.sansSuite.map((x) => esc(nomCourt(x.client.name) + ' — sans suite'))), (l) => l)
+    : 'Rien en suspens : lundi part de zéro. Bon week-end.');
+  return borner(parts.join('\n\n'), esc(crmUrl + '/index.html#bilan'));
+}
+
 // ── FIN DES RÈGLES ──
 
 const json = (body: unknown, status = 200) =>
@@ -265,7 +345,9 @@ Deno.serve(async (req) => {
   let body: { kind?: unknown; apercu?: unknown; essai?: unknown };
   try { body = await req.json(); } catch (_e) { body = {}; }
   const kind = String(body.kind ?? '');
-  if (kind !== 'matin' && kind !== 'soir') return json({ error: 'kind_inconnu', detail: 'matin ou soir', version: VERSION }, 400);
+  if (kind !== 'matin' && kind !== 'soir' && kind !== 'semaine') {
+    return json({ error: 'kind_inconnu', detail: 'matin, soir ou semaine', version: VERSION }, 400);
+  }
   /* apercu : rend les textes sans rien envoyer ni noter.
      essai   : envoie, mais sans noter — pour tester sans bloquer le vrai envoi du jour. */
   const apercu = body.apercu === true;
@@ -290,14 +372,25 @@ Deno.serve(async (req) => {
       /* Deux lectures : la fenêtre récente (dernière journée, sans suite,
          visites du jour), et TOUTES les suites ouvertes — une relance en
          retard depuis deux mois doit rester dans le message. */
-      const [recentes, ouvertes, taches] = await Promise.all([
+      const lundi = debutSemaine(today);
+      const [recentes, ouvertes, taches, nouveaux, payes] = await Promise.all([
         db.from('activities').select(champs).eq('owner_id', p.owner_id).gte('date', depuis),
         db.from('activities').select(champs).eq('owner_id', p.owner_id)
           .not('next_step', 'is', null).is('next_done_at', null),
         db.from('tasks').select('id,title,due_date,status').eq('owner_id', p.owner_id)
-          .neq('status', 'completed').not('due_date', 'is', null).lte('due_date', today)
+          .neq('status', 'completed').not('due_date', 'is', null).lte('due_date', today),
+        /* Bilan du samedi seulement : les clients créés depuis la veille du
+           lundi (created_at est en UTC, la date est recalculée à Douala), et
+           les encaissements — leur NOMBRE : le montant n'est même pas lu. */
+        kind === 'semaine'
+          ? db.from('clients').select('id,name,status,created_at').eq('owner_id', p.owner_id).gte('created_at', ajouterJours(lundi, -1))
+          : Promise.resolve({ data: [], error: null }),
+        kind === 'semaine'
+          ? db.from('payments').select('id,status,payment_date').eq('owner_id', p.owner_id)
+              .eq('status', 'paid').gte('payment_date', lundi).lte('payment_date', ajouterJours(lundi, 5))
+          : Promise.resolve({ data: [], error: null })
       ]);
-      const erreur = recentes.error || ouvertes.error || taches.error;
+      const erreur = recentes.error || ouvertes.error || taches.error || nouveaux.error || payes.error;
       if (erreur) throw new Error('lecture : ' + erreur.message);
 
       const parId = new Map();
@@ -308,11 +401,14 @@ Deno.serve(async (req) => {
         ? await db.from('clients').select('id,name,status').eq('owner_id', p.owner_id).in('id', ids)
         : { data: [], error: null };
       if (cl.error) throw new Error('lecture clients : ' + cl.error.message);
-      const noms = new Map((cl.data ?? []).map((c) => [String(c.id), c.name]));
+      const tousClients = new Map([...(cl.data ?? []), ...(nouveaux.data ?? [])].map((c) => [String(c.id), c]));
+      const noms = new Map([...tousClients.values()].map((c) => [String(c.id), c.name]));
       const nomDe = (id: unknown) => noms.get(String(id)) ?? '';
 
       const b = reglesDigest(activites, cl.data ?? [], taches.data ?? [], today);
-      const texte = kind === 'matin' ? messageMatin(b, nomDe, crmUrl, today) : messageSoir(b, nomDe, crmUrl, today);
+      const texte = kind === 'matin' ? messageMatin(b, nomDe, crmUrl, today)
+        : kind === 'soir' ? messageSoir(b, nomDe, crmUrl, today)
+        : messageSemaine(reglesBilan(activites, [...tousClients.values()], payes.data ?? [], lundi, today), nomDe, crmUrl);
       if (apercu) { resultats.push({ agent: qui, apercu: texte }); continue; }
 
       /* Réserver l'envoi AVANT de l'envoyer : si le cron part deux fois,

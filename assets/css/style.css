@@ -1647,6 +1647,7 @@ input::placeholder, textarea::placeholder {
    Une section vide reste affichée, en une ligne : « rien en retard » est
    une information, et sa présence quotidienne installe l'habitude. */
 .today-section { margin-bottom: var(--space-5); }
+.bilan-nav { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
 .today-section h3 { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
 .today-count {
   min-width: 1.6em; padding: 0 .45em; border-radius: 999px; text-align: center;

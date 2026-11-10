@@ -142,9 +142,9 @@ function run() {
   ok('elle exige le secret du cron', fn.includes("req.headers.get('x-cron-secret')") && fn.includes("Deno.env.get('CRON_SECRET')"));
   /* Chaque requête, de son `db.from(` jusqu'à la suivante ou au `;`. */
   const lectures = fn.split("db.from('").slice(1)
-    .filter(s => /^(activities|tasks|clients)'/.test(s)).map(s => s.split(';')[0]);
+    .filter(s => /^(activities|tasks|clients|payments)'/.test(s)).map(s => s.split(';')[0]);
   ok('chaque lecture métier filtre par owner_id (la clé service ignore le RLS)',
-     lectures.length >= 4 && lectures.every(l => l.includes(".eq('owner_id', p.owner_id)")));
+     lectures.length >= 6 && lectures.every(l => l.includes(".eq('owner_id', p.owner_id)")));
   ok('elle n’écrit que dans notif_log', !/from\('(activities|clients|tasks|properties|payments)'\)[^;]*\.(insert|update|delete|upsert)\(/.test(fn));
   ok('le jeton du bot ne sort pas dans les erreurs', fn.includes("split(token).join('***')"));
   ok('aucun import local (déploiement par le dashboard)', !/from '\.\.?\//.test(fn));

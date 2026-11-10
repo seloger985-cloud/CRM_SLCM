@@ -93,6 +93,12 @@ vendredi), heure de Douala, un message Telegram arrive :
 - **soir** : « Qui as-tu vu aujourd'hui ? », les visites du jour sans issue,
   et le lien `…/index.html#saisie-rapide`.
 
+- **samedi** (`kind: "semaine"`, depuis la version `2026-11-10-b`, planifié
+  par `sql/19`) : le bilan du lundi au samedi — interactions, nouveaux
+  clients, visites, suites, signatures, **nombre** d'encaissements (le
+  montant n'est même pas lu), ce qu'il faut reprendre lundi — et le lien
+  `…/index.html#bilan`.
+
 Il part **toujours**, même court : c'est l'habitude qu'on installe.
 
 **Ce qui ne part jamais** : numéro de téléphone, montant, pièce d'identité,
