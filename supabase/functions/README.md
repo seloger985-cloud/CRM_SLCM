@@ -4,12 +4,13 @@ Le CRM est un site statique : tout s'exécute chez l'agent. Une seule chose ne
 le peut pas — appeler l'API Anthropic, qui exige une clé secrète. Une clé
 placée dans `assets/js/` serait servie à chaque visiteur.
 
-D'où ce dossier. **Trois fonctions**, déployées chacune à part.
+D'où ce dossier. **Quatre fonctions**, déployées chacune à part.
 
 | Fonction | Rôle |
 |---|---|
 | `understand-inbox` | Un message reçu d'un confrère devient une proposition de fiche bien. N'écrit rien. |
 | `understand-note` | Une note dictée après une visite devient une proposition de saisie rapide : nom, téléphone, type (WhatsApp compris depuis la version `2026-11-10-b`), issue, suite, date. Modèle léger `claude-haiku-5-5`. N'écrit rien ; le CRM ne remplit que les champs laissés vides. Mêmes secrets, même réglage « Verify JWT » désactivé. Facultative : sans elle, seul le bouton « Remplir depuis ma note » échoue. |
+| `daily-digest` | Le rappel Telegram du matin et du soir. Appelée par `pg_cron`, pas par le CRM ; secret partagé au lieu d'une session ; lit avec la clé service en filtrant par agent. N'écrit que dans `notif_log`. Voir « Rappels Telegram » plus bas. |
 | `capture-annonces` | Un paquet de 25 messages de groupe (export WhatsApp) : offre ou non, et la fiche de chaque offre. Modèle léger `claude-haiku-5-5`. N'écrit rien : le CRM range le résultat dans `annonces_captees`. Mêmes secrets, même réglage « Verify JWT » désactivé. |
 
 ## Vérifier QUELLE version tourne
@@ -81,6 +82,115 @@ La fonction reconnaît ce message et répond `workspace_manquant` avec la marche
 
 `SUPABASE_URL` et `SUPABASE_ANON_KEY` sont injectées automatiquement — rien
 à faire.
+
+## Rappels Telegram — `daily-digest`
+
+Le matin à 07h30 (du lundi au samedi) et le soir à 18h00 (du lundi au
+vendredi), heure de Douala, un message Telegram arrive :
+
+- **matin** : la dernière journée travaillée, les clients **sans suite**, ce
+  qui est en retard et pour aujourd'hui, et le lien `…/index.html#aujourdhui` ;
+- **soir** : « Qui as-tu vu aujourd'hui ? », les visites du jour sans issue,
+  et le lien `…/index.html#saisie-rapide`.
+
+Il part **toujours**, même court : c'est l'habitude qu'on installe.
+
+**Ce qui ne part jamais** : numéro de téléphone, montant, pièce d'identité,
+texte des notes. Un bot Telegram n'est pas chiffré de bout en bout. Les
+noms sont raccourcis (« Paul E. ») et toute suite de chiffres d'un intitulé
+est masquée.
+
+**Différences avec les deux autres fonctions** : elle est appelée par
+`pg_cron`, pas par le CRM. Pas de session utilisateur : elle exige un secret
+partagé dans l'en-tête `x-cron-secret`, et lit la base avec la clé service —
+**en filtrant chaque requête par `owner_id`**, puisque la clé service ignore
+le RLS. Elle n'écrit que dans `notif_log`, qui empêche un double envoi.
+
+Ses règles sont une **copie volontaire** d'une partie de l'écran
+« Aujourd'hui » (mêmes constantes, mêmes seuils). `tests/test-digest.js`
+exécute cette copie et la compare à l'écran : si l'une change sans l'autre,
+la suite échoue.
+
+### Secrets de la fonction
+
+| Nom | Rôle |
+|---|---|
+| **`TELEGRAM_BOT_TOKEN`** | Le jeton donné par @BotFather. Qui l'a peut écrire au nom du bot. |
+| **`CRON_SECRET`** | Une longue chaîne au hasard, la même que celle rangée dans le coffre de la base (étape 6). |
+| **`CRM_URL`** | L'adresse du CRM, **sans** `index.html` ni `/` final. Sert aux liens du message. |
+
+`SUPABASE_URL` et `SUPABASE_SERVICE_ROLE_KEY` sont **injectées
+automatiquement** par Supabase dans toute fonction Edge : rien à copier, et
+la clé service n'a jamais à passer par un copier-coller.
+
+### Mise en route, pas à pas
+
+L'ordre compte : la base appelle la fonction, la fonction appelle Telegram.
+On construit donc de Telegram vers la base.
+
+1. **Créer le bot.** Dans Telegram, ouvrir **@BotFather**, envoyer
+   `/newbot`, choisir un nom (« Rappels SE LOGER ») puis un identifiant qui
+   finit par `bot`. BotFather répond avec un **jeton** : le garder pour
+   l'étape 4, ne le montrer à personne.
+2. **Lui écrire le premier.** Ouvrir la conversation avec le nouveau bot et
+   envoyer `/start`. *Pourquoi* : un bot Telegram n'a pas le droit d'écrire
+   le premier à quelqu'un ; tant qu'on ne lui a pas parlé, ses messages
+   sont refusés.
+3. **Trouver son `chat_id`.** Dans le navigateur, ouvrir
+   `https://api.telegram.org/bot<LE_JETON>/getUpdates` (le jeton collé à la
+   place de `<LE_JETON>`, sans espace). Chercher `"chat":{"id":` — le nombre
+   qui suit est le `chat_id`. Si la page affiche `"result":[]`, renvoyer un
+   message au bot et recharger.
+4. **Poser les trois secrets** : Edge Functions → **Secrets** →
+   `TELEGRAM_BOT_TOKEN`, `CRON_SECRET` (inventer une longue chaîne, 40
+   caractères au hasard), `CRM_URL`.
+5. **Déployer la fonction** : Deploy a new function, nom `daily-digest`,
+   coller `daily-digest/index.ts` en entier, Deploy. Puis **désactiver
+   « Verify JWT »** dans ses paramètres.
+6. **Ranger le secret du cron dans le coffre de la base** : SQL Editor,
+   exécuter la seule ligne
+   `select vault.create_secret('LA_MEME_CHAINE_QUE_CRON_SECRET', 'daily_digest_cron_secret');`
+   — *pourquoi le coffre* : la tâche planifiée doit envoyer ce secret, et le
+   coffre évite qu'il soit écrit en clair dans le dépôt ou dans la liste des
+   tâches.
+7. **Jouer `sql/18_notifications_telegram.sql`**. Contrôle attendu :
+   `2, 2, 1, 2, 1`, puis le diagnostic `0, 0, 0`.
+8. **S'inscrire** : SQL Editor, avec son e-mail de connexion au CRM et le
+   `chat_id` de l'étape 3 :
+
+   ```sql
+   insert into public.notif_prefs (owner_id, telegram_chat_id)
+   select id, '123456789' from auth.users where email = 'VOTRE_EMAIL'
+   on conflict (owner_id) do update set telegram_chat_id = excluded.telegram_chat_id, actif = true;
+   ```
+
+9. **Essayer sans attendre demain matin** : SQL Editor —
+
+   ```sql
+   select net.http_post(
+     url     := 'https://dukwtseqticijlvrmkgz.supabase.co/functions/v1/daily-digest',
+     headers := jsonb_build_object('Content-Type', 'application/json',
+       'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'daily_digest_cron_secret')),
+     body    := '{"kind": "matin", "essai": true}'::jsonb);
+   ```
+
+   Le message arrive sur Telegram en quelques secondes. `"essai": true`
+   envoie **sans noter l'envoi** : le vrai message de demain matin partira
+   quand même. `"apercu": true` à la place rend le texte sans rien envoyer.
+   La réponse de la fonction se lit ensuite avec
+   `select status_code, content from net._http_response order by id desc limit 1;`
+
+### Quand rien n'arrive
+
+| Signe | Cause probable |
+|---|---|
+| `secret_invalide` | Le secret du coffre (étape 6) et `CRON_SECRET` (étape 4) diffèrent. |
+| `config_incomplete` | Un des trois secrets manque côté fonction. |
+| `agents: 0` | Aucune ligne active dans `notif_prefs` (étape 8). |
+| `Telegram 403 … bot can't initiate conversation` | L'étape 2 (`/start`) n'a pas été faite. |
+| `Telegram 400 … chat not found` | `chat_id` erroné (étape 3). |
+| `deja_envoye` | Normal : ce message du jour est déjà parti. Utiliser `"essai": true` pour tester. |
+| Rien du tout dans les journaux | La tâche planifiée ne tourne pas : `select * from cron.job_run_details order by start_time desc limit 5;` |
 
 ## Trois règles que ces fonctions respectent
 
