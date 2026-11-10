@@ -87,8 +87,15 @@ function run() {
   ok('saveActivity vérifie la suite AVANT d’écrire en base',
      save.includes('verifierSuite(') && save.indexOf('verifierSuite(') < save.indexOf('.insert('));
   const form = grab(/function showActivityForm[\s\S]*?\n}/, 'showActivityForm');
-  ok('le formulaire porte la case « Aucune suite nécessaire »',
-     form.includes('id="activity-no-suite"') && form.includes('Aucune suite nécessaire'));
+  const champs = grab(/function champsSuite[\s\S]*?\n}/, 'champsSuite');
+  ok('les champs de suite portent la case « Aucune suite nécessaire »',
+     champs.includes('-no-suite"') && champs.includes('Aucune suite nécessaire'));
+  ok('le formulaire d’activité utilise ces champs communs',
+     form.includes("champsSuite('activity'") && form.includes("cablerSuite('activity'"));
+  /* La saisie rapide (lot 2) écrit aussi des visites : la même règle doit
+     s'y appliquer, sinon c'est par elle que l'oubli repasserait. */
+  const prep = grab(/function preparerSaisieRapide[\s\S]*?\n}/, 'preparerSaisieRapide');
+  ok('la saisie rapide applique la même règle de suite', prep.includes('verifierSuite('));
   ok('le formulaire pré-remplit la suite à la création seulement',
      /editing \? \{[^}]*\} : suiteParDefaut\(/.test(form));
 

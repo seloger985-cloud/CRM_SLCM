@@ -12,6 +12,7 @@ lit les annonces en direct — sans jamais les recopier.
 | Écran | Rôle |
 |---|---|
 | **Tableau de bord** | Ce qui attend, ce qui entre, ce qui est engagé, ce qui est encaissé. |
+| **Saisie rapide** | Après une visite, sur le téléphone : nom, numéro, ce qui s'est passé, la suite. Un seul enregistrement crée le client s'il est nouveau, et l'activité. Lien direct `index.html#saisie-rapide`. |
 | **Clients** | Fiches, statut dans le pipeline, contact WhatsApp, et leurs **recherches**. |
 | **Biens** | Les annonces publiées sur le site *et* les saisies internes, fusionnées. Un message reçu d'un confrère devient une fiche en un collage. |
 | **Annonces des groupes** | (depuis Biens) La mémoire de tout ce qui circule dans les groupes WhatsApp de travail : l'export hebdomadaire de chaque groupe est découpé, trié, analysé, et chaque offre reste cherchable, rapprochée des demandes clients, transformable en fiche. Voir `sql/16_annonces_captees.sql`. |
@@ -190,6 +191,37 @@ Le lendemain est celui de **Douala** (`dateLocale()`), pas celui d'UTC :
 Aucune tâche n'est créée à partir d'une suite : elle vit sur l'activité où
 elle a été écrite. La dupliquer dans `tasks` obligerait à synchroniser deux
 endroits, et l'un des deux finirait par mentir.
+
+## Saisie rapide
+
+Le client perdu le 09/11/2026 avait été vu en visite, mais sa fiche n'a
+jamais été créée : il fallait un formulaire client, puis un formulaire
+d'activité sur un autre écran. Debout devant un immeuble, ça ne se fait pas.
+
+L'écran **Saisie rapide** (deuxième entrée de la navigation, et bouton en
+tête du tableau de bord) réunit les deux. Le type se choisit d'un appui, la
+note se dicte avec le micro du clavier, la suite d'une visite est proposée
+d'office. Le bien concerné et la source sont repliés sous « Plus de détails ».
+
+- **Pas de doublon silencieux.** Dès que le numéro tapé correspond à une fiche
+  (« 650 840 714 » et « +237650840714 » sont le même), le CRM le dit et
+  propose « Utiliser cette fiche ». À l'enregistrement, un nom ou un numéro
+  déjà connu arrête tout tant que l'agent n'a pas tranché.
+- **Un nouveau client entre au pipeline** en « visite » s'il vient d'être
+  vu en visite, en « nouvelle demande » sinon. Le statut d'un client
+  existant n'est jamais modifié : la saisie rapide ne fait pas reculer un
+  dossier en négociation.
+- **Un échec réseau ne crée pas de doublon** : si la fiche est créée mais
+  pas l'activité, le second essai rattache l'activité à la même fiche.
+- **« Remplir depuis ma note »** envoie le texte dicté à la fonction
+  `understand-note`, qui *propose* nom, numéro, type, issue, suite et date.
+  Seuls les champs laissés vides sont remplis, rien n'est écrit avant
+  « Enregistrer ». Sans la fonction déployée, le bouton affiche une erreur
+  et tout le reste fonctionne.
+
+Le lien `index.html#saisie-rapide` survit à la page de connexion : `auth.js`
+garde le fragment dans `?next=`. C'est là que renverra le rappel Telegram du
+soir.
 
 ## Ce que le CRM ne fait pas
 

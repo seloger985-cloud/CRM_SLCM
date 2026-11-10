@@ -41,6 +41,11 @@ function navTo(btn, fn) {
 }
 
 dashboardBtn.addEventListener('click', navTo(dashboardBtn, showDashboard));
+/* Saisie rapide : en deuxième position, parce que c'est l'écran du terrain.
+   Sur téléphone, la navigation défile — les premières entrées sont les
+   seules visibles sans geste. */
+const quickBtn = document.getElementById('quick-btn');
+quickBtn.addEventListener('click', navTo(quickBtn, showSaisieRapide));
 clientsBtn.addEventListener('click', navTo(clientsBtn, showClients));
 propertiesBtn.addEventListener('click', navTo(propertiesBtn, showProperties));
 activitiesBtn.addEventListener('click', navTo(activitiesBtn, showActivities));
@@ -95,8 +100,39 @@ function ecranDeDepart() {
     history.replaceState(null, '', location.pathname);
     return showPublishForm(id);
   }
+  /* Liens profonds : `index.html#saisie-rapide`, envoyé par le rappel
+     Telegram. Le fragment est retiré ensuite, comme `publier` : un
+     rechargement ramène au tableau de bord, et un second clic sur le même
+     lien redéclenche bien `hashchange`. */
+  const frag = typeof location !== 'undefined' ? ecranDeFragment(location.hash) : null;
+  if (frag) {
+    history.replaceState(null, '', location.pathname + location.search);
+    return ECRANS_FRAGMENT[frag]();
+  }
   return showDashboard();
 }
+
+/* Les écrans joignables par un lien `index.html#…`. Une table plutôt que
+   des `if` : l'écran « Aujourd'hui » s'y ajoutera, et le test lit la table. */
+const ECRANS_FRAGMENT = {
+  'saisie-rapide': () => showSaisieRapide()
+};
+
+/** Le nom d'écran porté par un fragment d'adresse, s'il en désigne un. */
+function ecranDeFragment(hash) {
+  const k = String(hash || '').replace(/^#/, '');
+  return Object.prototype.hasOwnProperty.call(ECRANS_FRAGMENT, k) ? k : null;
+}
+
+/* Le CRM est déjà ouvert et l'agent touche un lien `#saisie-rapide` : la
+   page ne se recharge pas, seul le fragment change. */
+window.addEventListener('hashchange', () => {
+  if (!window.SLCM_SESSION || typeof location === 'undefined') return;
+  const frag = ecranDeFragment(location.hash);
+  if (!frag) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  ECRANS_FRAGMENT[frag]();
+});
 
 window.addEventListener('error', event => {
   console.error('Erreur JavaScript détectée:', event.error || event.message);
@@ -560,6 +596,7 @@ async function showDashboard() {
 
   mainContent.innerHTML = `
     <h2>Tableau de bord</h2>
+    <button onclick="showSaisieRapide()" class="btn btn-primary quick-cta">+ Saisie rapide</button>
 
     <!-- Les quatre temps de l'agence : à faire → entrant → en cours → résultat.
          « Prix moyen » a été retiré : une moyenne sur des biens hétérogènes —
@@ -1649,6 +1686,59 @@ function verifierSuite(a, aucuneSuite) {
   return null;
 }
 
+/* Les champs de la suite, communs au formulaire d'activité et à la saisie
+   rapide. Un seul gabarit : deux copies divergeraient, et la règle de la
+   suite obligatoire ne vaudrait plus que dans l'un des deux écrans. */
+const HINT_SUITE_REQUISE = '— obligatoire pour une visite ou un rendez-vous';
+const HINT_SUITE_LIBRE = '— laisser vide s’il n’y a rien';
+
+function champsSuite(prefix, type, nextStep, nextDate) {
+  const requise = suiteRequise(type);
+  return `
+        <div class="form-group">
+          <label for="${prefix}-next-step">À faire ensuite <span class="item-meta" id="${prefix}-next-hint">${requise ? HINT_SUITE_REQUISE : HINT_SUITE_LIBRE}</span></label>
+          <input type="text" id="${prefix}-next-step" value="${escAttr(nextStep || '')}"
+                 placeholder="Proposer Bonapriso à la place" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="${prefix}-next-date">Pour quand:</label>
+          <input type="date" id="${prefix}-next-date" value="${escAttr(nextDate || '')}">
+        </div>
+        <div class="form-group" id="${prefix}-no-suite-row" style="${requise ? '' : 'display:none'}">
+          <label class="check-line"><input type="checkbox" id="${prefix}-no-suite"> Aucune suite nécessaire</label>
+        </div>`;
+}
+
+/* Le type décide de ce que la suite exige : on le suit en direct, pour que
+   la case et la consigne correspondent toujours au type choisi.
+   `onTypeChange(f)` branche f sur le changement de type — un <select> dans
+   le formulaire d'activité, des boutons radio dans la saisie rapide. */
+function cablerSuite(prefix, getType, editing, onTypeChange) {
+  const el = (s) => document.getElementById(prefix + '-' + s);
+  const stepEl = el('next-step');
+  const dateEl = el('next-date');
+  const aucuneEl = el('no-suite');
+  /* Cocher « Aucune suite » grise les champs : un texte proposé d'office
+     qui resterait affiché laisserait croire qu'une relance est prévue. */
+  const majAucune = () => {
+    stepEl.disabled = dateEl.disabled = !!aucuneEl.checked;
+  };
+  const majSuite = () => {
+    const requise = suiteRequise(getType());
+    el('no-suite-row').style.display = requise ? '' : 'none';
+    el('next-hint').textContent = requise ? HINT_SUITE_REQUISE : HINT_SUITE_LIBRE;
+    if (!requise && aucuneEl.checked) { aucuneEl.checked = false; majAucune(); }
+    /* On ne réécrit que la suite proposée d'office, jamais un texte tapé. */
+    if (!editing && (!stepEl.value || stepEl.value === SUITE_VISITE_DEFAUT)) {
+      const d = suiteParDefaut(getType(), dateLocale());
+      stepEl.value = d.next_step;
+      dateEl.value = d.next_date;
+    }
+  };
+  aucuneEl.addEventListener('change', majAucune);
+  onTypeChange(majSuite);
+}
+
 /** Marque une suite comme faite. Rien ne se supprime : on horodate. */
 async function closeFollowUp(id, back) {
   try {
@@ -1659,6 +1749,342 @@ async function closeFollowUp(id, back) {
     if (back === 'dashboard') showDashboard(); else showActivities();
   } catch (error) {
     UI.handleError(error);
+  }
+}
+
+/* ═══════════════ SAISIE RAPIDE ═══════════════
+
+   Le 09/11/2026, le client perdu avait été rencontré en visite, mais sa fiche
+   n'a jamais été créée : il fallait remplir le formulaire client, puis aller
+   dans Activités et remplir un second formulaire. Debout devant un immeuble,
+   après une visite, ça ne se fait pas.
+
+   Cet écran fait les deux d'un coup : nom, téléphone, ce qui s'est passé, la
+   suite. Un enregistrement crée le client s'il est nouveau, et l'activité.
+   Le but est de tenir en moins de dix secondes sur un téléphone : tout ce
+   qui n'est pas indispensable est replié sous « Plus de détails ».
+
+   Lien direct : index.html#saisie-rapide (le rappel Telegram du soir y
+   renvoie). */
+
+/* Les types proposés, dans l'ordre du terrain : on visite plus qu'on écrit. */
+const QUICK_TYPES = ['visit', 'call', 'meeting', 'email'];
+
+/* État de l'écran entre deux rendus. `clientId` : la fiche existante choisie,
+   ou celle que l'enregistrement vient de créer — pour qu'un second essai
+   après un échec réseau ne crée pas un doublon. */
+const quickView = { clients: null, clientId: null, creerQuandMeme: false, saving: false, typeTouche: false };
+
+/** Le statut d'un NOUVEAU client, lu dans le pipeline : quelqu'un qu'on vient
+    de faire visiter est à l'étape « visite », pas « nouvelle demande ».
+    Pour un client existant, on ne touche pas au statut : la saisie rapide
+    ne doit jamais faire reculer un dossier en négociation. */
+function statutNouveauClient(type) {
+  return type === 'visit' ? 'visite' : 'nouvelle demande';
+}
+
+/**
+ * Prépare l'enregistrement d'une saisie rapide, SANS RIEN ÉCRIRE.
+ * Rend l'un des trois :
+ *   { erreur }   — ce qu'il faut corriger avant d'enregistrer
+ *   { doublons } — une fiche ressemble à ce contact : l'agent doit trancher
+ *   { nouveauClient | null, client_id | null, activite } — prêt à écrire
+ * `today` est passé : la fonction ne lit pas l'horloge.
+ */
+function preparerSaisieRapide(s, clients, today) {
+  const name = String(s.name || '').trim();
+  const phone = String(s.phone || '').trim();
+  if (!s.client_id && !name) {
+    return { erreur: 'Il faut au moins un nom : sans lui, la fiche serait introuvable.' };
+  }
+  const nextStep = String(s.next_step || '').trim();
+  const activite = {
+    type: s.type,
+    property_id: s.property_id || null,
+    /* notes est obligatoire en base : une visite notée sans détail reste
+       une visite, et c'est l'essentiel à garder. */
+    notes: String(s.notes || '').trim() || 'Saisie rapide, sans détail',
+    date: today,
+    outcome: s.outcome || null,
+    next_step: s.aucuneSuite ? null : (nextStep || null),
+    next_date: s.aucuneSuite || !nextStep ? null : (s.next_date || null)
+  };
+  const manque = verifierSuite(activite, !!s.aucuneSuite);
+  if (manque) return { erreur: manque };
+
+  if (!s.client_id && !s.creerQuandMeme) {
+    const doublons = findDuplicates({ name, phone }, clients || []);
+    if (doublons.length) return { doublons };
+  }
+  return {
+    nouveauClient: s.client_id ? null : {
+      name, phone: phone || null,
+      status: statutNouveauClient(s.type),
+      source: s.source || null
+    },
+    client_id: s.client_id || null,
+    activite
+  };
+}
+
+/** Les fiches qui portent ce numéro, pour le signaler pendant la frappe.
+    Seul le numéro compte ici : le nom n'est pas encore fini d'être tapé. */
+function memeNumero(phone, clients) {
+  const p = normalizePhone(phone);
+  if (p.length < 9) return [];
+  return (clients || []).filter(c => normalizePhone(c.phone) === p);
+}
+
+function showSaisieRapide(draft = null) {
+  const v = draft || {};
+  setActiveNav(document.getElementById('quick-btn'));
+  quickView.clientId = null;
+  quickView.creerQuandMeme = false;
+  quickView.typeTouche = false;
+  const type = v.type || lastChoice('quick-type', 'visit');
+  const suite = suiteParDefaut(type, dateLocale());
+  mainContent.innerHTML = `
+    <h2>Saisie rapide</h2>
+    <p class="item-meta">Un contact, ce qui s'est passé, la suite. Le client est créé s'il est nouveau.</p>
+    <form id="quick-form" class="quick-form" autocomplete="off">
+      <div class="form-group">
+        <label for="quick-name">Nom</label>
+        <input type="text" id="quick-name" value="${escAttr(v.name || '')}" autocapitalize="words" enterkeyhint="next">
+      </div>
+      <div class="form-group">
+        <label for="quick-phone">Téléphone</label>
+        <input type="tel" id="quick-phone" value="${escAttr(v.phone || '')}" inputmode="tel" enterkeyhint="next">
+      </div>
+      <div id="quick-match"></div>
+      <div class="form-group">
+        <span class="quick-label">Type</span>
+        <div class="quick-types" role="radiogroup" aria-label="Type d'interaction">
+          ${QUICK_TYPES.map(t => `<label class="quick-type"><input type="radio" name="quick-type" value="${escAttr(t)}" ${t === type ? 'checked' : ''}><span>${escHtml(getActivityLabel(t))}</span></label>`).join('')}
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="quick-notes">Ce qui s'est passé <span class="item-meta">— le micro du clavier permet de dicter</span></label>
+        <textarea id="quick-notes" rows="4" placeholder="A aimé le salon, trouve le loyer élevé, veut en parler à sa femme.">${escHtml(v.notes || '')}</textarea>
+        <button type="button" class="ghost-btn" id="quick-understand">Remplir depuis ma note</button>
+        <div id="quick-proposal"></div>
+      </div>
+      <div class="form-group">
+        <label for="quick-outcome">Issue</label>
+        <select id="quick-outcome">
+          <option value="">Non renseignée</option>
+          ${Object.keys(OUTCOME_FR).map(o => `<option value="${escAttr(o)}">${escHtml(OUTCOME_FR[o])}</option>`).join('')}
+        </select>
+      </div>
+      ${champsSuite('quick', type, suite.next_step, suite.next_date)}
+      <details class="quick-more">
+        <summary>Plus de détails</summary>
+        <div class="form-group">
+          <label for="quick-property">Bien concerné</label>
+          <select id="quick-property"><option value="">Aucun</option></select>
+        </div>
+        <div class="form-group">
+          <label for="quick-source">Source <span class="item-meta">— pour un nouveau client</span></label>
+          <select id="quick-source">
+            <option value="">Non précisée</option>
+            ${['facebook', 'Koutchoumi', 'selogercm', 'Recommendations', 'autres'].map(src =>
+              `<option value="${escAttr(src)}" ${lastChoice('quick-source', '') === src ? 'selected' : ''}>${escHtml(src === 'autres' ? 'Autres' : src)}</option>`).join('')}
+          </select>
+        </div>
+      </details>
+      <button type="submit" class="btn btn-primary quick-save" id="quick-save">Enregistrer</button>
+    </form>
+  `;
+
+  populateSelect('quick-property', 'properties', 'title', v.property_id);
+  cablerSuite('quick', quickType, false, (f) => {
+    document.querySelectorAll('input[name="quick-type"]').forEach(r => r.addEventListener('change', f));
+  });
+  /* Un type choisi à la main n'est plus remplacé par la lecture de la note. */
+  document.querySelectorAll('input[name="quick-type"]').forEach(r =>
+    r.addEventListener('click', () => { quickView.typeTouche = true; }));
+
+  /* Le portefeuille est chargé en arrière-plan : la saisie commence tout de
+     suite, la détection de doublon suit quand il arrive. */
+  getAll('clients').then(rows => { quickView.clients = rows; majQuickMatch(); });
+  document.getElementById('quick-phone').addEventListener('input', majQuickMatch);
+  document.getElementById('quick-understand').addEventListener('click', comprendreNote);
+  document.getElementById('quick-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveSaisieRapide();
+  });
+}
+
+function quickType() {
+  const r = document.querySelector('input[name="quick-type"]:checked');
+  return (r && r.value) || 'visit';
+}
+
+/* Le bandeau sous le téléphone : la fiche retenue, ou celles qui portent le
+   même numéro. On le signale PENDANT la frappe — au moment d'enregistrer,
+   l'agent a déjà la tête ailleurs. */
+function majQuickMatch() {
+  const box = document.getElementById('quick-match');
+  if (!box) return;
+  if (quickView.clientId) {
+    const c = (quickView.clients || []).find(x => x.id === quickView.clientId);
+    box.innerHTML = `<div class="quick-match is-linked">Rattaché à la fiche <strong>${escHtml(c ? c.name : '#' + quickView.clientId)}</strong>
+      <button type="button" class="ghost-btn" onclick="choisirFicheRapide(null)">Changer</button></div>`;
+    return;
+  }
+  const memes = memeNumero(document.getElementById('quick-phone').value, quickView.clients);
+  box.innerHTML = memes.length ? afficherDoublonsRapide(memes.map(c => ({ client: c, raison: 'même numéro' }))) : '';
+}
+
+function afficherDoublonsRapide(doublons) {
+  return `<div class="quick-match">
+    <div>Déjà au CRM :</div>
+    ${doublons.slice(0, 3).map(d => `<div class="quick-match-row"><span><strong>${escHtml(d.client.name || 'Sans nom')}</strong> <span class="item-meta">(${escHtml(d.raison)})</span></span>
+      <button type="button" class="btn btn-primary" onclick="choisirFicheRapide(${Number(d.client.id)})">Utiliser cette fiche</button></div>`).join('')}
+    <button type="button" class="ghost-btn" onclick="creerFicheRapide()">Non, c'est une autre personne</button>
+  </div>`;
+}
+
+function choisirFicheRapide(id) {
+  quickView.clientId = id ? Number(id) : null;
+  quickView.creerQuandMeme = false;
+  majQuickMatch();
+}
+
+function creerFicheRapide() {
+  quickView.creerQuandMeme = true;
+  const box = document.getElementById('quick-match');
+  if (box) box.innerHTML = '<div class="quick-match">Une nouvelle fiche sera créée.</div>';
+}
+
+function lireSaisieRapide() {
+  const val = (id) => { const e = document.getElementById(id); return e ? e.value : ''; };
+  return {
+    name: val('quick-name'), phone: val('quick-phone'), type: quickType(),
+    notes: val('quick-notes'), outcome: val('quick-outcome'),
+    next_step: val('quick-next-step'), next_date: val('quick-next-date'),
+    aucuneSuite: suiteRequise(quickType()) && !!document.getElementById('quick-no-suite').checked,
+    property_id: val('quick-property') || null, source: val('quick-source'),
+    client_id: quickView.clientId, creerQuandMeme: quickView.creerQuandMeme
+  };
+}
+
+async function saveSaisieRapide() {
+  /* Un double appui sur « Enregistrer » ne doit pas créer deux clients. */
+  if (quickView.saving) return;
+  quickView.saving = true;
+  const bouton = document.getElementById('quick-save');
+  if (bouton) bouton.disabled = true;
+  try {
+    const s = lireSaisieRapide();
+    const clients = quickView.clients || await getAll('clients');
+    const plan = preparerSaisieRapide(s, clients, dateLocale());
+    if (plan.erreur) { UI.toast(plan.erreur, 'error'); return; }
+    if (plan.doublons) {
+      document.getElementById('quick-match').innerHTML = afficherDoublonsRapide(plan.doublons);
+      UI.toast('Ce contact ressemble à une fiche existante : choisissez ci-dessous.', 'error');
+      return;
+    }
+
+    let clientId = plan.client_id;
+    if (plan.nouveauClient) {
+      const { data, error } = await supabaseClient.from('clients').insert([plan.nouveauClient]).select();
+      if (error) throw error;
+      clientId = data[0].id;
+      /* Retenue tout de suite : si l'activité échoue, le second essai
+         rattache à cette fiche au lieu d'en créer une autre. */
+      quickView.clientId = clientId;
+      if (quickView.clients) quickView.clients.unshift(data[0]);
+      majQuickMatch();
+    }
+
+    const { error } = await supabaseClient.from('activities')
+      .insert([Object.assign({}, plan.activite, { client_id: clientId })]);
+    if (error) {
+      if (plan.nouveauClient) {
+        UI.toast('La fiche client est créée, mais pas l’activité. Réessayez : elle sera rattachée à la même fiche.', 'error', 8000);
+        return;
+      }
+      throw error;
+    }
+
+    rememberChoice('quick-type', s.type);
+    if (plan.nouveauClient) rememberChoice('quick-source', s.source);
+    const qui = plan.nouveauClient ? plan.nouveauClient.name
+      : ((clients.find(c => c.id === clientId) || {}).name || 'le client');
+    UI.toast(getActivityLabel(s.type) + ' notée pour ' + qui
+      + (plan.activite.next_date ? ', suite le ' + formatDate(plan.activite.next_date) : '') + '.', 'success', 5000);
+    /* On reste sur l'écran, vidé : après une visite, il y en a souvent une
+       autre. */
+    showSaisieRapide({ type: s.type });
+  } catch (error) {
+    console.error('[saisie rapide]', error);
+    UI.handleError(error);
+  } finally {
+    quickView.saving = false;
+    const b = document.getElementById('quick-save');
+    if (b) b.disabled = false;
+  }
+}
+
+/* ── Remplir depuis la note dictée (fonction Edge understand-note) ──
+
+   L'IA PROPOSE, l'agent valide : la proposition ne remplit que les champs
+   encore vides, jamais ce que l'agent a déjà tapé, et rien n'est écrit en
+   base avant qu'il appuie sur « Enregistrer ». */
+
+/** Les champs à remplir avec la proposition : seulement ceux que l'agent a
+    laissés vides, et seulement avec des valeurs reconnues. */
+function appliquerProposition(saisie, p) {
+  const out = {};
+  if (!p) return out;
+  const vide = (k) => !String(saisie[k] || '').trim();
+  if (p.name && vide('name')) out.name = p.name;
+  if (p.phone && vide('phone')) out.phone = p.phone;
+  if (p.type && QUICK_TYPES.includes(p.type) && !saisie.typeTouche && p.type !== saisie.type) out.type = p.type;
+  if (p.outcome && OUTCOME_FR[p.outcome] && vide('outcome')) out.outcome = p.outcome;
+  /* La suite proposée d'office n'est pas un choix de l'agent : la note
+     peut la remplacer. Un texte qu'il a tapé, non. */
+  const suiteLibre = vide('next_step') || saisie.next_step === SUITE_VISITE_DEFAUT;
+  if (p.next_step && suiteLibre) out.next_step = p.next_step;
+  if (p.next_date && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(p.next_date) && (suiteLibre || vide('next_date'))) {
+    out.next_date = p.next_date;
+  }
+  return out;
+}
+
+async function comprendreNote() {
+  const note = (document.getElementById('quick-notes').value || '').trim();
+  if (!note) { UI.toast('Dictez ou écrivez d’abord ce qui s’est passé.', 'error'); return; }
+  const bouton = document.getElementById('quick-understand');
+  bouton.disabled = true;
+  bouton.textContent = 'Lecture de la note…';
+  try {
+    const r = await callFunction('understand-note', { note, today: dateLocale() });
+    const s = lireSaisieRapide();
+    s.typeTouche = !!quickView.typeTouche;
+    const champs = appliquerProposition(s, r && r.proposition);
+    const set = (id, v) => { const e = document.getElementById(id); if (e && v != null) e.value = v; };
+    set('quick-name', champs.name);
+    set('quick-phone', champs.phone);
+    set('quick-outcome', champs.outcome);
+    if (champs.type) {
+      const radio = document.querySelector('input[name="quick-type"][value="' + champs.type + '"]');
+      if (radio) { radio.checked = true; radio.dispatchEvent(new Event('change')); }
+    }
+    set('quick-next-step', champs.next_step);
+    set('quick-next-date', champs.next_date);
+    majQuickMatch();
+    const n = Object.keys(champs).length;
+    const manquant = (r && r.proposition && r.proposition.manquant) || [];
+    document.getElementById('quick-proposal').innerHTML = `<p class="item-meta">${n
+      ? n + ' champ' + (n > 1 ? 's' : '') + ' rempli' + (n > 1 ? 's' : '') + ' depuis la note : vérifiez avant d’enregistrer.'
+      : 'La note n’apporte rien de plus que ce qui est déjà saisi.'}${manquant.length
+      ? ' La note ne dit pas : ' + escHtml(manquant.join(', ')) + '.' : ''}</p>`;
+  } catch (error) {
+    UI.toast('Lecture de la note impossible : ' + error.message, 'error', 8000);
+  } finally {
+    bouton.disabled = false;
+    bouton.textContent = 'Remplir depuis ma note';
   }
 }
 
@@ -4200,18 +4626,7 @@ function showActivityForm(activity = null, draft = null, back = null) {
             ${Object.keys(OUTCOME_FR).map(o => `<option value="${escAttr(o)}" ${v.outcome === o ? 'selected' : ''}>${OUTCOME_FR[o]}</option>`).join('')}
           </select>
         </div>
-        <div class="form-group">
-          <label>À faire ensuite <span class="item-meta" id="activity-next-hint">${suiteRequise(defType) ? '— obligatoire pour une visite ou un rendez-vous' : '— laisser vide s’il n’y a rien'}</span></label>
-          <input type="text" id="activity-next-step" value="${escAttr(nextStep)}"
-                 placeholder="Proposer Bonapriso à la place" autocomplete="off">
-        </div>
-        <div class="form-group">
-          <label>Pour quand:</label>
-          <input type="date" id="activity-next-date" value="${escAttr(nextDate)}">
-        </div>
-        <div class="form-group" id="activity-no-suite-row" style="${suiteRequise(defType) ? '' : 'display:none'}">
-          <label><input type="checkbox" id="activity-no-suite"> Aucune suite nécessaire</label>
-        </div>
+        ${champsSuite('activity', defType, nextStep, nextDate)}
       </fieldset>
       <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Ajouter'}</button>
       <button type="button" onclick="${back === 'clients' ? 'showClients()' : back === 'properties' ? 'showProperties()' : 'showActivities()'}" class="btn btn-outline">Annuler</button>
@@ -4222,32 +4637,8 @@ function showActivityForm(activity = null, draft = null, back = null) {
   populateSelect('activity-client', 'clients', 'name', v.client_id);
   populateSelect('activity-property', 'properties', 'title', v.property_id);
 
-  /* Le type décide de ce que la suite exige : on le suit en direct, pour
-     que la case et la consigne correspondent toujours au type choisi. */
   const typeEl = document.getElementById('activity-type');
-  const stepEl = document.getElementById('activity-next-step');
-  const dateEl = document.getElementById('activity-next-date');
-  const aucuneEl = document.getElementById('activity-no-suite');
-  const majSuite = () => {
-    const requise = suiteRequise(typeEl.value);
-    document.getElementById('activity-no-suite-row').style.display = requise ? '' : 'none';
-    document.getElementById('activity-next-hint').textContent = requise
-      ? '— obligatoire pour une visite ou un rendez-vous' : '— laisser vide s’il n’y a rien';
-    if (!requise && aucuneEl.checked) { aucuneEl.checked = false; majAucune(); }
-    /* On ne réécrit que la suite proposée d'office, jamais un texte tapé. */
-    if (!editing && (!stepEl.value || stepEl.value === SUITE_VISITE_DEFAUT)) {
-      const d = suiteParDefaut(typeEl.value, dateLocale());
-      stepEl.value = d.next_step;
-      dateEl.value = d.next_date;
-    }
-  };
-  /* Cocher « Aucune suite » grise les champs : un texte proposé d'office
-     qui resterait affiché laisserait croire qu'une relance est prévue. */
-  const majAucune = () => {
-    stepEl.disabled = dateEl.disabled = !!aucuneEl.checked;
-  };
-  typeEl.addEventListener('change', majSuite);
-  aucuneEl.addEventListener('change', majAucune);
+  cablerSuite('activity', () => typeEl.value, editing, (f) => typeEl.addEventListener('change', f));
 
   document.getElementById('activity-form').addEventListener('submit', (e) => {
     e.preventDefault();

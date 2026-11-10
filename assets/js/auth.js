@@ -27,7 +27,11 @@
   }
 
   function toLogin() {
-    const next = window.location.pathname + window.location.search;
+    /* Le fragment fait partie de la destination : `index.html#saisie-rapide`
+       arrive d'un rappel Telegram, souvent sur un téléphone dont la session
+       a expiré. Sans lui, l'agent se retrouvait sur le tableau de bord après
+       la connexion, et devait chercher l'écran qu'on venait de lui ouvrir. */
+    const next = window.location.pathname + window.location.search + window.location.hash;
     window.location.replace(LOGIN_PAGE + '?next=' + encodeURIComponent(next));
   }
 

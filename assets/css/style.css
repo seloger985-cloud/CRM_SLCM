@@ -1628,6 +1628,73 @@ input::placeholder, textarea::placeholder {
 
 
 /* =====================================================================
+   Saisie rapide (10/11/2026)
+
+   Pensée pour un pouce, debout, après une visite : de grandes cibles, le
+   type en boutons plutôt qu'en liste déroulante (un appui au lieu de deux),
+   et des champs en 16 px sur téléphone — en dessous, iOS zoome la page à
+   chaque champ touché et fait perdre le fil.
+   ===================================================================== */
+.quick-cta { margin-bottom: var(--space-4); }
+/* Une case et son libellé sur une ligne. Sans ça, la règle générale
+   `input { width: 100% }` étire la case sur toute la largeur et rejette
+   le libellé en dessous : on ne voit plus à quoi elle se rapporte. */
+.form-group label.check-line { display: flex; align-items: center; gap: var(--space-2); cursor: pointer; }
+.check-line input { width: auto; margin: 0; }
+/* « Aucune suite » cochée : les champs de suite doivent paraître éteints,
+   sinon la relance proposée d'office semble toujours prévue. */
+[id$="-next-step"]:disabled, [id$="-next-date"]:disabled { opacity: .5; cursor: not-allowed; }
+.quick-form { max-width: 560px; }
+.quick-label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--fg-1);
+}
+.quick-types { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.quick-type { position: relative; flex: 1 1 0; min-width: 96px; margin: 0; }
+/* Le bouton radio reste dans la page (clavier, lecteur d'écran), mais
+   invisible : c'est l'étiquette qui se touche. */
+.quick-type input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.quick-type span {
+  display: block;
+  padding: 12px 8px;
+  text-align: center;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  color: var(--fg-0);
+  cursor: pointer;
+}
+.quick-type input:checked + span {
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.quick-type input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.quick-match {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-2);
+}
+.quick-match.is-linked { border-color: var(--border-2); display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.quick-match-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.quick-more { margin-bottom: var(--space-4); }
+.quick-more summary { cursor: pointer; color: var(--fg-1); margin-bottom: var(--space-3); }
+#quick-understand { margin-top: var(--space-2); }
+.quick-save { width: 100%; padding: 14px; font-size: 1rem; }
+
+@media (max-width: 768px) {
+  .quick-form input, .quick-form select, .quick-form textarea { font-size: 16px; }
+  .quick-form { padding: var(--space-4); }
+}
+
+
+/* =====================================================================
    Mouvement réduit (31/08/2026)
 
    Cinq animations tournaient sans condition : le spinner, le glissement
