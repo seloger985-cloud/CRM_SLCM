@@ -118,7 +118,7 @@ process.on('beforeExit', () => {
 });
 
 (async () => {
-for (const mod of ['check-migrations', 'test-dates', 'check-columns', 'check-invoice', 'check-handlers', 'test-escaping', 'test-matching', 'test-duplicates', 'test-suggestions', 'test-followups', 'test-suites', 'test-saisie-rapide', 'test-journal', 'test-covers', 'test-screens', 'test-confreres', 'test-demandes-site', 'test-equipements', 'test-capture', 'test-capture-site']) {
+for (const mod of ['check-migrations', 'test-dates', 'check-columns', 'check-invoice', 'check-handlers', 'test-escaping', 'test-matching', 'test-duplicates', 'test-suggestions', 'test-followups', 'test-suites', 'test-saisie-rapide', 'test-journal', 'test-aujourdhui', 'test-covers', 'test-screens', 'test-confreres', 'test-demandes-site', 'test-equipements', 'test-capture', 'test-capture-site']) {
   let result;
   try {
     result = await require('./' + mod).run();
