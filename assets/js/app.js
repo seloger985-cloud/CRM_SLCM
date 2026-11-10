@@ -44,6 +44,8 @@ dashboardBtn.addEventListener('click', navTo(dashboardBtn, showDashboard));
 /* Saisie rapide : en deuxième position, parce que c'est l'écran du terrain.
    Sur téléphone, la navigation défile — les premières entrées sont les
    seules visibles sans geste. */
+const todayBtn = document.getElementById('today-btn');
+todayBtn.addEventListener('click', navTo(todayBtn, showAujourdhui));
 const quickBtn = document.getElementById('quick-btn');
 quickBtn.addEventListener('click', navTo(quickBtn, showSaisieRapide));
 clientsBtn.addEventListener('click', navTo(clientsBtn, showClients));
@@ -109,13 +111,20 @@ function ecranDeDepart() {
     history.replaceState(null, '', location.pathname + location.search);
     return ECRANS_FRAGMENT[frag]();
   }
+  /* Première ouverture de la journée : l'écran « Aujourd'hui » d'abord.
+     C'est l'habitude qu'on installe — repartir de ce qui attend, pas des
+     graphiques. Les ouvertures suivantes reviennent au tableau de bord. */
+  let vu = null;
+  try { vu = localStorage.getItem('slcm-aujourdhui-vu'); } catch (e) { /* stockage bloqué */ }
+  if (briefingAOuvrir(vu, dateLocale())) return showAujourdhui();
   return showDashboard();
 }
 
 /* Les écrans joignables par un lien `index.html#…`. Une table plutôt que
    des `if` : l'écran « Aujourd'hui » s'y ajoutera, et le test lit la table. */
 const ECRANS_FRAGMENT = {
-  'saisie-rapide': () => showSaisieRapide()
+  'saisie-rapide': () => showSaisieRapide(),
+  'aujourdhui': () => showAujourdhui()
 };
 
 /** Le nom d'écran porté par un fragment d'adresse, s'il en désigne un. */
@@ -224,26 +233,20 @@ function getAutomationSuggestions() {
       }
     });
 
-    // Clients sans activité récente (plus de 7 jours)
-    clients.forEach(client => {
-      const clientActivities = activities.filter(a => a.client_id === client.id);
-      if (clientActivities.length > 0) {
-        const lastActivity = new Date(Math.max(...clientActivities.map(a => new Date(a.date))));
-        const daysSinceLastActivity = Math.floor((now - lastActivity) / (1000 * 60 * 60 * 24));
-
-        if (daysSinceLastActivity > 7 && client.status !== 'signé') {
-          suggestions.push({
-            type: 'followup',
-            priority: daysSinceLastActivity > 14 ? 'high' : 'medium',
-            message: `Relance ${client.name} - dernière activité il y a ${daysSinceLastActivity} jours`,
-            action: () => sendWhatsApp(client.phone, replaceTemplateVars(messageTemplates.whatsapp.followup, {
-              name: client.name
-            })),
-            client: client,
-            daysInactive: daysSinceLastActivity
-          });
-        }
-      }
+    /* Clients sans activité récente : la règle vit dans clientsRefroidis,
+       partagée avec l'écran « Aujourd'hui » — deux copies finiraient par
+       ne plus signaler les mêmes personnes. */
+    clientsRefroidis(clients, activities, dateLocale()).forEach(({ client, jours }) => {
+      suggestions.push({
+        type: 'followup',
+        priority: jours > 14 ? 'high' : 'medium',
+        message: `Relance ${client.name} - dernière activité il y a ${jours} jours`,
+        action: () => sendWhatsApp(client.phone, replaceTemplateVars(messageTemplates.whatsapp.followup, {
+          name: client.name
+        })),
+        client: client,
+        daysInactive: jours
+      });
     });
 
     return suggestions.sort((a, b) => {
@@ -912,6 +915,7 @@ function initCharts(statusData, statusLabels, sourceStats) {
    l'écran Activités, au milieu d'une liste qu'il n'était pas en train de lire. */
 function returnTo(back, fallback) {
   if (back === 'clients') return showClients();
+  if (back === 'aujourdhui') return showAujourdhui();
   if (back === 'properties') return showProperties();
   return fallback();
 }
@@ -1645,10 +1649,10 @@ function findDuplicates(candidate, clients) {
 
 /* Raccourcis de saisie contextuelle. Le formulaire s'ouvre déjà rattaché à
    la fiche d'où l'on vient, et l'annulation comme l'enregistrement y ramènent. */
-function addActivityFor(kind, id) {
+function addActivityFor(kind, id, back) {
   const draft = kind === 'client' ? { client_id: id } : { property_id: id };
   if (kind === 'property') draft.type = 'visit';
-  showActivityForm(null, draft, kind === 'client' ? 'clients' : 'properties');
+  showActivityForm(null, draft, back || (kind === 'client' ? 'clients' : 'properties'));
 }
 
 function addPaymentFor(kind, id) {
@@ -1850,7 +1854,9 @@ async function closeFollowUp(id, back) {
       .update({ next_done_at: new Date().toISOString() }).eq('id', id);
     if (error) throw error;
     UI.toast('Suite marquée comme faite.', 'success');
-    if (back === 'dashboard') showDashboard(); else showActivities();
+    if (back === 'dashboard') showDashboard();
+    else if (back === 'aujourdhui') showAujourdhui();
+    else showActivities();
   } catch (error) {
     UI.handleError(error);
   }
@@ -2189,6 +2195,241 @@ async function comprendreNote() {
   } finally {
     bouton.disabled = false;
     bouton.textContent = 'Remplir depuis ma note';
+  }
+}
+
+/* ═══════════════ AUJOURD'HUI : L'OUVERTURE DE LA JOURNÉE ═══════════════
+
+   Jusqu'au 10/11/2026, tout ce que le CRM savait de « ce qui attend » se
+   calculait à l'ouverture d'un écran, et il fallait savoir lequel ouvrir.
+   Le client perdu le 09/11 n'apparaissait nulle part : sa visite n'avait
+   pas de suite, donc pas de « à faire », donc rien.
+
+   Cet écran s'ouvre de lui-même à la première ouverture du CRM de la
+   journée. Il dit, dans l'ordre :
+     1. ce qui s'est passé la dernière journée travaillée ;
+     2. ce qui est en retard, et ce qui est pour aujourd'hui ;
+     3. les clients SANS SUITE — le filet de sécurité ;
+     4. les visites dont l'issue n'est pas notée ;
+     5. les clients refroidis.
+
+   Aucune règle ne devine : tout vient de ce qui a été écrit.
+
+   La fonction Edge `daily-digest` (lot 5) réimplante volontairement un
+   sous-ensemble de ces règles pour le message Telegram du matin, avec les
+   MÊMES constantes : SANS_SUITE_DELAI_JOURS, FENETRE_BRIEFING_JOURS,
+   TYPES_SUITE_REQUISE, JOURNAL_AUTO_NOTE. Changer l'un, c'est changer
+   l'autre. */
+
+/* Un jour : la visite d'hier sans suite remonte ce matin, pas celle de
+   ce matin, à qui on laisse la journée. */
+const SANS_SUITE_DELAI_JOURS = 1;
+/* Trente jours : au-delà, le client sort de « sans suite » et de « visites
+   sans issue » pour n'apparaître que dans « refroidis ». Sans cette borne,
+   les visites notées avant que l'issue existe (31/08/2026) rempliraient
+   l'écran, et un écran plein cesse d'être lu. */
+const FENETRE_BRIEFING_JOURS = 30;
+/* La règle d'origine de l'écran Automatisation, inchangée. */
+const REFROIDI_JOURS = 7;
+
+/** Vrai pour une ligne écrite par le CRM lui-même, pas par l'agent : le
+    journal des contacts (lot 3) et le changement de colonne du pipeline.
+    Elles comptent comme activité (un client relancé n'est pas refroidi),
+    mais ne sont pas des interactions dont on attend une suite. */
+function estLigneAutomatique(a) {
+  const n = String((a && a.notes) || '');
+  return n.indexOf(JOURNAL_AUTO_NOTE) === 0 || n.indexOf('Progression pipeline') === 0;
+}
+
+/** Clients sans activité depuis plus de REFROIDI_JOURS, hors signés, le
+    plus ancien d'abord. Un client sans aucune activité n'y figure pas :
+    c'est la règle d'origine, et la saisie rapide crée toujours l'activité
+    avec la fiche. Partagée par l'écran Automatisation et « Aujourd'hui ». */
+function clientsRefroidis(clients, activities, today) {
+  const derniere = new Map();
+  (activities || []).forEach(a => {
+    if (a.client_id == null || !a.date) return;
+    const k = String(a.client_id);
+    if (!derniere.has(k) || a.date > derniere.get(k)) derniere.set(k, a.date);
+  });
+  return (clients || [])
+    .filter(c => c.status !== 'signé' && derniere.has(String(c.id)))
+    .map(c => ({ client: c, jours: -daysUntil(derniere.get(String(c.id)), today) }))
+    .filter(x => x.jours > REFROIDI_JOURS)
+    .sort((a, b) => b.jours - a.jours);
+}
+
+/**
+ * Le point du jour. Fonction PURE : elle reçoit la date, elle ne la lit pas.
+ * @returns {{ derniere: {date, activites}, aujourdhui, enRetard, sansSuite,
+ *             visitesSansIssue, refroidis }}
+ */
+function briefingDuJour(activities, clients, tasks, today) {
+  const acts = activities || [];
+  const age = (date) => -daysUntil(date, today);
+
+  /* 1. La dernière journée qui porte au moins une activité, avant
+        aujourd'hui. Un lundi, c'est souvent le samedi. */
+  const date = acts.reduce((m, a) => (a.date && a.date < today && a.date > m ? a.date : m), '') || null;
+  const derniere = { date, activites: date ? acts.filter(a => a.date === date) : [] };
+
+  /* 2. Suites ouvertes et tâches, datées. Une suite sans date ne peut être
+        ni en retard ni du jour : elle reste dans les écrans habituels. */
+  const items = openFollowUps(acts).filter(a => a.next_date).map(a => ({
+    kind: 'suite', id: a.id, quoi: a.next_step, quand: a.next_date, client_id: a.client_id, type: a.type
+  })).concat((tasks || []).filter(t => t.status !== 'completed' && t.due_date).map(t => ({
+    kind: 'task', id: t.id, quoi: t.title, quand: t.due_date, client_id: null
+  })));
+  const parDate = (x, y) => x.quand.localeCompare(y.quand);
+  const aujourdhui = items.filter(x => x.quand === today);
+  const enRetard = items.filter(x => x.quand < today).sort(parDate);
+
+  /* 3. Sans suite : la dernière interaction RÉELLE du client appelait une
+        suite (visite, rendez-vous, WhatsApp), aucune n'a été écrite, et
+        rien n'est ouvert pour lui ailleurs. Une issue tranchée (abouti,
+        échoué, ne s'est pas tenu) vaut décision : on ne la remonte pas.
+        « En attente d'un retour » sans suite, si : c'est le « je vous
+        reviens » que personne ne relance. */
+  const derniereReelle = new Map();
+  acts.forEach(a => {
+    if (a.client_id == null || !a.date || estLigneAutomatique(a)) return;
+    const k = String(a.client_id);
+    const b = derniereReelle.get(k);
+    if (!b || a.date > b.date || (a.date === b.date && String(a.created_at || '') > String(b.created_at || ''))) {
+      derniereReelle.set(k, a);
+    }
+  });
+  const suivis = new Set(openFollowUps(acts).map(a => String(a.client_id)));
+  const sansSuite = (clients || [])
+    .filter(c => c.status !== 'signé' && !suivis.has(String(c.id)))
+    .map(c => ({ client: c, activite: derniereReelle.get(String(c.id)) }))
+    .filter(({ activite: a }) => a && suiteRequise(a.type) && !a.next_step
+      && (!a.outcome || a.outcome === 'pending')
+      && age(a.date) >= SANS_SUITE_DELAI_JOURS && age(a.date) <= FENETRE_BRIEFING_JOURS)
+    .sort((x, y) => y.activite.date.localeCompare(x.activite.date));
+
+  /* 4. Visites jusqu'à aujourd'hui inclus dont l'issue n'est pas notée. */
+  const visitesSansIssue = acts
+    .filter(a => a.type === 'visit' && !a.outcome && a.date && a.date <= today
+      && age(a.date) <= FENETRE_BRIEFING_JOURS && !estLigneAutomatique(a))
+    .sort((x, y) => y.date.localeCompare(x.date));
+
+  /* 5. Refroidis — sans répéter un client déjà dans « sans suite » :
+        une seule ligne par personne, sinon on lit deux fois la même chose. */
+  const dejaVus = new Set(sansSuite.map(x => String(x.client.id)));
+  const refroidis = clientsRefroidis(clients, acts, today).filter(x => !dejaVus.has(String(x.client.id)));
+
+  return { derniere, aujourdhui, enRetard, sansSuite, visitesSansIssue, refroidis };
+}
+
+/** L'écran s'ouvre de lui-même une fois par jour : à la première ouverture
+    du CRM de la journée (heure de Douala). */
+function briefingAOuvrir(dernierVu, today) {
+  return dernierVu !== today;
+}
+
+const JOURS_FR = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+
+/** « samedi 7 novembre » — un lundi, « samedi » dit plus que « 07/11 ». */
+function jourEnLettres(ymd) {
+  const t = Date.parse(String(ymd || '').slice(0, 10) + 'T12:00:00Z');
+  if (!Number.isFinite(t)) return '';
+  const d = new Date(t);
+  return JOURS_FR[d.getUTCDay()] + ' ' + d.getUTCDate() + ' ' + MOIS_FR[d.getUTCMonth()];
+}
+
+async function showAujourdhui() {
+  setActiveNav(document.getElementById('today-btn'));
+  const today = dateLocale();
+  UI.showLoading();
+  const [activities, clients, tasks] = await Promise.all([
+    getAll('activities'), getAll('clients'), getAll('tasks')
+  ]);
+  const b = briefingDuJour(activities, clients, tasks, today);
+  const parId = new Map(clients.map(c => [String(c.id), c]));
+  const nom = (id) => { const c = parId.get(String(id)); return c ? c.name : ''; };
+
+  /* Les actions directes d'une ligne client : relancer (journalisé, lot 3),
+     noter une activité. Rien qui écrive sans que l'agent l'ait décidé. */
+  const actionsClient = (c, relance) => c ? `
+      ${c.phone ? `<a href="${escAttr(getWhatsApp(c.phone, c, relance ? 'followup' : 'general'))}" target="_blank" rel="noopener" class="whatsapp-btn" title="WhatsApp"
+         data-journal-client="${Number(c.id)}" data-journal-type="whatsapp" data-journal-contexte="depuis Aujourd’hui">${ICON_WHATSAPP}</a>` : ''}
+      <button onclick="addActivityFor('client', ${Number(c.id)}, 'aujourdhui')" class="edit-btn" title="Noter une activité">${ICON_ACTIVITY}</button>` : '';
+
+  const ligneAFaire = (x) => {
+    const c = x.client_id != null ? parId.get(String(x.client_id)) : null;
+    return `<div class="list-item">
+      <div><strong>${escHtml(x.quoi)}</strong>${c ? ' — ' + escHtml(c.name) : ''}
+        <div class="item-meta">${x.kind === 'task' ? 'Tâche' : 'Suite · ' + escHtml(getActivityLabel(x.type))} · ${escHtml(jourEnLettres(x.quand))}</div></div>
+      <div>
+        <button onclick="${x.kind === 'task' ? 'terminerTache' : 'closeFollowUp'}(${Number(x.id)}, 'aujourdhui')" class="ghost-btn">Fait</button>
+        ${actionsClient(c, true)}
+      </div>
+    </div>`;
+  };
+
+  const section = (titre, n, explication, corps, vide) => `
+    <section class="today-section${n ? ' has-items' : ''}">
+      <h3>${titre} <span class="today-count">${n}</span></h3>
+      ${explication ? `<p class="item-meta">${explication}</p>` : ''}
+      <div class="list">${n ? corps : `<p class="item-meta">${vide}</p>`}</div>
+    </section>`;
+
+  mainContent.innerHTML = `
+    <h2>Aujourd’hui <span class="item-meta">— ${escHtml(jourEnLettres(today))}</span></h2>
+    <button onclick="showSaisieRapide()" class="btn btn-primary quick-cta">+ Saisie rapide</button>
+
+    ${section('En retard', b.enRetard.length, '', b.enRetard.map(ligneAFaire).join(''), 'Rien en retard.')}
+    ${section('Pour aujourd’hui', b.aujourdhui.length, '', b.aujourdhui.map(ligneAFaire).join(''), 'Rien de prévu aujourd’hui.')}
+
+    ${section('Sans suite', b.sansSuite.length,
+      'Vus en visite, en rendez-vous ou sur WhatsApp, et rien n’est prévu. C’est ici qu’un client se perd.',
+      b.sansSuite.map(({ client: c, activite: a }) => `<div class="list-item">
+        <div><strong>${escHtml(c.name)}</strong> — ${escHtml(getActivityLabel(a.type))} du ${escHtml(jourEnLettres(a.date))}
+          <div class="item-meta">${escHtml(a.notes)}</div></div>
+        <div>
+          <button onclick="editActivity(${Number(a.id)}, 'aujourdhui')" class="ghost-btn">Prévoir la suite</button>
+          ${actionsClient(c, true)}
+        </div>
+      </div>`).join(''), 'Tous les clients vus ont une suite.')}
+
+    ${section('Visites sans issue', b.visitesSansIssue.length,
+      'Sans issue notée, le CRM ne sait pas si la visite a plu.',
+      b.visitesSansIssue.map(a => `<div class="list-item">
+        <div><strong>${escHtml(nom(a.client_id) || 'Sans client')}</strong> — visite du ${escHtml(jourEnLettres(a.date))}
+          <div class="item-meta">${escHtml(a.notes)}</div></div>
+        <div><button onclick="editActivity(${Number(a.id)}, 'aujourdhui')" class="ghost-btn">Noter l’issue</button></div>
+      </div>`).join(''), 'Toutes les visites ont leur issue.')}
+
+    ${section('Dernière journée', b.derniere.activites.length,
+      b.derniere.date ? 'Le ' + escHtml(jourEnLettres(b.derniere.date)) + '.' : '',
+      b.derniere.activites.map(a => `<div class="list-item">
+        <div><strong>${escHtml(getActivityLabel(a.type))}</strong>${a.client_id != null ? ' — ' + escHtml(nom(a.client_id)) : ''}
+          ${a.outcome ? `<span class="src-badge ${a.outcome === 'failed' || a.outcome === 'no_show' ? 'src-crm' : 'src-site'}">${escHtml(outcomeLabel(a.outcome))}</span>` : ''}
+          <div class="item-meta">${escHtml(a.notes)}</div></div>
+      </div>`).join(''), 'Aucune activité enregistrée avant aujourd’hui.')}
+
+    ${section('Clients refroidis', b.refroidis.length,
+      'Sans aucune activité depuis plus de ' + REFROIDI_JOURS + ' jours.',
+      b.refroidis.map(({ client: c, jours }) => `<div class="list-item">
+        <div><strong>${escHtml(c.name)}</strong> <span class="item-meta">— ${Number(jours)} jours</span></div>
+        <div>${actionsClient(c, true)}</div>
+      </div>`).join(''), 'Personne ne refroidit.')}
+  `;
+  /* Noté APRÈS l'affichage : si la base ne répond pas, l'écran doit se
+     rouvrir au prochain chargement plutôt que de compter comme vu. */
+  try { localStorage.setItem('slcm-aujourdhui-vu', today); } catch (e) { /* stockage bloqué */ }
+}
+
+/** Marque une tâche comme terminée. Rien ne se supprime. */
+async function terminerTache(id, back) {
+  try {
+    const { error } = await supabaseClient.from('tasks').update({ status: 'completed' }).eq('id', id);
+    if (error) throw error;
+    UI.toast('Tâche terminée.', 'success');
+    if (back === 'aujourdhui') showAujourdhui(); else showTasks();
+  } catch (error) {
+    UI.handleError(error);
   }
 }
 
@@ -4735,7 +4976,7 @@ function showActivityForm(activity = null, draft = null, back = null) {
         ${champsSuite('activity', defType, nextStep, nextDate)}
       </fieldset>
       <button type="submit" class="btn btn-primary">${editing ? 'Enregistrer' : 'Ajouter'}</button>
-      <button type="button" onclick="${back === 'clients' ? 'showClients()' : back === 'properties' ? 'showProperties()' : 'showActivities()'}" class="btn btn-outline">Annuler</button>
+      <button type="button" onclick="${back === 'clients' ? 'showClients()' : back === 'properties' ? 'showProperties()' : back === 'aujourdhui' ? 'showAujourdhui()' : 'showActivities()'}" class="btn btn-outline">Annuler</button>
     </form>
   `;
 
@@ -4794,13 +5035,13 @@ async function saveActivity(id, back) {
   }
 }
 
-async function editActivity(id) {
+async function editActivity(id, back) {
   const activity = await getById('activities', id);
   if (!activity) {
     UI.toast('Activité non trouvée', 'error');
     return;
   }
-  showActivityForm(activity);
+  showActivityForm(activity, null, back || null);
 }
 
 async function showTasks() {

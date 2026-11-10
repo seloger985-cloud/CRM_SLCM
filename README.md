@@ -12,6 +12,7 @@ lit les annonces en direct — sans jamais les recopier.
 | Écran | Rôle |
 |---|---|
 | **Tableau de bord** | Ce qui attend, ce qui entre, ce qui est engagé, ce qui est encaissé. |
+| **Aujourd'hui** | S'ouvre seul à la première ouverture de la journée. En retard, pour aujourd'hui, les clients vus **sans suite**, les visites sans issue, la dernière journée travaillée, les clients refroidis — chaque ligne avec son bouton. Lien direct `index.html#aujourdhui`. |
 | **Saisie rapide** | Après une visite, sur le téléphone : nom, numéro, ce qui s'est passé, la suite. Un seul enregistrement crée le client s'il est nouveau, et l'activité. Lien direct `index.html#saisie-rapide`. |
 | **Clients** | Fiches, statut dans le pipeline, contact WhatsApp ou appel — **noté au journal automatiquement** — et leurs **recherches**. |
 | **Biens** | Les annonces publiées sur le site *et* les saisies internes, fusionnées. Un message reçu d'un confrère devient une fiche en un collage. |
@@ -227,6 +228,35 @@ d'office. Le bien concerné et la source sont repliés sous « Plus de détails 
 Le lien `index.html#saisie-rapide` survit à la page de connexion : `auth.js`
 garde le fragment dans `?next=`. C'est là que renverra le rappel Telegram du
 soir.
+
+## Aujourd'hui
+
+Tout ce que le CRM savait de « ce qui attend » se calculait à l'ouverture
+d'un écran — il fallait savoir lequel ouvrir. L'écran **Aujourd'hui** s'ouvre
+de lui-même à la première ouverture du CRM de la journée (heure de Douala),
+puis reste dans la navigation.
+
+| Section | Règle |
+|---|---|
+| En retard / Pour aujourd'hui | Suites d'activité ouvertes et tâches non terminées, **datées**. |
+| **Sans suite** | La dernière interaction réelle du client est une visite, un rendez-vous ou un WhatsApp, sans suite écrite, d'au moins un jour et d'au plus 30 jours, et rien n'est ouvert pour lui. C'est la règle qui aurait sauvé le client du 09/11/2026. |
+| Visites sans issue | Visites jusqu'à aujourd'hui, de moins de 30 jours, sans issue notée. |
+| Dernière journée | La date la plus récente avant aujourd'hui qui porte une activité — un lundi, souvent le samedi. |
+| Clients refroidis | Sans activité depuis plus de 7 jours, hors signés. Même règle que l'écran Automatisation (`clientsRefroidis`, partagée). |
+
+Ce qui **ne** fait **pas** remonter un client « sans suite » : une issue
+tranchée (abouti, n'a pas abouti, ne s'est pas tenu) — c'est une décision ;
+une suite déjà faite ; un client signé. « En attente d'un retour » sans
+suite, si : c'est le « je vous reviens » que personne ne relance.
+
+Les lignes écrites par le CRM lui-même (journal des contacts, changement de
+colonne du pipeline) comptent comme activité — un client relancé n'est pas
+refroidi — mais ne sont pas des interactions dont on attend une suite : un
+clic sur WhatsApp ne fait pas taire le filet.
+
+La borne de 30 jours est voulue : sans elle, les visites notées avant que
+l'issue existe (31/08/2026) rempliraient l'écran. Au-delà, le client apparaît
+dans les refroidis.
 
 ## Le journal des contacts
 

@@ -1636,6 +1636,19 @@ input::placeholder, textarea::placeholder {
    chaque champ touché et fait perdre le fil.
    ===================================================================== */
 .quick-cta { margin-bottom: var(--space-4); }
+
+/* Aujourd'hui (10/11/2026) : des sections courtes, le compte en évidence.
+   Une section vide reste affichée, en une ligne : « rien en retard » est
+   une information, et sa présence quotidienne installe l'habitude. */
+.today-section { margin-bottom: var(--space-5); }
+.today-section h3 { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.today-count {
+  min-width: 1.6em; padding: 0 .45em; border-radius: 999px; text-align: center;
+  font-size: var(--fs-sm); background: var(--bg-2); color: var(--fg-1);
+}
+/* Fond pâle et texte foncé plutôt que blanc sur orange : 2,9:1, illisible
+   en petit corps. */
+.today-section.has-items .today-count { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
 /* Une case et son libellé sur une ligne. Sans ça, la règle générale
    `input { width: 100% }` étire la case sur toute la largeur et rejette
    le libellé en dessous : on ne voit plus à quoi elle se rapporte. */
