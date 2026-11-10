@@ -61,6 +61,11 @@ const ECRANS = [
   ['showActivityForm', []],
   ['showActivityForm', [null, { client_id: 1 }, 'clients']],
   ['showActivityForm', [{ id: 3, type: 'visit', notes: 'x', date: '2026-09-01' }]],
+  /* Suite obligatoire (lot 1, 10/11/2026) : le gabarit calcule la suite par
+     défaut et la consigne selon le type — à exercer pour chacun. */
+  ['showActivityForm', [null, { type: 'visit', client_id: 1 }, 'clients']],
+  ['showActivityForm', [null, { type: 'meeting' }]],
+  ['showActivityForm', [{ id: 6, type: 'visit', notes: 'x', date: '2026-11-09', next_step: 'Rappeler', next_date: '2026-11-10' }]],
   ['showTaskForm', []],
   ['showTaskForm', [{ id: 4, title: 'x', status: 'pending' }]],
   ['showPaymentForm', []],

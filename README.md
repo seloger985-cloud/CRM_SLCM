@@ -15,7 +15,7 @@ lit les annonces en direct — sans jamais les recopier.
 | **Clients** | Fiches, statut dans le pipeline, contact WhatsApp, et leurs **recherches**. |
 | **Biens** | Les annonces publiées sur le site *et* les saisies internes, fusionnées. Un message reçu d'un confrère devient une fiche en un collage. |
 | **Annonces des groupes** | (depuis Biens) La mémoire de tout ce qui circule dans les groupes WhatsApp de travail : l'export hebdomadaire de chaque groupe est découpé, trié, analysé, et chaque offre reste cherchable, rapprochée des demandes clients, transformable en fiche. Voir `sql/16_annonces_captees.sql`. |
-| **Activités** | Journal des appels, rendez-vous, e-mails et visites. |
+| **Activités** | Journal des appels, rendez-vous, e-mails et visites. Une visite ou un rendez-vous ne s'enregistre pas sans suite décidée. |
 | **Paiements** | Encaissements rattachés à un client et à un bien. |
 | **Factures** | Page dédiée (`facture.html`), numérotation automatique, export PDF. |
 | **Tâches** | Ce qu'il reste à faire, avec échéance. |
@@ -175,6 +175,17 @@ C'était jusqu'au 31/08/2026 écrit en prose dans les notes (« Echec : pas
 disponible », « en attente retour clt sur négo demandé »), donc illisible par
 le CRM. Le tableau de bord réunit désormais dans « À faire » les tâches
 ouvertes **et** les suites d'activité en attente, la plus urgente devant.
+
+**Pour une visite ou un rendez-vous, la suite est obligatoire** (depuis le
+10/11/2026). Le 09/11, un gros client a été perdu : rencontré en visite, jamais
+relancé, et rien ne l'a rappelé. Le formulaire exige désormais soit une suite
+**et** sa date, soit la case « Aucune suite nécessaire » : l'absence de suite
+devient un choix, plus un oubli. Une visite propose d'office « Relancer pour
+avoir son retour » pour le lendemain, modifiable. Appel et e-mail restent
+libres. La case n'est pas stockée : elle autorise l'absence, rien de plus.
+
+Le lendemain est celui de **Douala** (`dateLocale()`), pas celui d'UTC :
+`toISOString()` rend la veille entre minuit et une heure du matin.
 
 Aucune tâche n'est créée à partir d'une suite : elle vit sur l'activité où
 elle a été écrite. La dupliquer dans `tasks` obligerait à synchroniser deux
