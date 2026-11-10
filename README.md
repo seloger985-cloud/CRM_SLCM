@@ -13,10 +13,10 @@ lit les annonces en direct — sans jamais les recopier.
 |---|---|
 | **Tableau de bord** | Ce qui attend, ce qui entre, ce qui est engagé, ce qui est encaissé. |
 | **Saisie rapide** | Après une visite, sur le téléphone : nom, numéro, ce qui s'est passé, la suite. Un seul enregistrement crée le client s'il est nouveau, et l'activité. Lien direct `index.html#saisie-rapide`. |
-| **Clients** | Fiches, statut dans le pipeline, contact WhatsApp, et leurs **recherches**. |
+| **Clients** | Fiches, statut dans le pipeline, contact WhatsApp ou appel — **noté au journal automatiquement** — et leurs **recherches**. |
 | **Biens** | Les annonces publiées sur le site *et* les saisies internes, fusionnées. Un message reçu d'un confrère devient une fiche en un collage. |
 | **Annonces des groupes** | (depuis Biens) La mémoire de tout ce qui circule dans les groupes WhatsApp de travail : l'export hebdomadaire de chaque groupe est découpé, trié, analysé, et chaque offre reste cherchable, rapprochée des demandes clients, transformable en fiche. Voir `sql/16_annonces_captees.sql`. |
-| **Activités** | Journal des appels, rendez-vous, e-mails et visites. Une visite ou un rendez-vous ne s'enregistre pas sans suite décidée. |
+| **Activités** | Journal des appels, rendez-vous, e-mails, visites et conversations WhatsApp. Une visite, un rendez-vous ou un WhatsApp ne s'enregistre pas sans suite décidée. |
 | **Paiements** | Encaissements rattachés à un client et à un bien. |
 | **Factures** | Page dédiée (`facture.html`), numérotation automatique, export PDF. |
 | **Tâches** | Ce qu'il reste à faire, avec échéance. |
@@ -177,13 +177,18 @@ disponible », « en attente retour clt sur négo demandé »), donc illisible p
 le CRM. Le tableau de bord réunit désormais dans « À faire » les tâches
 ouvertes **et** les suites d'activité en attente, la plus urgente devant.
 
-**Pour une visite ou un rendez-vous, la suite est obligatoire** (depuis le
-10/11/2026). Le 09/11, un gros client a été perdu : rencontré en visite, jamais
+**Pour une visite, un rendez-vous ou une conversation WhatsApp, la suite est
+obligatoire** (depuis le 10/11/2026). Le 09/11, un gros client a été perdu : rencontré en visite, jamais
 relancé, et rien ne l'a rappelé. Le formulaire exige désormais soit une suite
 **et** sa date, soit la case « Aucune suite nécessaire » : l'absence de suite
 devient un choix, plus un oubli. Une visite propose d'office « Relancer pour
-avoir son retour » pour le lendemain, modifiable. Appel et e-mail restent
-libres. La case n'est pas stockée : elle autorise l'absence, rien de plus.
+avoir son retour » pour le lendemain, un WhatsApp « Relancer sur WhatsApp »
+à deux jours ; tout est modifiable. Appel et e-mail restent libres.
+
+WhatsApp est un type d'activité depuis `sql/17_activity_whatsapp.sql` : un
+prospect écrit sur une annonce du site, l'échange finit souvent par « je vous
+reviens », et ce « je vous reviens » n'était rappelé par personne. La
+référence de l'annonce se note dans le texte de l'activité. La case n'est pas stockée : elle autorise l'absence, rien de plus.
 
 Le lendemain est celui de **Douala** (`dateLocale()`), pas celui d'UTC :
 `toISOString()` rend la veille entre minuit et une heure du matin.
@@ -222,6 +227,22 @@ d'office. Le bien concerné et la source sont repliés sous « Plus de détails 
 Le lien `index.html#saisie-rapide` survit à la page de connexion : `auth.js`
 garde le fragment dans `?next=`. C'est là que renverra le rappel Telegram du
 soir.
+
+## Le journal des contacts
+
+Les boutons WhatsApp de la liste Clients, le nouveau bouton **Appeler**, les
+relances de l'écran Automatisation, le partage d'une annonce, l'envoi d'un
+rapprochement et la relance de loyer **notent une activité** quand on les
+touche. Sans ça, un client relancé depuis le CRM restait « sans activité ».
+
+Ce qui est noté est honnête : « Contact initié depuis le CRM ». WhatsApp ne
+dit pas si le message est parti, ni le téléphone si l'appel a abouti. Le
+lien s'ouvre d'abord, la note part ensuite, en arrière-plan.
+
+Pas de bruit : un second contact du même type avec le même client dans les
+dix minutes n'ajoute rien, et les **confrères** ne sont pas journalisés. Ces
+lignes n'exigent pas de suite — elles s'écrivent sans formulaire. Si la base
+refuse (migration 17 non jouée), un message le dit à l'écran.
 
 ## Ce que le CRM ne fait pas
 

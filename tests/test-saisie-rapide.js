@@ -28,6 +28,8 @@ async function run() {
     grab(/const OUTCOME_FR = \{[\s\S]*?\n\};/, 'OUTCOME_FR'),
     grab(/const TYPES_SUITE_REQUISE[^\n]*/, 'TYPES_SUITE_REQUISE'),
     grab(/const SUITE_VISITE_DEFAUT[^\n]*/, 'SUITE_VISITE_DEFAUT'),
+    grab(/const SUITE_WHATSAPP_DEFAUT[^\n]*/, 'SUITE_WHATSAPP_DEFAUT'),
+    grab(/function estSuiteParDefaut[\s\S]*?\n}/, 'estSuiteParDefaut'),
     grab(/function suiteRequise[\s\S]*?\n}/, 'suiteRequise'),
     grab(/function verifierSuite[\s\S]*?\n}/, 'verifierSuite'),
     grab(/const QUICK_TYPES[^\n]*/, 'QUICK_TYPES'),
@@ -102,6 +104,9 @@ async function run() {
      plein.next_step === 'Envoyer les photos du T3' && plein.next_date === '2026-11-12');
   const tape = appliquerProposition({ next_step: 'Rappeler jeudi', next_date: '2026-11-13' }, prop);
   ok('une suite écrite par l’agent est gardée', tape.next_step === undefined && tape.next_date === undefined);
+  ok('la relance WhatsApp proposée d’office cède aussi la place à la note',
+     appliquerProposition({ next_step: 'Relancer sur WhatsApp' }, prop).next_step === 'Envoyer les photos du T3');
+  ok('la note peut dire « WhatsApp »', appliquerProposition({ type: 'visit' }, { type: 'whatsapp' }).type === 'whatsapp');
   ok('un type choisi à la main est gardé', appliquerProposition({ typeTouche: true }, prop).type === undefined);
   ok('une valeur hors vocabulaire est ignorée',
      appliquerProposition({}, { type: 'fax', outcome: 'peut-être', next_date: 'jeudi' }).type === undefined

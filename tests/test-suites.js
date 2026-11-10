@@ -26,6 +26,8 @@ function run() {
     grab(/function ajouterJours[\s\S]*?\n}/, 'ajouterJours'),
     grab(/const TYPES_SUITE_REQUISE[^\n]*/, 'TYPES_SUITE_REQUISE'),
     grab(/const SUITE_VISITE_DEFAUT[^\n]*/, 'SUITE_VISITE_DEFAUT'),
+    grab(/const SUITE_WHATSAPP_DEFAUT[^\n]*/, 'SUITE_WHATSAPP_DEFAUT'),
+    grab(/const DELAI_RELANCE_WHATSAPP[^\n]*/, 'DELAI_RELANCE_WHATSAPP'),
     grab(/function suiteRequise[\s\S]*?\n}/, 'suiteRequise'),
     grab(/function suiteParDefaut[\s\S]*?\n}/, 'suiteParDefaut'),
     grab(/function verifierSuite[\s\S]*?\n}/, 'verifierSuite')
@@ -49,6 +51,7 @@ function run() {
   /* ── Quels types exigent une suite ── */
   ok('une visite exige une suite', suiteRequise('visit'));
   ok('un rendez-vous exige une suite', suiteRequise('meeting'));
+  ok('un WhatsApp exige une suite (choix d’Armand, 10/11/2026)', suiteRequise('whatsapp'));
   ok('un appel reste libre', !suiteRequise('call'));
   ok('un e-mail reste libre', !suiteRequise('email'));
   ok('un type absent ne bloque rien', !suiteRequise(undefined));
@@ -57,6 +60,11 @@ function run() {
   const d = suiteParDefaut('visit', '2026-11-09');
   ok('une visite propose « Relancer pour avoir son retour »', d.next_step === SUITE_VISITE_DEFAUT);
   eq('pour le lendemain de la visite', d.next_date, '2026-11-10');
+  const w = suiteParDefaut('whatsapp', '2026-11-10');
+  ok('un WhatsApp propose « Relancer sur WhatsApp »', w.next_step === 'Relancer sur WhatsApp');
+  eq('à deux jours', w.next_date, '2026-11-12');
+  ok('le cas « je vous reviens » sans suite → refusé, en nommant WhatsApp',
+     String(verifierSuite({ type: 'whatsapp', next_step: '', next_date: null }, false)).includes('WhatsApp'));
   ok('un appel ne propose aucune suite',
      suiteParDefaut('call', '2026-11-09').next_step === '' && suiteParDefaut('call', '2026-11-09').next_date === '');
   ok('un rendez-vous ne pré-remplit rien (la suite dépend de ce qui s’y dit)',

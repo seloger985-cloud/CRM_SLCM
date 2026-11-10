@@ -363,13 +363,88 @@ function codeKeys(code) {
   return c + ' ' + m[1] + m[2] + ' ' + m[2];
 }
 
+/* ═══════════════ JOURNAL DES CONTACTS LANCÉS DEPUIS LE CRM ═══════════════
+
+   Les boutons WhatsApp et Appeler d'une fiche client n'étaient que des
+   liens : un contact pris depuis le CRM n'y laissait aucune trace, et le
+   client « sans activité depuis 7 jours » restait signalé alors qu'on
+   venait de lui écrire.
+
+   Ce qui est noté est HONNÊTE : « contact initié depuis le CRM ». WhatsApp
+   s'ouvre ailleurs et ne dit pas si le message est parti ; le téléphone ne
+   dit pas si l'appel a abouti. On ne prétend pas le savoir.
+
+   Ce qui ne l'est pas, délibérément : les confrères (hors suivi client), et
+   chaque clic — un second contact du même type avec le même client dans
+   les dix minutes n'ajoute rien. Un journal noyé de bruit n'est plus lu.
+
+   Aucune suite n'est exigée de ces lignes : elles s'écrivent sans
+   formulaire. L'écran « Aujourd'hui » (lot 4) les reconnaît à leur note,
+   qui commence toujours par JOURNAL_AUTO_NOTE. */
+const JOURNAL_AUTO_NOTE = 'Contact initié depuis le CRM';
+const JOURNAL_DELAI_MIN = 10;
+
+/** Faut-il une nouvelle ligne ? Non si la même (client + type) date de
+    moins de JOURNAL_DELAI_MIN minutes. Les instants sont passés en ms. */
+function doitJournaliser(dernierMs, maintenantMs) {
+  if (!dernierMs) return true;
+  return maintenantMs - dernierMs >= JOURNAL_DELAI_MIN * 60000;
+}
+
+/** La note d'une ligne de journal : ce qui s'est passé, et ce qu'on ignore. */
+function noteJournal(type, contexte) {
+  const canal = type === 'call' ? 'appel' : 'WhatsApp';
+  return JOURNAL_AUTO_NOTE + ' (' + canal + (contexte ? ' — ' + contexte : '') + '). '
+    + (type === 'call' ? 'L’appel lui-même n’est pas vérifié.' : 'L’envoi du message n’est pas vérifié.');
+}
+
+/** Note le contact, sans jamais retarder l'ouverture de WhatsApp ou du
+    téléphone : l'appelant a déjà ouvert le lien, ceci part en arrière-plan.
+    L'anti-doublon vit dans le navigateur : c'est une protection contre le
+    double appui, pas une règle métier. */
+async function journaliserContact(clientId, type, contexte) {
+  const id = Number(clientId);
+  if (!id || (type !== 'whatsapp' && type !== 'call')) return;
+  const cle = 'slcm-journal-' + id + '-' + type;
+  let dernier = null;
+  try { dernier = Number(localStorage.getItem(cle)) || null; } catch (e) { /* stockage bloqué */ }
+  const maintenant = Date.now();
+  if (!doitJournaliser(dernier, maintenant)) return;
+  try { localStorage.setItem(cle, String(maintenant)); } catch (e) { /* idem */ }
+
+  const { error } = await supabaseClient.from('activities').insert([{
+    type, client_id: id, date: dateLocale(), notes: noteJournal(type, contexte)
+  }]);
+  if (error) {
+    try { localStorage.removeItem(cle); } catch (e) { /* idem */ }
+    console.error('[journal]', error);
+    /* Dit à l'écran : si sql/17 n'a pas été joué, la base refuse le type
+       « whatsapp », et ce serait sinon un trou silencieux dans le journal. */
+    UI.toast('Contact non noté au journal : ' + (error.message || 'erreur'), 'error');
+  }
+}
+
+/* Un seul gestionnaire pour tous les liens marqués `data-journal-client` :
+   il ne bloque rien (pas de preventDefault), le lien s'ouvre normalement. */
+document.addEventListener('click', (e) => {
+  const lien = e.target && e.target.closest ? e.target.closest('[data-journal-client]') : null;
+  if (!lien) return;
+  journaliserContact(lien.getAttribute('data-journal-client'),
+                     lien.getAttribute('data-journal-type'),
+                     lien.getAttribute('data-journal-contexte'));
+});
+
 /* CORRECTIF 16/08/2026 — le paramètre `phone` était reçu puis ignoré :
    l'URL était construite avec WHATSAPP_BUSINESS_NUMBER, donc toutes les
    relances s'ouvraient sur une conversation avec soi-même. */
-function sendWhatsApp(phone, message) {
+/* `journal` (facultatif) : { client_id, contexte } quand le destinataire
+   est un client. L'ouverture passe AVANT l'écriture : window.open doit
+   partir pendant le geste de l'agent, sinon le navigateur la bloque. */
+function sendWhatsApp(phone, message, journal) {
   const target = normalizePhone(phone) || WHATSAPP_BUSINESS_NUMBER;
   const whatsappUrl = `https://wa.me/${target}?text=${encodeURIComponent(message)}`;
   window.open(whatsappUrl, '_blank');
+  if (journal && journal.client_id) journaliserContact(journal.client_id, 'whatsapp', journal.contexte);
 }
 
 // Fonction pour afficher les suggestions d'automatisation
@@ -468,6 +543,9 @@ function executeSuggestion(index) {
   const suggestion = window.currentSuggestions[index];
   if (suggestion && suggestion.action) {
     suggestion.action();
+    /* Les trois suggestions (rappel de visite, paiement, relance) ouvrent
+       toutes WhatsApp vers le client : on le note. */
+    if (suggestion.client) journaliserContact(suggestion.client.id, 'whatsapp', suggestion.message);
   }
 }
 
@@ -848,6 +926,8 @@ const ICON_EDIT = '<svg width="16" height="16" viewBox="0 0 24 24" fill="current
 
 const ICON_WHATSAPP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893A11.821 11.821 0 0020.885 3.488"/></svg>';
 
+const ICON_PHONE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.62 10.79a15.05 15.05 0 006.59 6.59l2.2-2.2a1 1 0 011.02-.24 11.36 11.36 0 003.57.57 1 1 0 011 1V20a1 1 0 01-1 1A17 17 0 013 4a1 1 0 011-1h3.5a1 1 0 011 1c0 1.25.2 2.45.57 3.57a1 1 0 01-.25 1.02l-2.2 2.2z"/></svg>';
+
 const ICON_RELANCE = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>';
 
 function clientRow(c) {
@@ -864,8 +944,12 @@ function clientRow(c) {
     <div class="item-meta">${nb ? nb + ' recherche' + (nb > 1 ? 's' : '') + ' active' + (nb > 1 ? 's' : '') : 'aucune recherche'}</div>
     <div class="item-meta">${formatDate(c.created_at)}</div>
     <div>
-      <a href="${escAttr(getWhatsApp(c.phone, c, 'general'))}" target="_blank" rel="noopener" class="whatsapp-btn" title="WhatsApp général">${ICON_WHATSAPP}</a>
-      <a href="${escAttr(getWhatsApp(c.phone, c, 'followup'))}" target="_blank" rel="noopener" class="relance whatsapp-btn" title="Relance WhatsApp">${ICON_RELANCE}</a>
+      <a href="${escAttr(getWhatsApp(c.phone, c, 'general'))}" target="_blank" rel="noopener" class="whatsapp-btn" title="WhatsApp général"
+         data-journal-client="${Number(c.id)}" data-journal-type="whatsapp" data-journal-contexte="message général">${ICON_WHATSAPP}</a>
+      <a href="${escAttr(getWhatsApp(c.phone, c, 'followup'))}" target="_blank" rel="noopener" class="relance whatsapp-btn" title="Relance WhatsApp"
+         data-journal-client="${Number(c.id)}" data-journal-type="whatsapp" data-journal-contexte="relance">${ICON_RELANCE}</a>
+      ${c.phone ? `<a href="tel:+${escAttr(normalizePhone(c.phone))}" class="edit-btn" title="Appeler"
+         data-journal-client="${Number(c.id)}" data-journal-type="call">${ICON_PHONE}</a>` : ''}
       <button onclick="showClientDemands(${Number(c.id)})" class="edit-btn" title="Ses recherches">${ICON_SEARCH}</button>
       <button onclick="addActivityFor('client', ${Number(c.id)})" class="edit-btn" title="Noter une activité pour ce client">${ICON_ACTIVITY}</button>
       <button onclick="addPaymentFor('client', ${Number(c.id)})" class="edit-btn" title="Enregistrer un paiement de ce client">${ICON_PAYMENT}</button>
@@ -1420,7 +1504,8 @@ async function shareListing(siteId) {
           for (const id of ids) {
             const c = clients.find(x => x.id === id);
             if (!c || !c.phone) continue;
-            sendWhatsApp(c.phone, window.SLCM_MATCH.shareMessage(listing, c));
+            sendWhatsApp(c.phone, window.SLCM_MATCH.shareMessage(listing, c),
+                         { client_id: c.id, contexte: 'annonce partagée : ' + (listing.title || 'sans titre') });
             await window.SLCM_MATCH.markShared(id, listing);
             sent++;
           }
@@ -1653,21 +1738,40 @@ function ajouterJours(ymd, n) {
    une règle qu'il faut contourner à chaque saisie finit cochée par réflexe,
    ce qui la rend muette là où elle compte.
 
+   WhatsApp s'y ajoute le 10/11/2026, à la demande d'Armand : un prospect
+   écrit sur une annonce du site, et l'échange finit souvent par « je vous
+   reviens ». Sans suite, ce « je vous reviens » n'est rappelé par personne.
+
    Ces noms et ce texte par défaut sont repris tels quels par la fonction
    Edge `daily-digest` (lot 5) : changer l'un, c'est changer l'autre. */
-const TYPES_SUITE_REQUISE = ['visit', 'meeting'];
+const TYPES_SUITE_REQUISE = ['visit', 'meeting', 'whatsapp'];
 const SUITE_VISITE_DEFAUT = 'Relancer pour avoir son retour';
+/* Deux jours plutôt qu'un : laisser le temps de réfléchir à celui qui a dit
+   « je vous reviens », sans le laisser refroidir. */
+const SUITE_WHATSAPP_DEFAUT = 'Relancer sur WhatsApp';
+const DELAI_RELANCE_WHATSAPP = 2;
 
 /** Vrai si ce type d'activité ne peut pas s'enregistrer sans suite décidée. */
 function suiteRequise(type) {
   return TYPES_SUITE_REQUISE.includes(type);
 }
 
-/** La suite proposée d'office à une NOUVELLE activité. Seule la visite en a
-    une : le lendemain, on demande son retour au client. Tout reste éditable. */
+/** La suite proposée d'office à une NOUVELLE activité. Une visite : le
+    lendemain, on demande son retour. Un WhatsApp : on relance deux jours
+    plus tard. Le rendez-vous n'en a pas — sa suite dépend de ce qui s'y
+    est dit. Tout reste éditable. */
 function suiteParDefaut(type, today) {
-  if (type !== 'visit') return { next_step: '', next_date: '' };
-  return { next_step: SUITE_VISITE_DEFAUT, next_date: ajouterJours(today, 1) || '' };
+  if (type === 'visit') return { next_step: SUITE_VISITE_DEFAUT, next_date: ajouterJours(today, 1) || '' };
+  if (type === 'whatsapp') {
+    return { next_step: SUITE_WHATSAPP_DEFAUT, next_date: ajouterJours(today, DELAI_RELANCE_WHATSAPP) || '' };
+  }
+  return { next_step: '', next_date: '' };
+}
+
+/** Vrai si ce texte est une suite proposée d'office, que l'agent n'a donc
+    pas choisie : on peut la remplacer sans écraser son travail. */
+function estSuiteParDefaut(texte) {
+  return texte === SUITE_VISITE_DEFAUT || texte === SUITE_WHATSAPP_DEFAUT;
 }
 
 /** null si l'activité peut s'enregistrer, sinon la phrase à montrer.
@@ -1675,7 +1779,7 @@ function suiteParDefaut(type, today) {
     retard », elle reste en bas de la liste — c'est un oubli différé. */
 function verifierSuite(a, aucuneSuite) {
   if (!a || !suiteRequise(a.type) || aucuneSuite) return null;
-  const quoi = a.type === 'visit' ? 'Une visite' : 'Un rendez-vous';
+  const quoi = { visit: 'Une visite', meeting: 'Un rendez-vous', whatsapp: 'Une conversation WhatsApp' }[a.type];
   if (!String(a.next_step || '').trim()) {
     return quoi + ' appelle une suite : notez ce qu’il reste à faire et pour quand, '
       + 'ou cochez « Aucune suite nécessaire ».';
@@ -1689,7 +1793,7 @@ function verifierSuite(a, aucuneSuite) {
 /* Les champs de la suite, communs au formulaire d'activité et à la saisie
    rapide. Un seul gabarit : deux copies divergeraient, et la règle de la
    suite obligatoire ne vaudrait plus que dans l'un des deux écrans. */
-const HINT_SUITE_REQUISE = '— obligatoire pour une visite ou un rendez-vous';
+const HINT_SUITE_REQUISE = '— obligatoire pour une visite, un rendez-vous ou un WhatsApp';
 const HINT_SUITE_LIBRE = '— laisser vide s’il n’y a rien';
 
 function champsSuite(prefix, type, nextStep, nextDate) {
@@ -1729,7 +1833,7 @@ function cablerSuite(prefix, getType, editing, onTypeChange) {
     el('next-hint').textContent = requise ? HINT_SUITE_REQUISE : HINT_SUITE_LIBRE;
     if (!requise && aucuneEl.checked) { aucuneEl.checked = false; majAucune(); }
     /* On ne réécrit que la suite proposée d'office, jamais un texte tapé. */
-    if (!editing && (!stepEl.value || stepEl.value === SUITE_VISITE_DEFAUT)) {
+    if (!editing && (!stepEl.value || estSuiteParDefaut(stepEl.value))) {
       const d = suiteParDefaut(getType(), dateLocale());
       stepEl.value = d.next_step;
       dateEl.value = d.next_date;
@@ -1768,7 +1872,7 @@ async function closeFollowUp(id, back) {
    renvoie). */
 
 /* Les types proposés, dans l'ordre du terrain : on visite plus qu'on écrit. */
-const QUICK_TYPES = ['visit', 'call', 'meeting', 'email'];
+const QUICK_TYPES = ['visit', 'call', 'whatsapp', 'meeting', 'email'];
 
 /* État de l'écran entre deux rendus. `clientId` : la fiche existante choisie,
    ou celle que l'enregistrement vient de créer — pour qu'un second essai
@@ -2044,7 +2148,7 @@ function appliquerProposition(saisie, p) {
   if (p.outcome && OUTCOME_FR[p.outcome] && vide('outcome')) out.outcome = p.outcome;
   /* La suite proposée d'office n'est pas un choix de l'agent : la note
      peut la remplacer. Un texte qu'il a tapé, non. */
-  const suiteLibre = vide('next_step') || saisie.next_step === SUITE_VISITE_DEFAUT;
+  const suiteLibre = vide('next_step') || estSuiteParDefaut(saisie.next_step);
   if (p.next_step && suiteLibre) out.next_step = p.next_step;
   if (p.next_date && /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(p.next_date) && (suiteLibre || vide('next_date'))) {
     out.next_date = p.next_date;
@@ -2683,7 +2787,8 @@ async function sendMatch(mi, hi) {
   if (!client) { UI.toast('Client introuvable.', 'error'); return; }
   if (!client.phone) { UI.toast('Ce client n\'a pas de numéro.', 'error'); return; }
 
-  sendWhatsApp(client.phone, window.SLCM_MATCH.shareMessage(h.listing, client));
+  sendWhatsApp(client.phone, window.SLCM_MATCH.shareMessage(h.listing, client),
+               { client_id: client.id, contexte: 'rapprochement : ' + (h.listing.title || 'sans titre') });
   await window.SLCM_MATCH.markShared(client.id, h.listing);
   UI.toast('Envoyé à ' + (client.name || 'ce client') + '.', 'success');
   showMatching();
@@ -4593,6 +4698,7 @@ function showActivityForm(activity = null, draft = null, back = null) {
           <option value="meeting" ${defType === 'meeting' ? 'selected' : ''}>Rendez-vous</option>
           <option value="email" ${defType === 'email' ? 'selected' : ''}>Email</option>
           <option value="visit" ${defType === 'visit' ? 'selected' : ''}>Visite</option>
+          <option value="whatsapp" ${defType === 'whatsapp' ? 'selected' : ''}>WhatsApp</option>
         </select>
       </div>
       <div class="form-group">
@@ -4987,6 +5093,7 @@ function getActivityLabel(type) {
     case 'meeting': return 'Rendez-vous';
     case 'email': return 'Email';
     case 'visit': return 'Visite';
+    case 'whatsapp': return 'WhatsApp';
     default: return type;
   }
 }
@@ -5618,7 +5725,7 @@ async function relanceRent(paymentId, leaseId) {
     + (bien && bien.title ? ' pour ' + bien.title : '')
     + ' (' + formatMoney(p.amount) + ' FCFA) était dû le ' + formatDate(p.payment_date) + '. '
     + 'Merci de régulariser dès que possible. SE LOGER CM.';
-  sendWhatsApp(loc.phone, message);
+  sendWhatsApp(loc.phone, message, { client_id: loc.id, contexte: 'relance de loyer' });
 
   /* On note la date AVANT de savoir si le message est parti : WhatsApp s'ouvre
      ailleurs et ne nous dit rien. Entre redemander une relance demain et la
