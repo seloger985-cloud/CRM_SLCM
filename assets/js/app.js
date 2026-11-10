@@ -124,7 +124,11 @@ function ecranDeDepart() {
    des `if` : l'écran « Aujourd'hui » s'y ajoutera, et le test lit la table. */
 const ECRANS_FRAGMENT = {
   'saisie-rapide': () => showSaisieRapide(),
-  'aujourdhui': () => showAujourdhui()
+  'aujourdhui': () => showAujourdhui(),
+  /* Les cartes du tableau de bord sont des liens vers ces écrans. */
+  'activites': () => navTo(activitiesBtn, showActivities)(),
+  'clients': () => navTo(clientsBtn, showClients)(),
+  'pipeline': () => navTo(pipelineBtn, showPipeline)()
 };
 
 /** Le nom d'écran porté par un fragment d'adresse, s'il en désigne un. */
@@ -598,11 +602,102 @@ async function createActivityFromSuggestion(index) {
    Refonte des données du 31/08/2026 : onze requêtes séquentielles, dont
    cinq redondantes — quatre comptages de statuts et un getRecent('clients')
    que getAll('clients') contenait déjà. Ramenées à quatre, en parallèle. */
+/* ═══════════════ TABLEAU DE BORD : COMMENT TOURNE L'ACTIVITÉ ═══════════════
+
+   Refondu le 10/11/2026, à la demande d'Armand : tout ce qui est financier
+   en sort — chiffre d'affaires, paiements en retard. Ces chiffres ont leurs
+   écrans (Paiements, Gérance) et leurs relances ; ici, ils prenaient la
+   place de ce qui se pilote au quotidien.
+
+   Deux écrans, deux questions, sans redite :
+     · « Aujourd'hui » — que dois-je faire maintenant ?
+     · le tableau de bord — comment tourne mon activité ?
+
+   Chaque carte mène à l'écran où l'on agit. */
+
+/* Trois jours : un contact vu lundi et pas recontacté jeudi commence à
+   refroidir. Moins, la liste se remplirait de gens qu'on rappellera demain. */
+const DEUXIEME_CONTACT_JOURS = 3;
+const ETAPES_PIPELINE = ['nouvelle demande', 'visite', 'négociation', 'signé'];
+
+/** Le lundi de la semaine qui contient `ymd`. */
+function debutSemaine(ymd) {
+  const t = Date.parse(String(ymd).slice(0, 10) + 'T12:00:00Z');
+  if (!Number.isFinite(t)) return null;
+  return ajouterJours(ymd, -((new Date(t).getUTCDay() + 6) % 7));
+}
+
+/**
+ * Les chiffres du tableau de bord. Fonction PURE : elle reçoit la date.
+ * Les lignes écrites par le CRM lui-même (journal des contacts, pipeline)
+ * ne comptent pas comme interactions : une conversation WhatsApp notée
+ * après un clic sur le bouton serait sinon comptée deux fois.
+ */
+function indicateursTableau(activities, clients, tasks, today) {
+  const acts = activities || [];
+  const b = briefingDuJour(acts, clients, tasks, today);
+  const reelles = acts.filter(a => a.date && !estLigneAutomatique(a));
+
+  /* Cette semaine contre la précédente, À LA MÊME DATE : un mercredi, lundi
+     → mercredi contre lundi → mercredi. Comparer trois jours à sept ferait
+     croire chaque début de semaine à un effondrement. */
+  const lundi = debutSemaine(today);
+  const lundiPrec = ajouterJours(lundi, -7);
+  const memeJourPrec = ajouterJours(today, -7);
+  const semaine = reelles.filter(a => a.date >= lundi && a.date <= today).length;
+  const semainePrecedente = reelles.filter(a => a.date >= lundiPrec && a.date <= memeJourPrec).length;
+
+  /* Quatre semaines pleines, la courante comprise, par type. */
+  const semaines = [3, 2, 1, 0].map(k => {
+    const debut = ajouterJours(lundi, -7 * k);
+    const fin = ajouterJours(debut, 6);
+    const parType = {};
+    reelles.filter(a => a.date >= debut && a.date <= fin)
+      .forEach(a => { parType[a.type] = (parType[a.type] || 0) + 1; });
+    return { debut, parType };
+  });
+
+  const pipeline = ETAPES_PIPELINE.map(e => (clients || []).filter(c => (c.status || 'nouvelle demande') === e).length);
+  const total = (clients || []).length;
+
+  /* Vus une fois, jamais recontactés : une seule interaction réelle, d'au
+     moins trois jours, et rien de prévu. Le « sans suite » d'« Aujourd'hui »
+     ne regarde que les visites, rendez-vous et WhatsApp ; ici, un premier
+     APPEL resté sans lendemain compte aussi. */
+  const parClient = new Map();
+  reelles.forEach(a => {
+    if (a.client_id == null) return;
+    const k = String(a.client_id);
+    parClient.set(k, (parClient.get(k) || []).concat(a));
+  });
+  const suivis = new Set(openFollowUps(acts).map(a => String(a.client_id)));
+  const sansDeuxieme = (clients || [])
+    .filter(c => c.status !== 'signé' && !suivis.has(String(c.id)))
+    .map(c => ({ client: c, activite: (parClient.get(String(c.id)) || [])[0], n: (parClient.get(String(c.id)) || []).length }))
+    .filter(x => x.n === 1 && -daysUntil(x.activite.date, today) >= DEUXIEME_CONTACT_JOURS
+      && -daysUntil(x.activite.date, today) <= FENETRE_BRIEFING_JOURS)
+    .map(({ client, activite }) => ({ client, activite }))
+    .sort((x, y) => y.activite.date.localeCompare(x.activite.date));
+
+  return {
+    aTraiter: b.enRetard.length + b.sansSuite.length,
+    enRetard: b.enRetard.length,
+    sansSuite: b.sansSuite.length,
+    semaine, semainePrecedente, semaines,
+    pipeline,
+    enCours: pipeline[1] + pipeline[2],
+    /* Le taux de signature reste : c'est un indicateur commercial, pas un
+       montant. Arrondi à l'unité — une décimale sur quelques dizaines de
+       clients est une précision que les données n'ont pas. */
+    tauxSignature: total ? Math.round(pipeline[3] / total * 100) : 0,
+    sansDeuxieme
+  };
+}
+
 async function showDashboard() {
   refreshSiteDemandsCount();   /* sans attendre : le compteur suit quand il arrive */
-  const [allClients, allPayments, allTasks, allActivities, siteListings, shared, allDemands] = await Promise.all([
+  const [allClients, allTasks, allActivities, siteListings, shared, allDemands] = await Promise.all([
     getAll('clients'),
-    getAll('payments'),
     getAll('tasks'),
     getAll('activities'),
     /* Les annonces du site sont en cache 5 minutes côté site.js, et les deux
@@ -613,124 +708,67 @@ async function showDashboard() {
     getAll('demands')
   ]);
 
-  /* Annonces parues depuis le dernier passage qui répondent à une recherche. */
+  /* Annonces parues depuis le dernier passage qui répondent à une recherche :
+     une occasion commerciale, donc de l'opérationnel — elle reste. */
   const fresh = window.SLCM_MATCH.freshMatches(allDemands, siteListings, shared);
   window._freshListings = siteListings;
 
-  /* Comptages dérivés de la liste déjà en mémoire, plus par requête. */
-  const byStatus = (s) => allClients.filter(c => (c.status || 'nouvelle demande') === s).length;
-  const newRequests  = byStatus('nouvelle demande');
-  const visits       = byStatus('visite');
-  const negotiations = byStatus('négociation');
-  const signed       = byStatus('signé');
-  const inProgress   = visits + negotiations;
-
-  const totalRevenue = allPayments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-  const conversionRate = allClients.length > 0 ? ((signed / allClients.length) * 100).toFixed(1) : 0;
-
-  /* getAll trie par created_at décroissant : les plus récents sont en tête. */
-  const recentClients = allClients.slice(0, 5);
-
-  /* À faire : les tâches non terminées, la plus urgente d'abord. Une tâche
-     sans échéance passe après celles qui en ont une. */
-  const openTasks = allTasks
-    .filter(t => t.status !== 'completed')
-    .sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'));
-  const today = new Date().toISOString().slice(0, 10);
-
-  /* getAll trie par created_at décroissant : les cinq premières sont les
-     plus récentes, et la même liste sert aux suites en attente. */
-  const recentActivities = allActivities.slice(0, 5);
-
-  /* « À faire » réunit deux natures : une tâche qu'on s'est fixée, et la
-     suite d'une activité — une visite qui a échoué, une négociation qui
-     attend un retour. La seconde n'existait pas avant le 31/08/2026 : elle
-     était écrite en prose dans les notes, donc invisible. */
-  const suites = openFollowUps(allActivities);
-  const aFaire = openTasks.map(t => ({
-      quoi: t.title, quand: t.due_date, id: t.id, kind: 'task'
-    })).concat(suites.map(a => ({
-      quoi: a.next_step, quand: a.next_date, id: a.id, kind: 'suite',
-      contexte: getActivityLabel(a.type)
-    })))
-    .sort((x, y) => (x.quand || '9999').localeCompare(y.quand || '9999'));
-
-  const enRetard = aFaire.filter(x => x.quand && x.quand < today).length;
-
-  // Données pour graphiques
-  const statusData = [newRequests, visits, negotiations, signed];
-  const statusLabels = ['Nouvelles demandes', 'Visites', 'Négociations', 'Signés'];
-
-  // Source de leads
-  const sourceStats = {};
-  allClients.forEach(client => {
-    const source = client.source || 'Non spécifié';
-    sourceStats[source] = (sourceStats[source] || 0) + 1;
-  });
-
-  // Alertes
-  const overduePayments = allPayments.filter(p =>
-    p.status === 'pending' &&
-    new Date(p.payment_date) < new Date() &&
-    new Date(p.payment_date) < new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Plus de 7 jours de retard
-  );
+  const today = dateLocale();
+  const k = indicateursTableau(allActivities, allClients, allTasks, today);
+  const parId = new Map(allClients.map(c => [String(c.id), c]));
+  /* getAll trie par created_at décroissant : les plus récentes en tête. */
+  const recentActivities = allActivities.slice(0, 6);
+  const ecart = k.semaine - k.semainePrecedente;
 
   mainContent.innerHTML = `
     <h2>Tableau de bord</h2>
     <button onclick="showSaisieRapide()" class="btn btn-primary quick-cta">+ Saisie rapide</button>
 
-    <!-- Les quatre temps de l'agence : à faire → entrant → en cours → résultat.
-         « Prix moyen » a été retiré : une moyenne sur des biens hétérogènes —
-         studio et immeuble dans le même calcul — n'oriente aucune décision. -->
+    <!-- Quatre cartes, chacune mène à l'écran où l'on agit. Des liens
+         plutôt que des onclick sur un <div> : clavier et lecteur d'écran
+         les trouvent sans rien ajouter. -->
     <div class="dashboard">
-      <div class="card${aFaire.length ? ' attention' : ''}">
-        <h3>À faire</h3>
-        <p class="metric">${aFaire.length}</p>
-        <small>${aFaire.length === 0
-          ? 'Rien en attente'
-          : openTasks.length + ' tâche' + (openTasks.length > 1 ? 's' : '')
-            + (suites.length ? ' · ' + suites.length + ' suite' + (suites.length > 1 ? 's' : '') + " d'activité" : '')
-            + (enRetard ? ' · ' + enRetard + ' en retard' : '')}</small>
-      </div>
-      <div class="card">
+      <a href="#aujourdhui" class="card card-link${k.aTraiter ? ' attention' : ''}">
+        <h3>À traiter</h3>
+        <p class="metric">${k.aTraiter}</p>
+        <small>${k.aTraiter ? k.enRetard + ' en retard · ' + k.sansSuite + ' sans suite' : 'Rien en retard, personne sans suite'}</small>
+      </a>
+      <a href="#activites" class="card card-link">
+        <h3>Cette semaine</h3>
+        <p class="metric">${k.semaine}</p>
+        <small>${k.semaine > 1 ? 'interactions notées' : 'interaction notée'} · ${ecart === 0 ? 'autant que' : (ecart > 0 ? '+' : '') + ecart + ' par rapport à'} la semaine dernière à la même date</small>
+      </a>
+      <a href="#clients" class="card card-link">
         <h3>Nouvelles demandes</h3>
-        <p class="metric">${newRequests}</p>
-        <small>${newRequests === 0 ? 'Aucune à qualifier' : 'à qualifier'}</small>
-      </div>
-      <div class="card">
+        <p class="metric">${k.pipeline[0]}</p>
+        <small>${k.pipeline[0] ? 'à qualifier' : 'Aucune à qualifier'}</small>
+      </a>
+      <a href="#pipeline" class="card card-link">
         <h3>En cours</h3>
-        <p class="metric">${inProgress}</p>
-        <small>${visits} en visite · ${negotiations} en négociation</small>
-      </div>
-      <div class="card highlight">
-        <h3>Chiffre d'affaires</h3>
-        <p class="metric">${formatMoney(totalRevenue)} FCFA</p>
-        <small>${signed} signé${signed > 1 ? 's' : ''} sur ${allClients.length} client${allClients.length > 1 ? 's' : ''} · ${conversionRate}% de conversion</small>
-      </div>
+        <p class="metric">${k.enCours}</p>
+        <small>${k.pipeline[1]} en visite · ${k.pipeline[2]} en négociation · ${k.tauxSignature} % des clients signés</small>
+      </a>
     </div>
 
-    <!-- Graphiques -->
     <div class="dashboard-charts">
       <div class="chart-container">
-        <h3>Pipeline de vente</h3>
-        <div class="chart-box"><canvas id="statusChart"></canvas></div>
+        <h3>Activité des 4 dernières semaines</h3>
+        <div class="chart-box"><canvas id="activityChart"></canvas></div>
       </div>
       <div class="chart-container">
-        <h3>Origine des clients</h3>
-        <div class="chart-box"><canvas id="sourceChart"></canvas></div>
+        <h3>Pipeline</h3>
+        <div class="chart-box"><canvas id="statusChart"></canvas></div>
       </div>
     </div>
 
-    <!-- Alertes : une occasion à saisir avant un problème à régler -->
-    ${(fresh.length || overduePayments.length) ? `
+    ${fresh.length ? `
     <div class="alerts">
-      <h3>Alertes</h3>
-      ${fresh.length ? `
+      <h3>Occasions</h3>
       <div class="alert alert-match" id="fresh-alert">
         <strong>${fresh.length} nouvelle${fresh.length > 1 ? 's' : ''} annonce${fresh.length > 1 ? 's' : ''} sur selogercm.com trouve${fresh.length > 1 ? 'nt' : ''} preneur</strong>
         ${fresh.slice(0, 4).map(f => {
           const noms = [...new Set(f.demands.map(h => {
-            const c = allClients.find(x => String(x.id) === String(h.demand.client_id));
+            const c = parId.get(String(h.demand.client_id));
             return (c && c.name) || 'sans nom';
           }))];
           return `<p>${escHtml(f.listing.title || 'Sans titre')} — ${noms.slice(0, 3).map(escHtml).join(', ')}${noms.length > 3 ? ' et ' + (noms.length - 3) + ' autre(s)' : ''}</p>`;
@@ -740,52 +778,40 @@ async function showDashboard() {
           <button onclick="goToMatching()" class="btn btn-primary">Ouvrir les rapprochements</button>
           <button onclick="dismissFreshAlert()" class="btn btn-outline">J'ai vu</button>
         </div>
-      </div>` : ''}
-      ${overduePayments.length ? `
-      <div class="alert alert-warning">
-        <strong>${overduePayments.length} paiement${overduePayments.length > 1 ? 's' : ''} en retard</strong>
-        <p>En attente depuis plus de sept jours.</p>
-      </div>` : ''}
-    </div>
-    ` : ''}
+      </div>
+    </div>` : ''}
 
-    <!-- À gauche ce qui arrive, au centre ce qui a été fait, à droite ce qui
-         attend. La colonne des tâches ne montre plus « les 5 plus récentes »
-         — une tâche déjà terminée n'a rien à faire sur un tableau de bord —
-         mais les tâches ouvertes, échéance la plus proche en tête. -->
     <div class="dashboard-sections">
       <div class="list">
-        <h3>Derniers clients</h3>
-        ${recentClients.length
-          ? recentClients.map(c => `<div class="list-item"><span>${escHtml(c.name)}</span><span class="item-meta">${formatDate(c.created_at)}</span></div>`).join('')
-          : '<p class="item-meta">Aucun client enregistré.</p>'}
+        <h3>Vus une fois, jamais recontactés</h3>
+        ${k.sansDeuxieme.length
+          ? k.sansDeuxieme.slice(0, 8).map(({ client: c, activite: a }) => `<div class="list-item">
+              <div><strong>${escHtml(c.name)}</strong>
+                <div class="item-meta">${escHtml(getActivityLabel(a.type))} du ${escHtml(jourEnLettres(a.date))}</div></div>
+              <div>
+                ${c.phone ? `<a href="${escAttr(getWhatsApp(c.phone, c, 'followup'))}" target="_blank" rel="noopener" class="whatsapp-btn" title="Relancer sur WhatsApp"
+                   data-journal-client="${Number(c.id)}" data-journal-type="whatsapp" data-journal-contexte="second contact">${ICON_WHATSAPP}</a>` : ''}
+                <button onclick="addActivityFor('client', ${Number(c.id)})" class="edit-btn" title="Noter une activité">${ICON_ACTIVITY}</button>
+              </div>
+            </div>`).join('')
+            + (k.sansDeuxieme.length > 8 ? `<p class="item-meta">et ${k.sansDeuxieme.length - 8} autre(s).</p>` : '')
+          : '<p class="item-meta">Tous les contacts récents ont eu un second échange.</p>'}
       </div>
       <div class="list">
         <h3>Dernières activités</h3>
         ${recentActivities.length
-          ? recentActivities.map(a => `<div class="list-item"><span>${getActivityLabel(a.type)} — ${escHtml(a.notes)}</span><span class="item-meta">${formatDate(a.date)}</span></div>`).join('')
-          : '<p class="item-meta">Aucune activité enregistrée.</p>'}
-      </div>
-      <div class="list">
-        <h3>À faire</h3>
-        ${aFaire.length
-          ? aFaire.slice(0, 6).map(x => `<div class="list-item">
-              <span>${escHtml(x.quoi)}${x.kind === 'suite' ? ` <span class="src-badge src-crm">${escHtml(x.contexte)}</span>` : ''}</span>
-              <span class="item-meta">${
-                x.quand
-                  ? (x.quand < today ? '<strong style="color:var(--danger)">' + formatDate(x.quand) + '</strong>' : formatDate(x.quand))
-                  : 'sans échéance'
-              }</span>
+          ? recentActivities.map(a => `<div class="list-item">
+              <div><strong>${escHtml(getActivityLabel(a.type))}</strong>${a.client_id != null && parId.get(String(a.client_id)) ? ' — ' + escHtml(parId.get(String(a.client_id)).name) : ''}
+                ${a.outcome ? `<span class="src-badge ${a.outcome === 'failed' || a.outcome === 'no_show' ? 'src-crm' : 'src-site'}">${escHtml(outcomeLabel(a.outcome))}</span>` : ''}
+                <div class="item-meta">${escHtml(a.notes)}</div></div>
+              <span class="item-meta">${formatDate(a.date)}</span>
             </div>`).join('')
-          : '<p class="item-meta">Rien en attente.</p>'}
+          : '<p class="item-meta">Aucune activité enregistrée.</p>'}
       </div>
     </div>
   `;
 
-  // Initialisation des graphiques
-  setTimeout(() => {
-    initCharts(statusData, statusLabels, sourceStats);
-  }, 100);
+  setTimeout(() => initCharts(k), 100);
 }
 
 /* Lit un token du thème courant. Chart.js ne connaît pas les variables CSS :
@@ -810,8 +836,9 @@ function token(name) {
              n'encodait rien. Une seule teinte, du clair au foncé, dit qu'on
              avance vers la signature.
 
-     SOURCES pour l'origine des clients. Là, les catégories sont bien
-             indépendantes : six teintes fixes, jamais recyclées.
+     SOURCES pour des catégories indépendantes — l'origine des clients
+             jusqu'au 10/11/2026, les types d'activité depuis : teintes
+             fixes, jamais recyclées, toujours dans le même ordre.
 
    L'orange de marque #ED7A14 ne peut pas servir tel quel sur fond sombre —
    luminosité 0,698, hors de la bande 0,48–0,67. D'où l'échelon #D4720F, sur
@@ -832,7 +859,15 @@ function chartColors() {
     ? CHART_COLORS.dark : CHART_COLORS.light;
 }
 
-function initCharts(statusData, statusLabels, sourceStats) {
+/* Les graphiques d'un rendu précédent. Un canevas réutilisé sans détruire
+   son graphique fait lever Chart.js (« Canvas is already in use ») : c'est
+   ce qui arrivait quand le thème changeait pendant le chargement. */
+let graphiquesTableau = [];
+
+function initCharts(k) {
+  graphiquesTableau.forEach(g => { try { g.destroy(); } catch (e) { /* déjà parti */ } });
+  graphiquesTableau = [];
+
   /* Axes, légendes et grilles suivent le thème. */
   Chart.defaults.color = token('--fg-1');
   Chart.defaults.borderColor = token('--border-1');
@@ -841,59 +876,65 @@ function initCharts(statusData, statusLabels, sourceStats) {
 
   /* maintainAspectRatio: false délègue la hauteur au CSS (.chart-box, 300px).
      Sans ça, Chart.js ignore les attributs du <canvas>, se dimensionne sur un
-     parent sans hauteur, et le camembert débordait de sa carte en étirant la
-     colonne voisine. */
+     parent sans hauteur, et le graphique débordait de sa carte. */
   const baseOptions = { responsive: true, maintainAspectRatio: false };
   const palette = chartColors();
-  const surface = token('--bg-0');
 
-  // Pipeline — série unique, rampe ordonnée, pas de bordure
-  const statusCtx = document.getElementById('statusChart');
-  if (statusCtx) {
-    new Chart(statusCtx, {
+  /* Activité par semaine — les types sont des catégories indépendantes :
+     teintes fixes du jeu SOURCES, toujours dans le même ordre. */
+  const activityCtx = document.getElementById('activityChart');
+  if (activityCtx) {
+    const types = ['visit', 'call', 'whatsapp', 'meeting', 'email'];
+    graphiquesTableau.push(new Chart(activityCtx, {
       type: 'bar',
       data: {
-        labels: statusLabels,
+        labels: k.semaines.map((s, i) => i === k.semaines.length - 1 ? 'Cette semaine' : 'Sem. du ' + formatDate(s.debut).slice(0, 5)),
+        datasets: types.map((t, i) => ({
+          label: getActivityLabel(t),
+          data: k.semaines.map(s => s.parType[t] || 0),
+          backgroundColor: palette.sources[i],
+          borderWidth: 0,
+          maxBarThickness: 32
+        }))
+      },
+      options: Object.assign({}, baseOptions, {
+        plugins: { legend: { position: 'bottom' } },
+        scales: {
+          x: { stacked: true, grid: { display: false } },
+          y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } }
+        }
+      })
+    }));
+  }
+
+  /* Pipeline — étapes ORDONNÉES : une seule teinte, du clair au foncé.
+     Barres horizontales : les libellés se lisent sans pencher la tête, et un
+     clic ouvre la vue kanban. */
+  const statusCtx = document.getElementById('statusChart');
+  if (statusCtx) {
+    graphiquesTableau.push(new Chart(statusCtx, {
+      type: 'bar',
+      data: {
+        labels: ['Nouvelles demandes', 'Visites', 'Négociations', 'Signés'],
         datasets: [{
           label: 'Clients',
-          data: statusData,
+          data: k.pipeline,
           backgroundColor: palette.ramp,
           borderWidth: 0,
-          /* Extrémité arrondie côté valeur, pied carré sur la ligne de base. */
-          borderRadius: { topLeft: 4, topRight: 4 },
+          borderRadius: { topRight: 4, bottomRight: 4 },
           maxBarThickness: 24
         }]
       },
       options: Object.assign({}, baseOptions, {
+        indexAxis: 'y',
+        onClick: () => showPipeline(),
         plugins: { legend: { display: false } },
         scales: {
-          y: { beginAtZero: true, ticks: { stepSize: 1 } },
-          x: { grid: { display: false } }
+          x: { beginAtZero: true, ticks: { stepSize: 1 } },
+          y: { grid: { display: false } }
         }
       })
-    });
-  }
-
-  // Origine des clients — six catégories indépendantes
-  const sourceCtx = document.getElementById('sourceChart');
-  if (sourceCtx) {
-    new Chart(sourceCtx, {
-      type: 'doughnut',
-      data: {
-        labels: Object.keys(sourceStats),
-        datasets: [{
-          data: Object.values(sourceStats),
-          backgroundColor: palette.sources,
-          /* Écart de 2px à la couleur du fond entre segments, plutôt qu'un
-             contour : deux secteurs voisins ne se touchent jamais. */
-          borderColor: surface,
-          borderWidth: 2
-        }]
-      },
-      options: Object.assign({}, baseOptions, {
-        plugins: { legend: { position: 'bottom' } }
-      })
-    });
+    }));
   }
 }
 

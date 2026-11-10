@@ -11,7 +11,7 @@ lit les annonces en direct — sans jamais les recopier.
 
 | Écran | Rôle |
 |---|---|
-| **Tableau de bord** | Ce qui attend, ce qui entre, ce qui est engagé, ce qui est encaissé. |
+| **Tableau de bord** | Comment tourne l'activité : à traiter, interactions de la semaine (comparées à la précédente à la même date), nouvelles demandes, dossiers en cours ; activité des 4 dernières semaines, pipeline, contacts vus une fois et jamais recontactés. **Rien de financier** depuis le 10/11/2026 : le chiffre d'affaires et les retards de paiement vivent dans Paiements et Gérance. Chaque carte mène à l'écran où l'on agit. |
 | **Aujourd'hui** | S'ouvre seul à la première ouverture de la journée. En retard, pour aujourd'hui, les clients vus **sans suite**, les visites sans issue, la dernière journée travaillée, les clients refroidis — chaque ligne avec son bouton. Lien direct `index.html#aujourdhui`. |
 | **Saisie rapide** | Après une visite, sur le téléphone : nom, numéro, ce qui s'est passé, la suite. Un seul enregistrement crée le client s'il est nouveau, et l'activité. Lien direct `index.html#saisie-rapide`. |
 | **Clients** | Fiches, statut dans le pipeline, contact WhatsApp ou appel — **noté au journal automatiquement** — et leurs **recherches**. |
