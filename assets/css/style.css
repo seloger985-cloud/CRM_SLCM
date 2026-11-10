@@ -1637,6 +1637,12 @@ input::placeholder, textarea::placeholder {
    ===================================================================== */
 .quick-cta { margin-bottom: var(--space-4); }
 
+/* Cartes du tableau de bord cliquables (10/11/2026) : des liens, qui
+   gardent l'apparence d'une carte. */
+.card-link { display: block; color: inherit; text-decoration: none; cursor: pointer; }
+.card-link:hover { border-color: var(--accent); }
+.card-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* Aujourd'hui (10/11/2026) : des sections courtes, le compte en évidence.
    Une section vide reste affichée, en une ligne : « rien en retard » est
    une information, et sa présence quotidienne installe l'habitude. */
