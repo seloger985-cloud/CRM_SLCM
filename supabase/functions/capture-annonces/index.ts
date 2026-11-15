@@ -206,14 +206,23 @@ const COURRIEL = /\S+@\S+\.\S+/g;
 const sansAccents = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 async function rediger(biensRecus: unknown, apiKey: string) {
-  const biens = (Array.isArray(biensRecus) ? biensRecus : [])
-    .map((b: Record<string, unknown>) => ({
-      id: Number(b?.id),
-      texte: String(b?.texte ?? '').trim(),
-      type: TYPES.includes(b?.type as typeof TYPES[number]) ? String(b.type) : '',
-      mode: b?.rent_sale === 'rent' ? 'location' : (b?.rent_sale === 'sale' ? 'vente' : ''),
-      interdits: (Array.isArray(b?.interdits) ? b.interdits : []).map(x => sansAccents(String(x))).filter(x => x.length >= 4)
-    }))
+  /* Typage explicite, sans narrowing implicite : le déploiement vérifie
+     les types, et un `unknown` mal rétréci le fait échouer. */
+  const recus: Array<Record<string, unknown>> = Array.isArray(biensRecus)
+    ? (biensRecus as unknown[]).map(b => (b && typeof b === 'object' ? b as Record<string, unknown> : {}))
+    : [];
+  const biens = recus
+    .map((b) => {
+      const type = String(b.type ?? '');
+      const liste: unknown[] = Array.isArray(b.interdits) ? (b.interdits as unknown[]) : [];
+      return {
+        id: Number(b.id),
+        texte: String(b.texte ?? '').trim(),
+        type: (TYPES as readonly string[]).includes(type) ? type : '',
+        mode: b.rent_sale === 'rent' ? 'location' : (b.rent_sale === 'sale' ? 'vente' : ''),
+        interdits: liste.map((x) => sansAccents(String(x))).filter((x) => x.length >= 4)
+      };
+    })
     .filter(b => Number.isInteger(b.id) && b.id > 0 && b.texte);
   if (!biens.length) return json({ error: 'paquet_vide', version: VERSION }, 400);
   if (biens.length > REDIGER_MAX) return json({ error: 'paquet_trop_gros', detail: 'au plus ' + REDIGER_MAX }, 413);
