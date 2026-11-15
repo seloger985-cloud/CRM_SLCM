@@ -29,6 +29,8 @@ function run() {
     grab(/function findConfrere[\s\S]*?\n}/, 'findConfrere'),
     grab(/function contactName[\s\S]*?\n}/, 'contactName'),
     grab(/function confrereMessage[\s\S]*?\n}/, 'confrereMessage'),
+    grab(/function confrereDemande[\s\S]*?\n}/, 'confrereDemande'),
+    grab(/function numeroConfrere[\s\S]*?\n}/, 'numeroConfrere'),
     grab(/function codeKeys[\s\S]*?\n}/, 'codeKeys'),
     grab(/function looseKey[\s\S]*?\n}/, 'looseKey'),
     grab(/function similarProperties[\s\S]*?\n}/, 'similarProperties'),
@@ -38,9 +40,9 @@ function run() {
     grab(/function relanceMessage[\s\S]*?\n}/, 'relanceMessage'),
     grab(/const TYPE_FR = \{[\s\S]*?\n\};/, 'TYPE_FR'),
     grab(/function texteParDefaut[\s\S]*?\n}/, 'texteParDefaut')
-  ].join('\n') + '\nreturn { confrereWa, findConfrere, contactName, confrereMessage, codeKeys, similarProperties, totalFromM2, aRelancer, relanceMessage, texteParDefaut };')();
+  ].join('\n') + '\nreturn { confrereWa, findConfrere, contactName, confrereMessage, confrereDemande, numeroConfrere, codeKeys, similarProperties, totalFromM2, aRelancer, relanceMessage, texteParDefaut };')();
 
-  const { confrereWa, findConfrere, contactName, confrereMessage, codeKeys, similarProperties, totalFromM2, aRelancer, relanceMessage, texteParDefaut } = scope;
+  const { confrereWa, findConfrere, contactName, confrereMessage, confrereDemande, numeroConfrere, codeKeys, similarProperties, totalFromM2, aRelancer, relanceMessage, texteParDefaut } = scope;
   const checks = [];
   const ok = (label, cond) => checks.push([label, !!cond]);
   const id = c => c && c.id;
@@ -68,6 +70,27 @@ function run() {
   const m2 = confrereMessage({ title: 'Terrain 591 m²', address: 'Logpom, Douala' }, REPERTOIRE[0]);
   ok('message : sinon le titre et le lieu', m2.indexOf('« Terrain 591 m² »') !== -1 && m2.indexOf('Logpom, Douala') !== -1);
   ok('message : jamais « undefined »', m2.indexOf('undefined') === -1 && confrereMessage({}, null).indexOf('undefined') === -1);
+
+  /* Bouton WhatsApp d'un bien de confrère (15/11/2026) : relance et médias */
+  const terrain = { title: 'Terrain 500 m²', district: 'Lendi', type: 'plots-of-land', rent_sale: 'sale' };
+  const cap = { groupe: 'Immo Douala Pro', posted_at: '2026-11-12T09:30:00Z', auteur: 'Paul', contact: null };
+  const d1 = confrereDemande(terrain, { name: 'Confrère Paul' }, cap, 'dispo');
+  ok('relance : salue Paul, pas « Confrère Paul »', d1.indexOf('Bonjour Paul,') === 0);
+  ok('relance : groupe et date pour retrouver le message', d1.indexOf('« Immo Douala Pro »') !== -1 && d1.indexOf('12/11/2026') !== -1);
+  ok('relance : demande la disponibilité', /toujours disponible/.test(d1));
+  const d2 = confrereDemande(terrain, { name: 'Paul' }, cap, 'medias');
+  ok('médias : photos, vidéos, titre foncier et plan de bornage pour un terrain',
+     /photos/.test(d2) && /vidéos/.test(d2) && /titre foncier/.test(d2) && /bornage/.test(d2));
+  const d3 = confrereDemande({ title: 'Studio', district: 'Akwa', type: 'studio', rent_sale: 'rent' }, { name: 'Paul' }, null, 'medias');
+  ok('médias : une location ne réclame pas de titre foncier', /photos/.test(d3) && !/titre foncier/.test(d3));
+  ok('nom qui n\'est qu\'un numéro : « Bonjour » seul',
+     confrereDemande(terrain, { name: 'Confrère +237 699 12 45 78' }, null, 'dispo').indexOf('Bonjour, ') === 0);
+  ok('demandes : jamais « undefined »', [confrereDemande({}, null, null, 'dispo'), confrereDemande(null, null, {}, 'medias')]
+     .every(m => m.indexOf('undefined') === -1 && m.indexOf('null') === -1));
+  ok('numéro : celui du confrère d\'abord', numeroConfrere(REPERTOIRE[1], { contact: '699 99 99 99' }) === '237655334455');
+  ok('numéro : sinon celui cité dans l\'annonce', numeroConfrere(REPERTOIRE[2], { contact: 'Paul 6 99 12 45 78' }) === '237699124578');
+  ok('numéro : sinon l\'auteur de l\'export s\'il est un numéro', numeroConfrere(REPERTOIRE[2], { auteur: '+237 677 00 11 22' }) === '237677001122');
+  ok('numéro : un auteur nommé n\'en donne pas', numeroConfrere(REPERTOIRE[2], { auteur: 'Paul Immo' }) === '' && numeroConfrere(null, null) === '');
 
   /* Le code tel qu'on le tape au téléphone */
   const k = codeKeys('CF26-DLA-028');

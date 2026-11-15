@@ -318,6 +318,49 @@ function confrereMessage(p, c) {
   return `Bonjour ${(c && c.name) || ''}, j'ai un client intéressé par ${quoi}${lieu ? ' (' + lieu + ')' : ''}. Est-il toujours disponible ?`;
 }
 
+/* Bouton WhatsApp d'un bien de confrère (15/11/2026). Deux messages :
+   « dispo » pour vérifier qu'il est toujours libre avant d'en parler au
+   client, « medias » pour obtenir photos, vidéos et documents — le CRM ne
+   les garde pas (export des groupes « sans médias », par économie de
+   données). Le repère groupe + date aide le confrère à retrouver SON
+   message. `cap` : l'annonce captée d'où vient la fiche, ou null. */
+function confrereDemande(p, c, cap, kind) {
+  p = p || {};
+  const quoi = p.confrere_ref ? `votre bien réf. ${p.confrere_ref}` : `votre bien « ${p.title || 'sans titre'} »`;
+  const lieu = p.district || p.address || '';
+  /* Une fiche créée depuis un groupe s'appelle « Confrère 6 99… » ou
+     « Confrère Paul » : on salue Paul, pas « Confrère 6 99… ». */
+  const nom = String((c && c.name) || '').replace(/^Confrère\s+/i, '').trim();
+  const bonjour = (nom && !/^[+\d\s.-]+$/.test(nom)) ? 'Bonjour ' + nom : 'Bonjour';
+  let vu = '';
+  if (cap && (cap.groupe || cap.posted_at)) {
+    const d = cap.posted_at ? new Date(cap.posted_at) : null;
+    const jour = (d && !isNaN(d)) ? d.toLocaleDateString('fr-FR', { timeZone: 'Africa/Douala', day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+    vu = ', partagé' + (cap.groupe ? ` dans « ${cap.groupe} »` : '') + (jour ? ' le ' + jour : '');
+  }
+  const sujet = `${quoi}${lieu ? ' (' + lieu + ')' : ''}${vu}`;
+  if (kind === 'medias') {
+    const vente = p.type === 'plots-of-land' || p.rent_sale === 'sale';
+    const docs = p.type === 'plots-of-land'
+      ? 'les documents (titre foncier, plan de bornage…)'
+      : (vente ? 'les documents (titre foncier…)' : '');
+    return `${bonjour}, concernant ${sujet} : pourriez-vous m'envoyer les photos, les vidéos${docs ? ' et ' + docs : ''} ? J'ai un client intéressé.`;
+  }
+  return `${bonjour}, ${sujet} : est-il toujours disponible ? J'ai un client intéressé.`;
+}
+
+/* Le numéro auquel écrire pour ce bien : celui du confrère, sinon un numéro
+   cité dans l'annonce captée, sinon l'auteur de l'export quand c'est un
+   numéro. '' si aucun : WhatsApp fera alors choisir la conversation. */
+function numeroConfrere(c, cap) {
+  const direct = confrereWa(c);
+  if (direct) return direct;
+  const cite = (String((cap && cap.contact) || '').match(PHONE_IN_TEXT) || [])[0];
+  if (cite) return normalizePhone(cite);
+  const auteur = String((cap && cap.auteur) || '');
+  return /^[+\d\s.()-]{8,}$/.test(auteur) ? normalizePhone(auteur) : '';
+}
+
 /* Le même terrain circule souvent chez plusieurs confrères. Deux fiches
    sont « le même bien » si elles partagent le quartier ET la surface ET un
    prix (total ou au m²). Exigeant à dessein : une fausse alerte sur deux
@@ -1435,9 +1478,12 @@ function renderPropsList() {
     const origine = c
       ? `<div class="item-meta">Via ${escHtml(c.name)}${c.agency ? ' (' + escHtml(c.agency) + ')' : ''}${p.confrere_ref ? ' · sa réf. ' + escHtml(p.confrere_ref) : ''}${p.commission ? ' · ' + escHtml(p.commission) : ''}</div>`
       : '';
-    const ecrire = (c && confrereWa(c) && p.id)
-      ? `<button onclick="contactConfrere(${Number(p.id)})" class="ghost-btn" title="Écrire au confrère sur WhatsApp">WhatsApp confrère</button>`
-        + `<a href="tel:+${escAttr(normalizePhone(c.phone || c.whatsapp))}" class="ghost-btn" title="Appeler le confrère">Appeler</a>`
+    /* WhatsApp dès qu'un confrère est relié, même sans numéro connu (un
+       export de groupe ne donne souvent que son nom) : WhatsApp fera alors
+       choisir la conversation. Appeler exige un numéro. */
+    const ecrire = (c && p.id)
+      ? `<button onclick="contactConfrere(${Number(p.id)})" class="ghost-btn" title="Relancer le confrère ou lui demander les médias">WhatsApp</button>`
+        + (confrereWa(c) ? `<a href="tel:+${escAttr(confrereWa(c))}" class="ghost-btn" title="Appeler le confrère">Appeler</a>` : '')
       : '';
     /* Vendu : la fiche passe « vendu » et, si le bien est en ligne, l'annonce
        du site aussi — une offre de groupe se vend vite. */
@@ -4047,12 +4093,41 @@ async function publierAvecPhotos() {
   }
 }
 
-/* Écrire au confrère qui détient ce bien, message déjà rédigé. */
-function contactConfrere(propertyId) {
+/* Écrire au confrère qui détient ce bien : vérifier la disponibilité, ou
+   demander médias et documents. L'annonce captée d'origine (s'il y en a
+   une) donne le groupe, la date et, au besoin, le numéro. */
+async function contactConfrere(propertyId) {
   const p = propsView.crm.find(x => x.id === propertyId);
   const c = p && (propsView.confreres || []).find(x => x.id === p.confrere_id);
-  if (!p || !c || !confrereWa(c)) { UI.toast('Aucun numéro pour ce confrère.', 'error'); return; }
-  sendWhatsApp(confrereWa(c), confrereMessage(p, c));
+  if (!p || !c) { UI.toast('Aucun confrère relié à ce bien.', 'error'); return; }
+  let cap = null;
+  try {
+    const { data } = await supabaseClient.from('annonces_captees')
+      .select('groupe,posted_at,auteur,contact').eq('property_id', p.id)
+      .order('posted_at', { ascending: true }).limit(1);
+    cap = (data && data[0]) || null;
+  } catch (e) { /* sans repère, les messages restent valables */ }
+  const numero = numeroConfrere(c, cap);
+  /* Sans numéro : wa.me sans destinataire ouvre le choix de la conversation.
+     Surtout pas sendWhatsApp, qui écrirait alors à notre propre numéro. */
+  const ouvrir = (kind) => {
+    const texte = encodeURIComponent(confrereDemande(p, c, cap, kind));
+    window.open(numero ? `https://wa.me/${numero}?text=${texte}` : `https://wa.me/?text=${texte}`, '_blank');
+  };
+  const body = document.createElement('div');
+  const alias = (cap && cap.auteur) || c.wa_alias || c.name;
+  body.innerHTML = `<p><strong>${escHtml(c.name)}</strong>${numero ? ' · +' + escHtml(numero) : ''}</p>`
+    + (numero ? '' : `<p class="item-meta">Numéro inconnu : WhatsApp te demandera de choisir la conversation de « ${escHtml(alias)} ».</p>`)
+    + (cap ? `<p class="item-meta">Vu dans « ${escHtml(cap.groupe || 'un groupe')} » le ${escHtml(formatDate(cap.posted_at))}.</p>` : '');
+  UI.modal({
+    title: 'Écrire au confrère',
+    body: body,
+    actions: [
+      { label: 'Annuler', variant: 'ghost' },
+      { label: 'Demander médias et documents', variant: 'ghost', onClick: () => ouvrir('medias') },
+      { label: 'Vérifier la disponibilité', variant: 'primary', onClick: () => ouvrir('dispo') }
+    ]
+  });
 }
 
 /* ═══════════════ RÉPERTOIRE DES CONFRÈRES ═══════════════
