@@ -27,6 +27,14 @@
 //  · Elle NE DEVINE PAS. Champ absent → null, et son nom dans `manquant`.
 //  · Elle ne reçoit QUE les messages du paquet. Ni le portefeuille, ni les
 //    confrères, ni les clients ne sortent du CRM.
+//
+//  ── Mode « rediger » (15/11/2026) ──
+//
+//  { mode: 'rediger', biens: [{ id, texte, type, rent_sale, interdits }] }
+//  rend, pour chaque bien, le TEXTE PUBLIC de son annonce sur selogercm.com,
+//  réécrit depuis le message d'origine sans rien de ce qui concerne
+//  l'annonceur. Appelé à la publication seulement (quelques biens par jour),
+//  jamais sur tout ce que les groupes déversent. Voir assets/js/texte-public.js.
 // ════════════════════════════════════════════════════════════════════
 
 /* Même version épinglée que understand-inbox : c'est celle qui tourne. */
@@ -35,7 +43,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.49.0';
 
 /* À incrémenter dès qu'on touche ce fichier. Voir README, « Vérifier QUELLE
    version tourne ». */
-const VERSION = '2026-11-06-b';
+const VERSION = '2026-11-15-a';
 
 /* Choix du 02/11/2026 : le modèle léger. Estimation pour 4 groupes, 400 à
    1 200 messages par jour : 1 à 4 $ par mois. Le modèle de understand-inbox
@@ -140,6 +148,128 @@ Règles, dans l'ordre :
 
 7. Le titre se lit seul dans une liste : « Appartement 3 chambres meublé, Bonapriso », « Terrain 591 m², Logpom ».`;
 
+/* ═══════════ Mode « rediger » : le texte public d'une annonce ═══════════
+   Un lot de publication compte au plus 20 fiches (CRM, « Publier les ventes
+   sur le site »). */
+const REDIGER_MAX = 20;
+
+const OUTIL_REDIGER = {
+  name: 'rediger_textes',
+  description: "Rend le texte public de CHAQUE bien reçu, une entrée par bien, dans l'ordre.",
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      textes: {
+        type: 'array',
+        items: {
+          type: 'object' as const,
+          properties: {
+            id: { type: 'integer', description: "L'identifiant du bien, recopié tel quel." },
+            texte_public: {
+              type: ['string', 'null'],
+              description: "Le texte de l'annonce, ou null si le message ne dit rien du bien lui-même."
+            }
+          },
+          required: ['id', 'texte_public'],
+          additionalProperties: false
+        }
+      }
+    },
+    required: ['textes'],
+    additionalProperties: false
+  }
+};
+
+const CONSIGNE_REDIGER = `Tu rédiges le texte public d'annonces immobilières pour selogercm.com, le site de l'agence SE LOGER CM à Douala, au Cameroun. Chaque bien t'arrive encadré par <bien id="…" type="…" mode="…">, avec le message d'origine d'un CONFRÈRE (un autre agent) qui l'a proposé dans un groupe WhatsApp. L'annonce sera publiée au nom de l'agence : le visiteur ne doit JAMAIS pouvoir identifier ni joindre le confrère.
+
+Pour CHAQUE bien, rends une entrée avec le même id, en appelant une seule fois l'outil rediger_textes.
+
+1. GARDE les faits sur le bien, et seulement eux :
+   · terrain : surface, nature des papiers (titre foncier, morcellement, certificat de propriété…), accès et route, distance au goudron, viabilisation (eau, électricité), relief, environnement, repères de situation ;
+   · logement en location : pièces, standing, équipements, eau et électricité (compteurs), parking, gardiennage, étage, conditions de bail (caution, avance en mois de loyer) ;
+   · bien bâti à vendre : papiers, surface du terrain et du bâti, niveaux, pièces, équipements, état.
+
+2. ENLÈVE tout ce qui concerne l'annonceur ou les intermédiaires : noms et prénoms de personnes, numéros de téléphone, agences et leurs noms, liens, adresses e-mail, « contactez-moi », « inbox », « en privé », « mp », « me laisser la visite », « visite avec moi », « collaboration », « partage », commission, frais de visite, frais de signature, frais de dossier, frais d'agence, honoraires, « propriétaire direct », mentions de groupe.
+
+3. LE PRIX N'Y FIGURE PAS : ni prix total, ni prix au m², ni loyer. Le site les affiche à part ; un prix recopié ici pourrait le contredire.
+
+4. N'INVENTE RIEN. Pas un mot sur ce que le message ne dit pas : ni « bien sécurisé », ni « quartier calme », ni « idéal pour investir », si le message ne le dit pas.
+
+5. Écris en français correct, à la troisième personne, sans émoji, sans majuscules criardes, sans abréviations de messagerie (« ch » devient « chambres », « TF » devient « titre foncier », « sdb » devient « salle de bain »). Deux à cinq phrases courtes. Pas de titre, pas de liste à puces.
+
+6. Si le message ne dit rien du bien lui-même au-delà de son type, de son quartier et de son prix, texte_public vaut null.`;
+
+/* Ce que le code efface, quoi qu'ait écrit le modèle. */
+const NUMERO = /\+?\d[\d\s.-]{7,}\d/g;
+const LIEN = /\b(?:https?:\/\/|www\.)\S+/gi;
+const COURRIEL = /\S+@\S+\.\S+/g;
+const sansAccents = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+async function rediger(biensRecus: unknown, apiKey: string) {
+  const biens = (Array.isArray(biensRecus) ? biensRecus : [])
+    .map((b: Record<string, unknown>) => ({
+      id: Number(b?.id),
+      texte: String(b?.texte ?? '').trim(),
+      type: TYPES.includes(b?.type as typeof TYPES[number]) ? String(b.type) : '',
+      mode: b?.rent_sale === 'rent' ? 'location' : (b?.rent_sale === 'sale' ? 'vente' : ''),
+      interdits: (Array.isArray(b?.interdits) ? b.interdits : []).map(x => sansAccents(String(x))).filter(x => x.length >= 4)
+    }))
+    .filter(b => Number.isInteger(b.id) && b.id > 0 && b.texte);
+  if (!biens.length) return json({ error: 'paquet_vide', version: VERSION }, 400);
+  if (biens.length > REDIGER_MAX) return json({ error: 'paquet_trop_gros', detail: 'au plus ' + REDIGER_MAX }, 413);
+  if (biens.some(b => b.texte.length > MESSAGE_MAX)) return json({ error: 'message_too_long' }, 413);
+
+  const workspaceId = Deno.env.get('CRM_SLCM_WORKSPACE') ?? Deno.env.get('ANTHROPIC_WORKSPACE_ID');
+  const options = workspaceId ? { headers: { 'anthropic-workspace-id': workspaceId } } : undefined;
+  console.log('[capture-annonces] rediger — paquet de', biens.length);
+
+  const contenu = biens
+    .map(b => `<bien id="${b.id}" type="${b.type}" mode="${b.mode}">\n${b.texte.replace(/</g, '‹').replace(/>/g, '›')}\n</bien>`)
+    .join('\n\n');
+
+  try {
+    const response = await new Anthropic({ apiKey }).messages.create({
+      model: MODELE,
+      max_tokens: 8000,
+      output_config: { effort: 'low' },
+      system: CONSIGNE_REDIGER,
+      tools: [OUTIL_REDIGER],
+      tool_choice: { type: 'tool', name: 'rediger_textes' },
+      messages: [{ role: 'user', content: contenu }]
+    }, options);
+
+    if (response.stop_reason === 'refusal') return json({ error: 'refus', version: VERSION }, 422);
+    if (response.stop_reason === 'max_tokens') return json({ error: 'reponse_tronquee', version: VERSION }, 502);
+
+    const appel = response.content.find((b) => b.type === 'tool_use');
+    const brut = appel && appel.type === 'tool_use'
+      ? (appel.input as { textes?: Array<Record<string, unknown>> }).textes ?? []
+      : [];
+    const parId = new Map(brut.map(t => [Number(t.id), t]));
+
+    const resultats = biens.map(({ id, interdits }) => {
+      const t = parId.get(id);
+      if (!t) return { id, erreur: 'absent_de_la_reponse' };
+      let texte = typeof t.texte_public === 'string' ? t.texte_public : '';
+      texte = texte.replace(LIEN, '').replace(COURRIEL, '').replace(NUMERO, '')
+        .replace(/[ \t]{2,}/g, ' ').replace(/\s+([.,;:])/g, '$1').trim();
+      if (!texte) return { id, erreur: 'vide' };
+      /* Le nom du confrère, son alias ou son agence encore là : refusé, et
+         non « corrigé » — un texte amputé d'un mot au hasard se lit mal. */
+      const plat = ' ' + sansAccents(texte).replace(/[^a-z0-9]+/g, ' ') + ' ';
+      const reste = interdits.find(m => plat.includes(' ' + m + ' '));
+      if (reste) return { id, erreur: 'trace_annonceur : ' + reste };
+      return { id, texte };
+    });
+
+    console.log('[capture-annonces] rediger usage', JSON.stringify(response.usage));
+    return json({ resultats, usage: response.usage, modele: MODELE, version: VERSION });
+  } catch (e) {
+    console.error('[capture-annonces] rediger', e);
+    return json({ error: 'redaction_impossible', detail: String(e), version: VERSION }, 502);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
@@ -167,8 +297,11 @@ Deno.serve(async (req) => {
   const apiKey = Deno.env.get('CRM_SLCM') ?? Deno.env.get('ANTHROPIC_API_KEY');
   if (!apiKey) return json({ error: 'secret_absent', detail: 'CRM_SLCM non visible par la fonction' }, 500);
 
-  let body: { messages?: Array<{ id?: unknown; texte?: unknown }> };
+  let body: { mode?: unknown; biens?: unknown; messages?: Array<{ id?: unknown; texte?: unknown }> };
   try { body = await req.json(); } catch (_e) { return json({ error: 'invalid_json' }, 400); }
+
+  if (body.mode === 'rediger') return await rediger(body.biens, apiKey);
+  if (body.mode !== undefined) return json({ error: 'mode_inconnu', version: VERSION }, 400);
 
   const messages = (Array.isArray(body.messages) ? body.messages : [])
     .map(m => ({ id: Number(m.id), texte: String(m.texte ?? '').trim() }))

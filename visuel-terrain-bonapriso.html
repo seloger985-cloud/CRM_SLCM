@@ -325,6 +325,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="assets/js/config.js"></script>
 <script src="assets/js/auth.js"></script>
+<script src="assets/js/texte-public.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
   const bind = [
@@ -370,10 +371,12 @@
     try{
       const client=await window.SLCM_DB.getClient();
       const {data,error}=await client.from('properties')
-        .select('id,code,title,type,rent_sale,district,address,surface_m2,price,price_m2,listing_slug,prix_sur_demande,bedrooms')
+        .select('id,code,title,type,rent_sale,district,address,surface_m2,price,price_m2,listing_slug,prix_sur_demande,bedrooms,description,confrere_id')
         .order('created_at',{ascending:false}).limit(300);
       if(error) throw error;
       _biens=data||[];
+      /* Pour reconnaître le confrère dans un texte public (texte-public.js). */
+      try{ const r=await client.from('confreres').select('id,name,agency,wa_alias'); _confreres=r.data||[]; }catch(e){}
       _biens.forEach(b=>{ const o=document.createElement('option'); o.value=b.id;
         o.textContent=(b.code?b.code+' — ':'')+(b.title||'Sans titre'); sel.appendChild(o); });
       sel.addEventListener('change',()=>{ remplir(_biens.find(b=>String(b.id)===sel.value)); etatPublier(); });
@@ -475,6 +478,23 @@
      lignes du visuel, jamais depuis la description de la fiche : celle-ci
      contient souvent « Contact : <numéro du confrère> ». */
   const SITE_PUBLIER='https://selogercm.com/.netlify/functions/crm-publier';
+  /* ── Texte public (15/11/2026) ──
+     Rédigé depuis le message d'origine de l'annonceur, sans rien de ce qui
+     le concerne (assets/js/texte-public.js), et gardé sur la fiche. Faute
+     de texte (pas de message, refus, fonction pas encore redéployée), la
+     description reste faite des lignes du visuel, comme avant. */
+  let _confreres=[];
+  async function textesPour(biens){
+    const client=await window.SLCM_DB.getClient(), out=new Map();
+    if(!window.SLCM_TEXTE) return out;
+    const gardes=await SLCM_TEXTE.lireTextes(client, biens.map(b=>b.id));
+    const a=biens.filter(b=>{ if(gardes.has(b.id)){ out.set(b.id,{texte:gardes.get(b.id)}); return false; } return true; });
+    for(let i=0;i<a.length;i+=20){
+      const r=await SLCM_TEXTE.rediger(client, a.slice(i,i+20), _confreres);
+      r.forEach((v,k)=>{ out.set(k,v); if(v.texte) SLCM_TEXTE.enregistrer(client,k,v.texte); });
+    }
+    return out;
+  }
   const ficheChoisie=()=>_biens.find(b=>String(b.id)===document.getElementById('f-bien').value);
   /* Seul un terrain se publie avec son visuel. Le reste (immeuble, villa,
      appartement…) se publie avec au moins 3 photos : le visuel n'en ferait
@@ -545,7 +565,7 @@
   /* La publication d'UNE fiche, partagée par le bouton et par le lot.
      `illustration` : le visuel n'est pas une photo du bien — le site
      l'accepte alors seul, même hors terrain, et le signale. */
-  async function publierFiche(b, illustration){
+  async function publierFiche(b, illustration, texte){
     const canvas=await capturer();
     const lieu=val('f-lieu');
     const sup=Number(val('f-sup').replace(/\s/g,''))||b.surface_m2||null;
@@ -558,7 +578,9 @@
       prix_sur_demande:!!b.prix_sur_demande,
       district:b.district||lieu.split(',')[0], city:'Douala',
       repere:lieu.indexOf(',')>-1?lieu.slice(lieu.indexOf(',')+1).trim():lieu,
-      description:[lieu?'Situé : '+lieu+'.':'', val('f-l2'), val('f-l3'), val('f-mention')].filter(Boolean).join('\n'),
+      description:window.SLCM_TEXTE
+        ? SLCM_TEXTE.description(lieu, texte, [val('f-l2'), val('f-l3'), val('f-mention')])
+        : [lieu?'Situé : '+lieu+'.':'', val('f-l2'), val('f-l3'), val('f-mention')].filter(Boolean).join('\n'),
       image:canvas.toDataURL('image/jpeg',0.88),
       illustration:!!illustration
     };
@@ -602,8 +624,12 @@
      publication, rattachement. Un échec n'arrête pas le lot. */
   async function publierLot(ids){
     const res=[];
-    const ligne=x=>'<li>'+x.code+' — '+(x.ok?(x.deja?'déjà en ligne, rattachée : ':'✅ ')+'<a href="'+x.url+'" target="_blank" rel="noopener" style="color:inherit">'+x.url+'</a>':'❌ '+String(x.erreur).replace(/</g,'&lt;'))+'</li>';
+    const ligne=x=>'<li>'+x.code+' — '+(x.ok?(x.deja?'déjà en ligne, rattachée : ':'✅ ')+'<a href="'+x.url+'" target="_blank" rel="noopener" style="color:inherit">'+x.url+'</a>':'❌ '+String(x.erreur).replace(/</g,'&lt;'))
+      +(x.court?' <span style="color:#b45309">— texte court ('+String(x.court).replace(/</g,'&lt;')+')</span>':'')+'</li>';
     await (document.fonts && document.fonts.ready);
+    /* Les textes d'abord, en un seul appel pour tout le lot. */
+    etat('Lot : rédaction des textes depuis les messages d’origine…');
+    const textes=await textesPour(ids.map(id=>_biens.find(x=>String(x.id)===String(id))).filter(Boolean));
     for(let i=0;i<ids.length;i++){
       const b=_biens.find(x=>String(x.id)===String(ids[i]));
       if(!b||!b.code){ res.push({code:'#'+ids[i], ok:false, erreur:'fiche introuvable ou sans référence'}); continue; }
@@ -611,8 +637,9 @@
       document.getElementById('f-bien').value=String(b.id);
       try{
         await preparerIllustration(b);
-        const r=await publierFiche(b, true);
-        res.push({code:b.code, ok:true, deja:r.deja, url:r.url});
+        const t=textes.get(b.id)||{};
+        const r=await publierFiche(b, true, t.texte);
+        res.push({code:b.code, ok:true, deja:r.deja, url:r.url, court:t.texte?'':SLCM_TEXTE.motif(t.erreur||'')});
       }catch(err){
         res.push({code:b.code, ok:false, erreur:err.message||err});
       }
@@ -635,8 +662,12 @@
          notamment à republier une fiche venue des groupes (06/11/2026). */
       const sansPhoto=!imgs.photo && !imgs.aerien;
       if(sansPhoto) await preparerIllustration(b);
-      const r=await publierFiche(b, sansPhoto);
-      etat((r.deja?'Déjà en ligne, fiche rattachée : ':'✅ En ligne : ')+'<a href="'+r.url+'" target="_blank" rel="noopener" style="color:inherit">'+r.url+'</a>');
+      etat('Rédaction du texte depuis le message d’origine…');
+      const t=(await textesPour([b])).get(b.id)||{};
+      etat('Publication en cours…');
+      const r=await publierFiche(b, sansPhoto, t.texte);
+      etat((r.deja?'Déjà en ligne, fiche rattachée : ':'✅ En ligne : ')+'<a href="'+r.url+'" target="_blank" rel="noopener" style="color:inherit">'+r.url+'</a>'
+        +(t.texte?'':'<br><span style="color:#b45309">Texte court publié : '+String(window.SLCM_TEXTE?SLCM_TEXTE.motif(t.erreur):'module absent').replace(/</g,'&lt;')+'.</span>'));
     }catch(err){
       etat('❌ Publication impossible : '+String(err.message||err).replace(/</g,'&lt;'));
     }finally{

@@ -11,7 +11,7 @@ D'où ce dossier. **Quatre fonctions**, déployées chacune à part.
 | `understand-inbox` | Un message reçu d'un confrère devient une proposition de fiche bien. N'écrit rien. |
 | `understand-note` | Une note dictée après une visite devient une proposition de saisie rapide : nom, téléphone, type (WhatsApp compris depuis la version `2026-11-10-b`), issue, suite, date. Modèle léger `claude-haiku-5-5`. N'écrit rien ; le CRM ne remplit que les champs laissés vides. Mêmes secrets, même réglage « Verify JWT » désactivé. Facultative : sans elle, seul le bouton « Remplir depuis ma note » échoue. |
 | `daily-digest` | Le rappel Telegram du matin et du soir. Appelée par `pg_cron`, pas par le CRM ; secret partagé au lieu d'une session ; lit avec la clé service en filtrant par agent. N'écrit que dans `notif_log`. Voir « Rappels Telegram » plus bas. |
-| `capture-annonces` | Un paquet de 25 messages de groupe (export WhatsApp) : offre ou non, et la fiche de chaque offre. Modèle léger `claude-haiku-5-5`. N'écrit rien : le CRM range le résultat dans `annonces_captees`. Mêmes secrets, même réglage « Verify JWT » désactivé. |
+| `capture-annonces` | Un paquet de 25 messages de groupe (export WhatsApp) : offre ou non, et la fiche de chaque offre. Modèle léger `claude-haiku-5-5`. N'écrit rien : le CRM range le résultat dans `annonces_captees`. Depuis la version `2026-11-15-a`, un mode `rediger` : le texte public d'une annonce à publier, réécrit depuis le message d'origine sans rien de l'annonceur (voir `assets/js/texte-public.js`). Mêmes secrets, même réglage « Verify JWT » désactivé. |
 
 ## Vérifier QUELLE version tourne
 

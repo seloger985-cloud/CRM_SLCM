@@ -3927,8 +3927,9 @@ async function showPublishForm(propertyId) {
     </div>
     <div id="pub-grille" style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0"></div>
     <div class="form-group">
-      <label>Texte public <span class="item-meta">— relis-le : rien du message du confrère n&#39;y est repris</span></label>
-      <textarea id="pub-texte" rows="4">${escHtml(texteParDefaut(p))}</textarea>
+      <label>Texte public <span class="item-meta">— relis-le : rien de l&#39;annonceur ne doit y rester</span></label>
+      <textarea id="pub-texte" rows="6">${escHtml(texteParDefaut(p))}</textarea>
+      <p class="item-meta" id="pub-texte-info"></p>
     </div>
     <div class="form-group">
       <label><input type="checkbox" id="pub-propres">
@@ -3963,6 +3964,7 @@ async function showPublishForm(propertyId) {
   });
   dessinerPhotos();
   document.getElementById('pub-go').addEventListener('click', publierAvecPhotos);
+  preRemplirTexte(p);
 
   /* Quartier : présélectionné s'il correspond à un quartier du site, à
      choisir sinon (Malangue, Ndogbati… sont absents tant qu'on ne les y a
@@ -4014,6 +4016,37 @@ function retirerPhoto(i) {
   dessinerPhotos();
 }
 
+/* Les confrères, pour savoir quels mots désignent l'annonceur. Le formulaire
+   peut s'ouvrir depuis la page visuel (index.html?publier=…), avant que
+   l'écran des biens les ait chargés. */
+async function confreresConnus() {
+  if (propsView.confreres && propsView.confreres.length) return propsView.confreres;
+  try { return await getAll('confreres'); } catch (e) { return []; }
+}
+
+/* Texte public (15/11/2026) : celui gardé sur la fiche, sinon rédigé depuis
+   le message d'origine de l'annonceur (assets/js/texte-public.js). Le texte
+   court reste en place tant que rien n'arrive, et ce que l'agent a déjà
+   commencé à taper n'est jamais écrasé. */
+async function preRemplirTexte(p) {
+  const zone = document.getElementById('pub-texte'), info = document.getElementById('pub-texte-info');
+  if (!zone || !window.SLCM_TEXTE) return;
+  const depart = zone.value;
+  const dire = (t, alerte) => { if (info && info.isConnected) { info.textContent = t; info.style.color = alerte ? '#b45309' : ''; } };
+  const poser = t => { if (zone.isConnected && pubView.p === p && zone.value === depart) zone.value = t; };
+  const gardes = await SLCM_TEXTE.lireTextes(supabaseClient, [p.id]);
+  if (gardes.get(p.id)) { poser(gardes.get(p.id)); dire('Texte gardé sur la fiche, rédigé depuis le message d’origine.'); return; }
+  dire('Rédaction depuis le message d’origine de l’annonceur…');
+  const r = (await SLCM_TEXTE.rediger(supabaseClient, [p], await confreresConnus())).get(p.id) || {};
+  if (r.texte) {
+    poser(r.texte);
+    dire('Rédigé depuis le message d’origine, sans rien de l’annonceur. Relis-le, retouche si besoin.');
+    SLCM_TEXTE.enregistrer(supabaseClient, p.id, r.texte);
+  } else {
+    dire('Texte court gardé : ' + SLCM_TEXTE.motif(r.erreur) + '.', r.erreur !== 'sans_message');
+  }
+}
+
 async function publierAvecPhotos() {
   const p = pubView.p;
   const etat = t => { const e = document.getElementById('pub-etat'); if (e) e.textContent = t; };
@@ -4028,6 +4061,17 @@ async function publierAvecPhotos() {
   if (!quartier) { UI.toast('Choisis le quartier sur le site.', 'error'); return; }
   if (!(Number(p.price) > 0) && !(p.prix_sur_demande && p.rent_sale === 'sale')) {
     UI.toast('Prix manquant (ou « prix sur demande » pour une vente).', 'error'); return;
+  }
+
+  /* Dernier contrôle du texte, retouché à la main ou non : plus rien de
+     l'annonceur. Puis il est gardé sur la fiche pour la prochaine fois. */
+  const texte = document.getElementById('pub-texte').value.trim();
+  if (window.SLCM_TEXTE) {
+    const confs = await confreresConnus();
+    const cap = await SLCM_TEXTE.captureDe(supabaseClient, p.id);
+    const reste = SLCM_TEXTE.trace(texte, SLCM_TEXTE.interdits(confs.find(c => c.id === p.confrere_id), cap));
+    if (reste && !(await UI.confirm(`Le texte public contient « ${reste} », qui désigne l'annonceur. Publier quand même ?`))) return;
+    if (texte && texte !== texteParDefaut(p)) SLCM_TEXTE.enregistrer(supabaseClient, p.id, texte);
   }
 
   const btn = document.getElementById('pub-go');
@@ -4067,7 +4111,7 @@ async function publierAvecPhotos() {
       price: p.prix_sur_demande ? null : p.price, prix_sur_demande: !!p.prix_sur_demande,
       surface_m2: p.surface_m2, district: quartier, city: 'Douala',
       repere: (p.address && p.address !== p.district) ? p.address : null,
-      description: document.getElementById('pub-texte').value.trim(),
+      description: texte,
       bedrooms: p.bedrooms, bathrooms: p.bathrooms, furnished: !!p.furnished,
       /* Équipements (sql/15) : mêmes colonnes que le site. */
       ...Object.fromEntries(EQUIPEMENTS.map(e => [e.k, p[e.k] === true])),
