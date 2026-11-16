@@ -1498,13 +1498,18 @@ function renderPropsList() {
     const publier = (p.id && p.code && !p.listing_slug && p.status === 'available')
       ? `<button onclick="showPublishForm(${Number(p.id)})" class="ghost-btn" title="Publier sur selogercm.com avec des photos">Publier</button>`
       : '';
+    /* Déjà en ligne : ajouter les photos ou la vidéo arrivées après coup
+       (crm-medias). Seulement nos annonces CF/SL : le site refuse les autres. */
+    const medias = (p.id && p.listing_slug && /^(CF|SL)\d{2}-/.test(p.code || ''))
+      ? `<button onclick="showMediasForm(${Number(p.id)})" class="ghost-btn" title="Ajouter des photos ou une vidéo à l'annonce en ligne">Médias</button>`
+      : '';
     return `<div class="list-item">
       ${thumbHtml(p._cover, p.id || p._siteId || p.title, p.type)}
       <div>${code}<strong>${escHtml(p.title || 'Sans titre')}</strong> ${badge}</div>
       <div class="item-meta">${escHtml(p.address || '')} — ${price}${p._ref ? ' · ' + escHtml(p._ref) : ''}</div>
       ${origine}
       <div class="item-meta">${formatDate(p.created_at)}</div>
-      <div>${link}${share}${ecrire}${publier}${visuel}${vendu}${action}</div>
+      <div>${link}${share}${ecrire}${publier}${medias}${visuel}${vendu}${action}</div>
     </div>`;
   }).join('');
 }
@@ -4187,6 +4192,284 @@ async function publierAvecPhotos() {
   } catch (e) {
     etat('');
     UI.toast('Publication impossible : ' + ((e && e.message) || e), 'error');
+    btn.disabled = false;
+  }
+}
+
+/* ═══════════════ MÉDIAS D'UNE ANNONCE EN LIGNE (16/11/2026) ═══════════════
+
+   Le confrère envoie souvent ses photos APRÈS la publication. Jusqu'ici,
+   aucune page ne permettait de les ajouter : l'annonce appartient au compte
+   admin du site, et ni /mon-espace ni le tableau de bord admin ne savent
+   changer des médias. On le fait donc d'ici (netlify/functions/crm-medias.js).
+
+   Les règles vivent côté site, pas ici : le nouveau média passe en tête et
+   devient la couverture ; l'affiche d'illustration est retirée. Une vidéo
+   seule : on en tire une image, envoyée comme première photo — les cartes
+   et la fiche montrent déjà la vidéo en tête, l'image sert à l'aperçu
+   WhatsApp et aux pages quartier. */
+const VIDEO_MAX_S = 90;              /* plafond posé par crm-video-upload-url */
+const VIDEO_MAX_OCTETS = 200 * 1024 * 1024;   /* envoi simple Cloudflare Stream */
+const medView = { p: null, slug: '', actuelles: [], retirees: new Set(), affiche: null, video_url: null, photos: [], video: null };
+
+async function appelSite(fonction, corps) {
+  const jeton = (await supabaseClient.auth.getSession()).data.session?.access_token;
+  const r = await fetch(SITE_FN + fonction, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + jeton },
+    body: JSON.stringify(corps)
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+  return j;
+}
+
+function medLiberer() {
+  medView.photos.forEach(x => URL.revokeObjectURL(x.apercu));
+  if (medView.video) URL.revokeObjectURL(medView.video.apercu);
+  medView.photos = []; medView.video = null;
+}
+
+async function showMediasForm(propertyId) {
+  const p = propsView.crm.find(x => x.id === propertyId) || await getById('properties', propertyId);
+  if (!p || !p.listing_slug) { UI.toast('Ce bien n’est pas en ligne.', 'error'); return; }
+  medLiberer();
+  Object.assign(medView, { p, slug: p.listing_slug, actuelles: [], retirees: new Set(), affiche: null, video_url: null });
+  mainContent.innerHTML = `<h2>Médias de ${escHtml(p.code || '')}</h2><p class="item-meta">Lecture de l’annonce en ligne…</p>`;
+  let a;
+  try { a = await appelSite('crm-medias', { slug: p.listing_slug, action: 'lire' }); }
+  catch (e) {
+    mainContent.innerHTML = `<h2>Médias de ${escHtml(p.code || '')}</h2>
+      <p class="item-meta">Annonce illisible : ${escHtml(e.message || String(e))}</p>
+      <button type="button" onclick="showProperties()" class="btn btn-outline">Retour</button>`;
+    return;
+  }
+  if (medView.p !== p) return;   /* l'agent est parti ailleurs */
+  medView.actuelles = Array.isArray(a.images) ? a.images : [];
+  medView.affiche = a.illustration ? medView.actuelles[0] || null : null;
+  medView.video_url = a.video_url || null;
+
+  mainContent.innerHTML = `
+    <h2>Médias de ${escHtml(p.code || '')}</h2>
+    <p class="item-meta">${escHtml(a.title || p.title || '')} ·
+      <a href="https://selogercm.com/annonce/${encodeURIComponent(p.listing_slug)}" target="_blank" rel="noopener">voir l’annonce</a></p>
+    <p class="item-meta">Ce que tu ajoutes passe <strong>en tête</strong> : la première nouvelle photo devient la couverture.
+      ${medView.affiche ? 'L’affiche d’illustration sera retirée.' : ''}</p>
+
+    <h3>En ligne aujourd’hui</h3>
+    <div id="med-actuelles" style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0"></div>
+    ${medView.video_url ? '<p class="item-meta">Une vidéo est en ligne. En ajouter une nouvelle la remplacera.</p>' : ''}
+
+    <h3>Ajouter</h3>
+    <div class="form-group">
+      <label>Photos (jusqu’à ${PHOTOS_MAX} au total)</label>
+      <input type="file" id="med-photos" accept="image/*" multiple>
+    </div>
+    <div id="med-grille" style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0"></div>
+    <div class="form-group">
+      <label>Vidéo (${VIDEO_MAX_S} secondes maximum)</label>
+      <input type="file" id="med-video" accept="video/*">
+      <p class="item-meta" id="med-video-info"></p>
+    </div>
+    <div class="form-group">
+      <label><input type="checkbox" id="med-propres">
+        Aucune photo ni vidéo ne montre un numéro, un logo ou un nom d&#39;agence</label>
+    </div>
+    <button type="button" id="med-go" class="btn btn-primary">Mettre en ligne</button>
+    <button type="button" onclick="showProperties()" class="btn btn-outline">Annuler</button>
+    <p class="item-meta" id="med-etat"></p>`;
+
+  /* Comme à la publication : chaque choix S'AJOUTE (sélecteurs à une photo). */
+  document.getElementById('med-photos').addEventListener('change', e => {
+    const nouvelles = [...e.target.files].filter(f => /^image\//.test(f.type) || (!f.type && /\.(jpe?g|png|webp|gif|heic|heif)$/i.test(f.name || '')));
+    for (const f of nouvelles) {
+      if (medTotal() >= PHOTOS_MAX) { UI.toast(`Maximum ${PHOTOS_MAX} photos.`, 'error'); break; }
+      medView.photos.push({ file: f, apercu: URL.createObjectURL(f) });
+    }
+    e.target.value = '';
+    medDessiner();
+  });
+  document.getElementById('med-video').addEventListener('change', async e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    const info = document.getElementById('med-video-info');
+    if (f.size > VIDEO_MAX_OCTETS) { UI.toast('Vidéo trop lourde (200 Mo maximum).', 'error'); return; }
+    const duree = await dureeVideo(f);
+    if (duree && duree > VIDEO_MAX_S + 1) {
+      UI.toast(`Vidéo de ${Math.round(duree)} s : ${VIDEO_MAX_S} s maximum. Coupe-la avant de l’envoyer.`, 'error'); return;
+    }
+    if (medView.video) URL.revokeObjectURL(medView.video.apercu);
+    medView.video = { file: f, apercu: URL.createObjectURL(f), duree };
+    if (info) info.innerHTML = `${escHtml(f.name || 'vidéo')} — ${(f.size / 1048576).toFixed(1)} Mo${duree ? ', ' + Math.round(duree) + ' s' : ''}
+      <button type="button" class="ghost-btn" onclick="medRetirerVideo()" title="Retirer">✕</button>`;
+  });
+  document.getElementById('med-go').addEventListener('click', medEnregistrer);
+  medDessiner();
+}
+
+/* Photos en ligne qu'on garde + nouvelles : le plafond porte sur le total. */
+function medTotal() {
+  return medView.actuelles.filter(u => u !== medView.affiche && !medView.retirees.has(u)).length + medView.photos.length;
+}
+
+function medDessiner() {
+  const act = document.getElementById('med-actuelles');
+  if (act) {
+    act.innerHTML = medView.actuelles.length ? medView.actuelles.map((u, i) => {
+      const affiche = u === medView.affiche, retiree = medView.retirees.has(u);
+      return `<div style="width:150px;${retiree || affiche ? 'opacity:.45' : ''}">
+        <img src="${escAttr(u)}" alt="" style="width:150px;height:110px;object-fit:cover;border-radius:8px">
+        <div class="item-meta">${affiche ? 'Affiche — sera retirée' : retiree ? 'Sera retirée' : (i === 0 ? 'Couverture actuelle' : 'Photo ' + (i + 1))}</div>
+        ${affiche ? '' : `<button type="button" class="ghost-btn" onclick="medBasculer(${i})">${retiree ? 'Garder' : '✕ Retirer'}</button>`}
+      </div>`;
+    }).join('') : '<p class="item-meta">Aucune photo.</p>';
+  }
+  const g = document.getElementById('med-grille');
+  if (g) {
+    g.innerHTML = medView.photos.map((x, i) => `
+      <div style="width:150px">
+        <img src="${escAttr(x.apercu)}" alt="" style="width:150px;height:110px;object-fit:cover;border-radius:8px;${i === 0 ? 'outline:3px solid var(--accent, #ED7A14)' : ''}">
+        <div class="item-meta">${i === 0 ? 'Nouvelle couverture' : 'Nouvelle ' + (i + 1)}</div>
+        <button type="button" class="ghost-btn" onclick="medDeplacer(${i},-1)" ${i === 0 ? 'disabled' : ''} title="Avant">←</button>
+        <button type="button" class="ghost-btn" onclick="medDeplacer(${i},1)" ${i === medView.photos.length - 1 ? 'disabled' : ''} title="Après">→</button>
+        <button type="button" class="ghost-btn" onclick="medRetirer(${i})" title="Retirer">✕</button>
+      </div>`).join('');
+  }
+}
+function medBasculer(i) {
+  const u = medView.actuelles[i];
+  if (!u || u === medView.affiche) return;
+  if (medView.retirees.has(u)) medView.retirees.delete(u); else medView.retirees.add(u);
+  medDessiner();
+}
+function medDeplacer(i, sens) {
+  const j = i + sens, l = medView.photos;
+  if (j < 0 || j >= l.length) return;
+  [l[i], l[j]] = [l[j], l[i]];
+  medDessiner();
+}
+function medRetirer(i) {
+  const [x] = medView.photos.splice(i, 1);
+  if (x) URL.revokeObjectURL(x.apercu);
+  medDessiner();
+}
+function medRetirerVideo() {
+  if (medView.video) URL.revokeObjectURL(medView.video.apercu);
+  medView.video = null;
+  const info = document.getElementById('med-video-info');
+  if (info) info.textContent = '';
+}
+
+/* Durée d'une vidéo en secondes, ou null si ce navigateur ne sait pas la lire. */
+function dureeVideo(file) {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    const fin = d => { URL.revokeObjectURL(url); resolve(d); };
+    const delai = setTimeout(() => fin(null), 15000);
+    v.preload = 'metadata';
+    v.onloadedmetadata = () => { clearTimeout(delai); fin(isFinite(v.duration) ? v.duration : null); };
+    v.onerror = () => { clearTimeout(delai); fin(null); };
+    v.src = url;
+  });
+}
+
+/* Une image de la vidéo (vers 1 s), en WebP : la couverture d'une annonce
+   qui ne reçoit qu'une vidéo. Rejette si le navigateur ne la décode pas. */
+function imageDeVideo(file, maxCote = 1600, qualite = 0.82) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    let fini = false;
+    const fin = (err, b) => { if (fini) return; fini = true; clearTimeout(delai); URL.revokeObjectURL(url); err ? reject(err) : resolve(b); };
+    const delai = setTimeout(() => fin(new Error('image de la vidéo : délai dépassé')), 20000);
+    v.muted = true; v.playsInline = true; v.preload = 'auto';
+    v.onloadedmetadata = () => { v.currentTime = Math.min(1, (isFinite(v.duration) ? v.duration : 2) / 2); };
+    v.onseeked = () => {
+      if (!v.videoWidth) { fin(new Error('image de la vidéo vide')); return; }
+      const k = Math.min(1, maxCote / Math.max(v.videoWidth, v.videoHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+      c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+      c.toBlob(b => b ? fin(null, b) : fin(new Error('conversion impossible')), 'image/webp', qualite);
+    };
+    v.onerror = () => fin(new Error('vidéo illisible par ce navigateur'));
+    v.src = url;
+  });
+}
+
+async function medEnregistrer() {
+  const p = medView.p;
+  const etat = t => { const e = document.getElementById('med-etat'); if (e) e.textContent = t; };
+  const garder = medView.actuelles.filter(u => u !== medView.affiche && !medView.retirees.has(u));
+  if (!medView.photos.length && !medView.video) { UI.toast('Ajoute au moins une photo ou une vidéo.', 'error'); return; }
+  if (!document.getElementById('med-propres').checked) {
+    UI.toast('Vérifie d\'abord qu\'aucun média ne montre le numéro ou le logo du confrère.', 'error'); return;
+  }
+  if (medTotal() > PHOTOS_MAX) { UI.toast(`${PHOTOS_MAX} photos au plus : retires-en.`, 'error'); return; }
+
+  const btn = document.getElementById('med-go');
+  btn.disabled = true;
+  try {
+    etat('Préparation des photos…');
+    const blobs = [];
+    for (let i = 0; i < medView.photos.length; i++) {
+      etat(`Réduction des photos… ${i + 1}/${medView.photos.length}`);
+      blobs.push(await photoEnWebp(medView.photos[i].file));
+    }
+    /* Vidéo seule : son image devient la couverture. */
+    if (medView.video && !blobs.length) {
+      etat('Image de la vidéo…');
+      try { blobs.push(await imageDeVideo(medView.video.file)); }
+      catch (e) {
+        if (!garder.length) throw new Error(e.message + ' — ajoute aussi une photo, elle servira de couverture');
+      }
+    }
+
+    let ajout = [];
+    if (blobs.length) {
+      const j1 = await appelSite('crm-image-upload-url', { n: blobs.length });
+      for (let i = 0; i < blobs.length; i++) {
+        etat(`Envoi des photos… ${i + 1}/${blobs.length}`);
+        const envoyer = () => {
+          const fd = new FormData();
+          fd.append('file', blobs[i], `photo_${i + 1}.webp`);
+          return fetch(j1.photos[i].uploadURL, { method: 'POST', body: fd });
+        };
+        let r = await envoyer().catch(() => null);
+        if (!r || !r.ok) r = await envoyer().catch(() => null);
+        if (!r || !r.ok) throw new Error(`photo ${i + 1} non envoyée — réessaie`);
+      }
+      ajout = j1.photos.map(x => x.url);
+    }
+
+    let video_uid = null;
+    if (medView.video) {
+      const jv = await appelSite('crm-video-upload-url', { slug: medView.slug });
+      await new Promise((resolve, reject) => {
+        const fd = new FormData();
+        fd.append('file', medView.video.file, medView.video.file.name || 'video.mp4');
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', jv.uploadURL);
+        xhr.upload.onprogress = e => { if (e.lengthComputable) etat(`Envoi de la vidéo… ${Math.round(e.loaded / e.total * 100)} %`); };
+        xhr.onload = () => xhr.status < 300 ? resolve() : reject(new Error('vidéo refusée par Cloudflare (HTTP ' + xhr.status + ')'));
+        xhr.onerror = () => reject(new Error('envoi de la vidéo interrompu — vérifie la connexion'));
+        xhr.send(fd);
+      });
+      video_uid = jv.uid;
+    }
+
+    etat('Mise à jour de l’annonce…');
+    await appelSite('crm-medias', { slug: medView.slug, action: 'enregistrer', ajout, garder, video_uid });
+
+    UI.toast('Médias en ligne. Le site les montre d’ici quelques minutes.', 'success');
+    medLiberer();
+    propsView.loaded = false;
+    showProperties(true);
+  } catch (e) {
+    etat('');
+    UI.toast('Mise à jour impossible : ' + ((e && e.message) || e), 'error');
     btn.disabled = false;
   }
 }
