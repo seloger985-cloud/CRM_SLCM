@@ -3852,23 +3852,73 @@ const SITE_FN = 'https://selogercm.com/.netlify/functions/';
    quartier hors liste — ou mal orthographié, « Beedi » pour « Béedi » —
    n'était trouvée ni par le filtre ni par la barre de recherche du site.
    Repli sur DEMAND_DISTRICTS si le site ne répond pas. */
+/* Depuis le 16/11/2026, TOUTES les villes du site, plus seulement Douala :
+   Bastos, Odza… étaient déclarés « inconnus du site » alors que le site
+   les connaissait, dans la liste de Yaoundé. La liste reste plate (les
+   écrans n'ont besoin que des noms) ; villeDuQuartier() dit la ville. */
 let _quartiersSite = null;
+let _villeDe = {};   /* nom du quartier → ville, rempli avec la liste */
 function quartiersSite() {
   if (!_quartiersSite) {
     _quartiersSite = fetch(SITE_FN + 'quartiers')
       .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then(j => (j.cities && j.cities.Douala) || DEMAND_DISTRICTS)
+      .then(j => {
+        const villes = j.cities || {};
+        if (!villes.Douala) return DEMAND_DISTRICTS;
+        const liste = [];
+        _villeDe = {};
+        Object.keys(villes).forEach(v => (villes[v] || []).forEach(q => {
+          if (!_villeDe[q]) { _villeDe[q] = v; liste.push(q); }
+        }));
+        return liste;
+      })
       .catch(() => { _quartiersSite = null; return DEMAND_DISTRICTS; });
   }
   return _quartiersSite;
 }
-/* Même rapprochement que crm-publier.js côté site : sans accents, casse,
-   tirets ni espaces ; « Bonadiwoto » retrouve « Bonadiwoto (Grand Mall) ». */
+/* La ville d'un quartier de la liste du site ; Douala par défaut. */
+function villeDuQuartier(q) {
+  return _villeDe[q] || 'Douala';
+}
+/* Le quartier de la liste qui correspond à une saisie, même mal
+   orthographiée (« Esos » → Essos, « Ange Rafael » → Ange Raphaël).
+   COPIE de SLCM_CONFIG.trouverQuartier (assets/js/config.js du site),
+   qui fait la même chose côté serveur à la publication : modifier les deux
+   ensemble. Par ordre : même écriture (sans accents, casse, tirets ni
+   espaces ; « Bonadiwoto » retrouve « Bonadiwoto (Grand Mall) »), même
+   prononciation (ph = f, y = i, lettres doublées simples), puis une lettre
+   d'écart (deux au-delà de dix). Jamais d'approximation sur un nom à
+   chiffre (PK12 / PK21), ni entre deux quartiers aussi proches l'un que
+   l'autre : « inconnu » vaut mieux qu'un bien publié au mauvais endroit. */
 function quartierDeLaListe(liste, saisi) {
   const cle = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const son = s => cle(s).replace(/ph/g, 'f').replace(/y/g, 'i').replace(/(.)\1+/g, '$1');
+  const nu = q => q.replace(/\s*\(.*\)\s*$/, '');
   const k = cle(saisi);
   if (!k) return null;
-  return liste.find(q => cle(q) === k) || liste.find(q => cle(q.replace(/\s*\(.*\)\s*$/, '')) === k) || null;
+  const exact = liste.find(q => cle(q) === k) || liste.find(q => cle(nu(q)) === k);
+  if (exact) return exact;
+  if (/\d/.test(k)) return null;
+  const s = son(saisi);
+  const memeSon = liste.filter(q => son(q) === s || son(nu(q)) === s);
+  if (memeSon.length) return memeSon.length === 1 ? memeSon[0] : null;
+  const seuil = s.length >= 10 ? 2 : s.length >= 6 ? 1 : 0;
+  if (!seuil) return null;
+  const dist = (a, b) => {
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    return d[a.length][b.length];
+  };
+  let meilleure = Infinity, proches = [];
+  liste.forEach(q => {
+    if (/\d/.test(q)) return;
+    const d = Math.min(dist(son(q), s), dist(son(nu(q)), s));
+    if (d > seuil) return;
+    if (d < meilleure) { meilleure = d; proches = [q]; } else if (d === meilleure) proches.push(q);
+  });
+  return proches.length === 1 ? proches[0] : null;
 }
 
 const PHOTOS_MIN = 3;             /* hors terrain — choix du 24/10/2026 */
@@ -3973,8 +4023,12 @@ async function showPublishForm(propertyId) {
     const sel = document.getElementById('pub-quartier'), info = document.getElementById('pub-quartier-info');
     if (!sel || pubView.p !== p) return;   /* l'agent a quitté le formulaire */
     const trouve = quartierDeLaListe(liste, p.district);
+    /* Groupés par ville : Douala et Yaoundé ont chacune leur liste. */
+    const parVille = {};
+    liste.forEach(q => { (parVille[villeDuQuartier(q)] = parVille[villeDuQuartier(q)] || []).push(q); });
+    const option = q => `<option value="${escAttr(q)}"${q === trouve ? ' selected' : ''}>${escHtml(q)}</option>`;
     sel.innerHTML = '<option value="">— Choisir —</option>'
-      + liste.map(q => `<option value="${escAttr(q)}"${q === trouve ? ' selected' : ''}>${escHtml(q)}</option>`).join('');
+      + Object.keys(parVille).map(v => `<optgroup label="${escAttr(v)}">${parVille[v].map(option).join('')}</optgroup>`).join('');
     info.textContent = !p.district ? 'La fiche n’a pas de quartier : choisis-le.'
       : !trouve ? `« ${p.district} » n’est pas dans la liste du site : choisis le quartier le plus proche, ou demande son ajout. La fiche sera mise à jour.`
       : trouve !== p.district ? `« ${p.district} » sera publié sous l’orthographe du site : ${trouve}. La fiche sera mise à jour.`
@@ -4109,7 +4163,7 @@ async function publierAvecPhotos() {
     const corps = {
       code: p.code, title: p.title, type: p.type, rent_sale: p.rent_sale,
       price: p.prix_sur_demande ? null : p.price, prix_sur_demande: !!p.prix_sur_demande,
-      surface_m2: p.surface_m2, district: quartier, city: 'Douala',
+      surface_m2: p.surface_m2, district: quartier, city: villeDuQuartier(quartier),
       repere: (p.address && p.address !== p.district) ? p.address : null,
       description: texte,
       bedrooms: p.bedrooms, bathrooms: p.bathrooms, furnished: !!p.furnished,
@@ -5012,7 +5066,15 @@ async function creerFichesEtPublier() {
         /* Le secteur (« Denver ») rejoint l'adresse : il devient le repère
            de l'annonce publiée (« Bonamoussadi, Denver »). */
         district: a._quartier,
-        address: [quartierEtSecteur(a).secteur, a.address].filter((x, i, t) => x && t.indexOf(x) === i).join(', ') || null,
+        /* Hors de Douala, la ville rejoint l'adresse : c'est elle que lit
+           property_city_code (sql/13-14) pour la référence. Sans elle, une
+           vente à Odza recevait un code CF26-DLA. */
+        address: (() => {
+          const parts = [quartierEtSecteur(a).secteur, a.address].filter((x, i, t) => x && t.indexOf(x) === i);
+          const ville = villeDuQuartier(a._quartier);
+          if (ville !== 'Douala' && !looseKey(parts.join(' ')).includes(looseKey(ville))) parts.push(ville);
+          return parts.join(', ') || null;
+        })(),
         bedrooms: a.bedrooms, furnished: a.furnished,
         status: 'available', confrere_id: c.id,
         description: [a.message, 'Vu dans « ' + (a.groupe || 'un groupe') + ' » le ' + formatDate(a.posted_at)].join('\n\n'),
