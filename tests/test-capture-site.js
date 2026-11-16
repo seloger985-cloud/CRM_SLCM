@@ -118,6 +118,16 @@ function run() {
   ok('lot : maison sans surface, acceptée', R({ type: 'house', surface_m2: null }) === null);
   ok('lot : quartier absent du site, refusé', R({ district: 'Nyalla' }) === 'quartier inconnu du site');
   ok('lot : orthographe du site retrouvée (Deido → Deïdo, Bonadiwoto)', R({ district: 'Deido' }) === null && R({ district: 'bonadiwoto' }) === null);
+  /* Fautes d'orthographe venues des groupes (16/11/2026). */
+  const QF = ['Essos', 'Ange Raphaël', 'Mvog Atangana Mballa', 'Nkolbisson', 'PK12', 'PK21', 'Ndogpassi', 'Ndogpassi II', 'Ndogpassi III', 'Bali', 'Bonapriso'];
+  const F = new Function(grab(/function quartierDeLaListe[\s\S]*?\n}/, 'quartierDeLaListe') + '\nreturn quartierDeLaListe;')();
+  ok('fautes : « Esos » → Essos (lettre doublée)', F(QF, 'Esos') === 'Essos');
+  ok('fautes : « Ange Rafael » → Ange Raphaël (ph = f)', F(QF, 'Ange Rafael') === 'Ange Raphaël');
+  ok('fautes : une lettre de trop ou de moins (Nkolbison, Mbala, Bonaprisso)', F(QF, 'Nkolbison') === 'Nkolbisson' && F(QF, 'Mvog Atangana Mbala') === 'Mvog Atangana Mballa' && F(QF, 'Bonaprisso') === 'Bonapriso');
+  ok('fautes : jamais d’approximation sur un numéro (PK 21 ≠ PK12)', F(QF, 'PK 21') === 'PK21' && F(QF, 'PK22') === null);
+  ok('fautes : Ndogpassi I / II / III jamais confondus', F(QF, 'Ndogpassi II') === 'Ndogpassi II' && F(QF, 'Ndogpasi II') === null);
+  ok('fautes : un nom court ne s’approxime pas (Bari ≠ Bali)', F(QF, 'Bari') === null);
+  ok('fautes : un nom inconnu reste inconnu', F(QF, 'Happy') === null);
   ok('lot : même bien déjà au portefeuille, refusé', R({ district: 'Makepe', surface_m2: 400, price: 30000000 }) === 'déjà au portefeuille');
   const tri = lot.trierPourPublication([
     v({ id: 1 }), v({ id: 2, district: 'logpom' }), v({ id: 3, district: 'Nyalla' }), v({ id: 4, district: 'nyalla' }), v({ id: 5, rent_sale: 'rent' })
