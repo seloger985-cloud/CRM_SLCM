@@ -3618,6 +3618,70 @@ function resumeDemande(d) {
     .filter(Boolean).join(' · ');
 }
 
+/* Relance WhatsApp du client qui a laissé la demande (18/11/2026).
+   Le message reprend SES critères pour qu'il se reconnaisse, propose une
+   visite et signe « SE LOGER CM ». En anglais si la demande l'était. Un
+   critère absent est omis, jamais remplacé par un trou. Pure, donc testable. */
+const TYPE_EN = {
+  apartment: 'apartment', studio: 'studio', villa: 'villa', house: 'house',
+  duplex: 'duplex', building: 'building', 'plots-of-land': 'plot of land',
+  warehouse: 'warehouse', office: 'office', shop: 'shop', commercial: 'commercial space'
+};
+const TYPE_FEMININ = { villa: true, house: true, shop: true };
+
+function relanceDemandeSite(d) {
+  d = d || {};
+  const en = d.lang === 'en';
+  const nom = (d.name && d.name !== 'Anonymous') ? ' ' + d.name : '';
+  const date = d.created_at ? new Date(d.created_at) : null;
+  const jour = (date && !isNaN(date)) ? date.toLocaleDateString(en ? 'en-GB' : 'fr-FR',
+    { timeZone: 'Africa/Douala', day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+  const ch = Number(d.bedrooms) > 0 ? Number(d.bedrooms) : 0;
+  const quartiers = (d.districts || []).filter(Boolean);
+  const ou = en ? ' or ' : ' ou ';
+  const lieux = quartiers.length > 1 ? quartiers.slice(0, -1).join(', ') + ou + quartiers[quartiers.length - 1] : (quartiers[0] || '');
+  const budget = Number(d.budget_max) > 0
+    ? Number(d.budget_max).toLocaleString(en ? 'en-US' : 'fr-FR') + ' FCFA max' : '';
+
+  let bien = '';
+  if (en) {
+    bien = [ch ? ch + '-bedroom' : '', d.furnished === true ? 'furnished' : '',
+            TYPE_EN[d.type] || (d.type ? d.type : (d.rent_sale ? 'property' : ''))].filter(Boolean).join(' ');
+    if (bien && d.rent_sale) bien += d.rent_sale === 'sale' ? ' to buy' : ' to rent';
+  } else {
+    const type = TYPE_FR[d.type] ? TYPE_FR[d.type].toLowerCase() : (d.type || (d.rent_sale ? 'bien' : ''));
+    bien = [type, ch ? ch + (ch > 1 ? ' chambres' : ' chambre') : '',
+            d.furnished === true ? (TYPE_FEMININ[d.type] ? 'meublée' : 'meublé') : ''].filter(Boolean).join(' ');
+    if (bien && d.rent_sale) bien += d.rent_sale === 'sale' ? ' à acheter' : ' à louer';
+  }
+  const ref = d.listing_ref ? (en ? 'listing ref. ' : 'annonce réf. ') + d.listing_ref : '';
+  const criteres = [ref, bien, lieux, budget].filter(Boolean).join(', ');
+
+  if (en) {
+    const quoi = d.source === 'rdv' ? 'visit request' : (d.source === 'contact' ? 'message' : 'request');
+    return `Hello${nom}, following your ${quoi}${jour ? ' of ' + jour : ''} on selogercm.com${criteres ? ' (' + criteres + ')' : ''}, `
+      + `we have properties to show you. When are you available?\n\nSE LOGER CM`;
+  }
+  const quoi = d.source === 'rdv' ? 'demande de visite' : (d.source === 'contact' ? 'message' : 'demande');
+  return `Bonjour${nom}, suite à votre ${quoi}${jour ? ' du ' + jour : ''} sur selogercm.com${criteres ? ' (' + criteres + ')' : ''}, `
+    + `nous avons des biens à vous faire visiter. Quand êtes-vous disponible ?\n\nSE LOGER CM`;
+}
+
+/* Le geste : WhatsApp s'ouvre tout de suite, pendant l'appui. Ensuite
+   seulement, si une fiche porte déjà ce numéro (client revenu par le site),
+   le contact est noté à son journal. Une demande pas encore importée n'a
+   pas de fiche : rien à noter. */
+function relancerDemandeSite(id) {
+  const d = siteDemandsView.list.find(x => x.id === id);
+  if (!d || !d.phone) return;
+  sendWhatsApp('+' + d.phone, relanceDemandeSite(d));
+  getAll('clients').then(clients => {
+    const tel = normalizePhone('+' + d.phone);
+    const c = (clients || []).find(x => x.phone && normalizePhone(x.phone) === tel);
+    if (c) journaliserContact(c.id, 'whatsapp', 'relance de la demande du site');
+  }).catch(e => console.error('[relance]', e && e.message));
+}
+
 const siteDemandsView = { list: [] };
 
 async function siteFetch(chemin, options) {
@@ -3681,7 +3745,7 @@ async function showSiteDemands() {
         ${blocCapturesPourDemande(d)}
         <div>
           <button onclick="importSiteDemand(${Number(d.id)})" class="btn btn-primary">Importer</button>
-          ${d.phone ? `<button onclick="sendWhatsApp('${escAttr(d.phone)}', '')" class="ghost-btn">WhatsApp</button>` : ''}
+          ${d.phone ? `<button onclick="relancerDemandeSite(${Number(d.id)})" class="ghost-btn" title="Relancer le client avec un message tiré de sa demande">WhatsApp</button>` : ''}
           <button onclick="dismissSiteDemand(${Number(d.id)})" class="ghost-btn" title="Essai, doublon ou message hors sujet">Écarter</button>
         </div>
       </div>`).join('') : '<p>Aucune demande en attente. Elles arrivent du formulaire « Je cherche un bien », des rendez-vous et du contact de selogercm.com.</p>'}

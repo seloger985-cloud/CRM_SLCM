@@ -22,9 +22,12 @@ function run() {
     grab(/const SOURCE_DEMANDE = [^\n]*/, 'SOURCE_DEMANDE'),
     grab(/function demandeVersClient[\s\S]*?\n}/, 'demandeVersClient'),
     grab(/function demandeVersRecherche[\s\S]*?\n}/, 'demandeVersRecherche'),
-    grab(/function resumeDemande[\s\S]*?\n}/, 'resumeDemande')
-  ].join('\n') + '\nreturn { demandeVersClient, demandeVersRecherche, resumeDemande };')();
-  const { demandeVersClient, demandeVersRecherche, resumeDemande } = scope;
+    grab(/function resumeDemande[\s\S]*?\n}/, 'resumeDemande'),
+    grab(/const TYPE_EN = \{[\s\S]*?\n\};/, 'TYPE_EN'),
+    grab(/const TYPE_FEMININ = [^\n]*/, 'TYPE_FEMININ'),
+    grab(/function relanceDemandeSite[\s\S]*?\n}/, 'relanceDemandeSite')
+  ].join('\n') + '\nreturn { demandeVersClient, demandeVersRecherche, resumeDemande, relanceDemandeSite };')();
+  const { demandeVersClient, demandeVersRecherche, resumeDemande, relanceDemandeSite } = scope;
 
   const checks = [];
   const ok = (label, cond) => checks.push([label, !!cond]);
@@ -50,6 +53,30 @@ function run() {
 
   ok('résumé lisible', resumeDemande(cherche) === 'Location · Appartement · 3 ch. · Bonapriso, Bali · 400 000 FCFA max · meublé'.replace(/ /g, ' ')
      || resumeDemande(cherche).replace(/\s/g, ' ') === 'Location · Appartement · 3 ch. · Bonapriso, Bali · 400 000 FCFA max · meublé');
+
+  /* Relance WhatsApp (18/11/2026) : modèle B validé par Armand, signé
+     SE LOGER CM, en anglais pour une demande anglaise. Les espaces des
+     nombres sont normalisés : toLocaleString met une espace insécable. */
+  const plat = s => String(s).replace(/\s/g, ' ');
+  const quand = '2026-11-12T10:00:00Z';
+  ok('relance : critères, date, visite, signature',
+     plat(relanceDemandeSite(Object.assign({}, cherche, { name: 'Paul', created_at: quand }))) ===
+     plat('Bonjour Paul, suite à votre demande du 12/11/2026 sur selogercm.com (appartement 3 chambres meublé à louer, '
+       + 'Bonapriso ou Bali, 400 000 FCFA max), nous avons des biens à vous faire visiter. Quand êtes-vous disponible ?\n\nSE LOGER CM'));
+  ok('relance : en anglais pour une demande anglaise',
+     relanceDemandeSite(Object.assign({}, cherche, { name: 'Paul', created_at: quand, lang: 'en' })) ===
+     'Hello Paul, following your request of 12/11/2026 on selogercm.com (3-bedroom furnished apartment to rent, '
+       + 'Bonapriso or Bali, 400,000 FCFA max), we have properties to show you. When are you available?\n\nSE LOGER CM');
+  ok('relance : rendez-vous sur une annonce, sans nom ni critère',
+     relanceDemandeSite({ source: 'rdv', name: 'Anonymous', listing_ref: 'CF26-DLA-028', created_at: quand }) ===
+     'Bonjour, suite à votre demande de visite du 12/11/2026 sur selogercm.com (annonce réf. CF26-DLA-028), '
+       + 'nous avons des biens à vous faire visiter. Quand êtes-vous disponible ?\n\nSE LOGER CM');
+  const nu = relanceDemandeSite({ source: 'contact' });
+  ok('relance : rien à dire = ni parenthèses vides, ni « du »', nu.indexOf('()') === -1 && nu.indexOf(' du ') === -1
+     && nu.indexOf('undefined') === -1 && nu.indexOf('Bonjour, suite à votre message sur selogercm.com, ') === 0);
+  ok('relance : maison meublée, terrain à acheter, 1 chambre au singulier',
+     relanceDemandeSite({ rent_sale: 'rent', type: 'house', furnished: true, bedrooms: 1 }).indexOf('(maison 1 chambre meublée à louer)') !== -1
+     && relanceDemandeSite({ rent_sale: 'sale', type: 'plots-of-land', districts: ['Japoma'] }).indexOf('(terrain à acheter, Japoma)') !== -1);
 
   return { title: 'Demandes du site → CRM', checks };
 }
